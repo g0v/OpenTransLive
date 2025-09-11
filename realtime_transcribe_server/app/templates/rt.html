@@ -1,62 +1,185 @@
 {% extends "base.html" %} {% block content %}
 <div class="flex flex-col h-svh">
-  <div id="data-content" class="p-2 break-all whitespace-pre-wrap flex-grow-1 overflow-y-auto">
-  </div>
-  <div id="connection-status" class="text-sm mt-auto ms-auto p-2 flex items-center gap-2">
-    <span>Language</span>
+  <!-- Status Bar -->
+  <div class="flex items-center p-2 border-b gap-2">
+    <span class="text-sm">View:</span>
     <select
-      id="language-select"
-      class="inline-block border-2 border-dark rounded-md p-1"
+      id="combined-select"
+      class="inline-block border-2 border-dark rounded-md p-1 me-auto"
     ></select>
-    <span
-      id="status-indicator"
-      class="inline-block w-3 h-3 rounded-full bg-gray-400"
-    ></span>
-    <span id="status-text">Connecting...</span>
+    <div class="text-sm bg-gray-100 rounded-full py-1 px-2">
+      <span
+        id="status-indicator"
+        class="inline-block w-3 h-3 rounded-full bg-gray-400"
+      ></span>
+      <span id="status-text" class="ms-1">Connecting...</span>
+    </div>
+  </div>
+
+  <!-- Single Language View -->
+  <div id="single-view" class="flex-grow overflow-auto">
+    <div
+      id="data-content"
+      class="p-2 break-all whitespace-pre-wrap text-lg"
+    ></div>
+  </div>
+
+  <!-- Grid Layout View -->
+  <div id="grid-view" class="flex-grow overflow-auto p-2 hidden">
+    <div id="grid-content" class="flex flex-wrap max-h-full">
+      <!-- Grid items will be dynamically generated with auto-calculated columns -->
+    </div>
   </div>
 </div>
 {% endblock %} {% block scripts %}
 <script>
   let transcriptionsData = {{ data | tojson(indent = 2) }};
   let lastSubtitle = null;
+  let currentLayout = 'grid'; // 'single' or 'grid'
   const statusIndicator = document.getElementById('status-indicator');
   const statusText = document.getElementById('status-text');
 
-  function getLanguages() {
+  function populateCombinedSelect() {
     if (transcriptionsData.transcriptions) {
       const languages = Object.keys(transcriptionsData.transcriptions[0].result.translated);
-      const languageSelect = document.getElementById('language-select');
+      const combinedSelect = document.getElementById('combined-select');
+
+      // Clear existing options
+      combinedSelect.innerHTML = '';
+
+      const gridOption = document.createElement('option');
+      gridOption.value = 'grid';
+      gridOption.textContent = 'All';
+      combinedSelect.appendChild(gridOption);
+
+      // Add language-specific options
       languages.forEach(language => {
-        if (languageSelect.querySelector(`option[value="${language}"]`)) {
-          return;
-        }
         const option = document.createElement('option');
-        option.value = language;
-        option.textContent = language;
-        languageSelect.appendChild(option);
+        option.value = `single-${language}`;
+        option.textContent = `${language}`;
+        combinedSelect.appendChild(option);
       });
     }
   }
 
   function refreshView() {
-    if (transcriptionsData.transcriptions?.length > 0) {
-      const dataContent = document.getElementById('data-content');
-      dataContent.textContent = '';
-      transcriptionsData.transcriptions.slice(-100).forEach(subtitle => {
-        dataContent.textContent += '\n' + subtitle.result.translated[document.getElementById('language-select').value];
-      });
-      dataContent.scrollTop = dataContent.scrollHeight;
+    if (currentLayout === 'single') {
+      refreshSingleView();
+    } else {
+      refreshGridView();
     }
   }
 
-  document.getElementById('language-select').addEventListener('change', function() {
+  function refreshSingleView() {
+    if (transcriptionsData.transcriptions?.length > 0) {
+      const dataContent = document.getElementById('data-content');
+      dataContent.textContent = '';
+      const selectedValue = document.getElementById('combined-select').value;
+
+      let selectedLanguage;
+      if (selectedValue.startsWith('single-')) {
+        selectedLanguage = selectedValue.replace('single-', '');
+      } else {
+        // Default to first available language for 'single' option
+        selectedLanguage = Object.keys(transcriptionsData.transcriptions[0].result.translated)[0];
+      }
+
+      transcriptionsData.transcriptions.slice(-100).forEach(subtitle => {
+        dataContent.textContent += '\n' + subtitle.result.translated[selectedLanguage];
+      });
+      // Ensure auto-scroll to bottom
+      setTimeout(() => {
+        dataContent.scrollTop = dataContent.scrollHeight;
+      }, 0);
+    }
+  }
+
+  function refreshGridView() {
+    if (transcriptionsData.transcriptions?.length > 0) {
+      const gridContent = document.getElementById('grid-content');
+      gridContent.innerHTML = '';
+
+      const languages = Object.keys(transcriptionsData.transcriptions[0].result.translated);
+      const recentTranscriptions = transcriptionsData.transcriptions.slice(-50);
+
+      // Auto-calculate optimal grid size based on number of languages
+      const languageCount = languages.length;
+      let gridCols;
+
+      if (languageCount <= 1) {
+        gridCols = 1;
+      } else if (languageCount <= 4) {
+        gridCols = 2; // 2x2 grid
+      } else if (languageCount <= 9) {
+        gridCols = 3; // 3x3 grid
+      } else if (languageCount <= 16) {
+        gridCols = 4; // 4x4 grid
+      } else if (languageCount <= 25) {
+        gridCols = 5; // 5x5 grid
+      } else {
+        gridCols = Math.ceil(Math.sqrt(languageCount)); // Auto-calculate for more languages
+      }
+
+      // Apply the calculated grid columns with responsive behavior
+      const screenWidth = window.innerWidth;
+      let actualCols = gridCols;
+
+      // Adjust for smaller screens
+      if (screenWidth < 768) { // Mobile
+        actualCols = Math.min(gridCols, 1);
+      } else if (screenWidth < 1024) { // Tablet
+        actualCols = Math.min(gridCols, 2);
+      } else if (screenWidth < 1280) { // Small desktop
+        actualCols = Math.min(gridCols, 3);
+      }
+
+      languages.forEach(language => {
+        const languageCard = document.createElement('div');
+        languageCard.className = `border-2 border-gray-300 p-2 bg-white w-[${99/actualCols}%] h-[${90/actualCols}vh] overflow-auto`;
+
+        const languageContent = document.createElement('div');
+        languageContent.className = 'break-all whitespace-pre-wrap text-lg text-gray-700';
+
+        let content = '';
+        recentTranscriptions.forEach(subtitle => {
+          content += subtitle.result.translated[language] + '\n';
+        });
+        languageContent.textContent = content;
+        languageCard.appendChild(languageContent);
+        gridContent.appendChild(languageCard);
+
+        setTimeout(() => {
+          languageCard.scrollTop = languageCard.scrollHeight;
+        }, 0);
+      });
+    }
+  }
+
+  function switchLayout(selectedValue) {
+    if (selectedValue === 'grid') {
+      currentLayout = 'grid';
+      const singleView = document.getElementById('single-view');
+      const gridView = document.getElementById('grid-view');
+      singleView.classList.add('hidden');
+      gridView.classList.remove('hidden');
+    } else {
+      currentLayout = 'single';
+      const singleView = document.getElementById('single-view');
+      const gridView = document.getElementById('grid-view');
+      singleView.classList.remove('hidden');
+      gridView.classList.add('hidden');
+      singleView.scrollTop = singleView.scrollHeight;
+    }
+
     refreshView();
+  }
+
+  // Combined select event listener
+  document.getElementById('combined-select').addEventListener('change', function() {
+    switchLayout(this.value);
   });
 
   document.addEventListener('DOMContentLoaded', function() {
-      getLanguages();
-      refreshView();
-
       // Connect to SSE endpoint
       const eventSource = new EventSource('/api/sse/{{ id }}');
 
@@ -84,18 +207,30 @@
 
               // Handle connection message
               if (data.type === 'connected') {
-                  statusText.textContent = 'Connected to session: ' + data.id;
+                  statusText.textContent = data.id;
                   return;
               }
               if (data.type === 'update') {
                   transcriptionsData = data.data;
-                  getLanguages();
+                  populateCombinedSelect();
                   refreshView();
               }
           } catch (error) {
               console.error('Error parsing SSE data:', error);
           }
       };
+
+      // Handle window resize to recalculate grid
+      window.addEventListener('resize', function() {
+          if (currentLayout === 'grid') {
+              refreshGridView();
+          }
+      });
+
+      window.addEventListener('load', function() {
+        populateCombinedSelect();
+        document.getElementById('combined-select').dispatchEvent(new Event('change'));
+      });
 
       // Cleanup on page unload
       window.addEventListener('beforeunload', function() {
