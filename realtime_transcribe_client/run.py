@@ -13,6 +13,7 @@ import dotenv
 from queue import Queue
 from tempfile import NamedTemporaryFile
 from openai import OpenAI
+from groq import Groq
 import threading
 import argparse
 import whisperx
@@ -31,13 +32,12 @@ logger = logging.getLogger(__name__)
 model = os.getenv("TRANSCRIBE_MODEL", "large-v3")
 device = os.getenv("TRANSCRIBE_DEVICE", "auto")
 transcriber = os.getenv("TRANSCRIBER", "whisperx")
-record_timeout = int(os.getenv("TRANSCRIBE_RECORD_TIMEOUT", 10))
-energy_threshold = int(os.getenv("TRANSCRIBE_ENERGY_THRESHOLD", 100))
-pause_threshold_ms = int(os.getenv("TRANSCRIBE_PAUSE_THRESHOLD_MS", 600))
+record_timeout = int(os.getenv("RECORD_TIMEOUT", 8))
+energy_threshold = int(os.getenv("RECORD_ENERGY_THRESHOLD", 100))
+pause_threshold_ms = int(os.getenv("RECORD_PAUSE_THRESHOLD_MS", 800))
 api_endpoint = os.getenv("SERVER_ENDPOINT",'http://127.0.0.1:5000/api/sync/') + args.target_sid if args.target_sid else None
 ai_model = os.getenv("AI_MODEL", "gpt-4.1-nano")
 
-# Initialize components
 converter = opencc.OpenCC("s2tw")
 source = sr.Microphone(sample_rate=16000)
 recorder = sr.Recognizer()
@@ -45,11 +45,12 @@ recorder.energy_threshold = energy_threshold
 recorder.dynamic_energy_threshold = True
 recorder.pause_threshold = pause_threshold_ms / 1000.0
 recorder.non_speaking_duration = recorder.pause_threshold
-audio_model = whisperx.load_model(model, device, compute_type="float16", asr_options={
-    "beam_size": 10,
-    "temperatures": 0
-})
-# Initialize data storage
+if transcriber == "whisperx":
+    audio_model = whisperx.load_model(model, device, compute_type="float16", asr_options={
+        "beam_size": 10,
+        "temperatures": 0
+    })
+
 file_path = Path(f"output/{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json")
 file_path.parent.mkdir(parents=True, exist_ok=True)
 transcription_data = {"transcriptions": [], "last_updated": None, "status": "running"}
@@ -62,12 +63,14 @@ def translate_text(data: dict):
     try:                    
         context = ""
         if data["id"] > 3:
-            for transcription in transcription_data["transcriptions"][data["id"] - min(10, len(transcription_data["transcriptions"])):data["id"]]:
+            for transcription in transcription_data["transcriptions"][data["id"] - min(20, len(transcription_data["transcriptions"])):data["id"]]:
                 if "result" in transcription:
                     context += transcription["result"]["corrected"]
                 else:
                     context += transcription["text"]
-                context += "\n"
+                context += ""
+            if len(context) > 100:
+                context = context[-100:]
         output_dict = {
             "corrected": "corrected text",
             "special_keywords": [],
@@ -83,9 +86,10 @@ def translate_text(data: dict):
         json_body = {
             "model": ai_model,
             "response_format": {"type": "json_object"},
+            "temperature": 0,
             "messages": [
                 {"role": "developer", "content": f"""
-                 1. correct the text only in <translate_this> as "corrected text", try be as close to the original grammar as possible.
+                 1. correct the text **only in <correct_this>** as "corrected text", try your best to fix mistranscribed words.
                  2. Rewrite the "corrected text" into following languages (IETF BCP 47) as "translated": {os.getenv('TRANSLATE_LANGUAGES')}
                  3. If there are very special keywords in the "corrected text", add them to the "special_keywords" list.
                  Return in json format:
@@ -93,14 +97,14 @@ def translate_text(data: dict):
                  """},
                 {"role": "user", "content": f"""
                  <reference>
-                 This is a transcription about: { ','.join(current_keywords)}
+                 { ','.join(current_keywords)}
                  </reference>
                  <context>
                  {context}
                  </context>
-                 <translate_this>
+                 <correct_this>
                  {data["text"]}
-                 </translate_this>
+                 </correct_this>
                  """
                 }
             ]
@@ -164,6 +168,43 @@ def transcribe_audio():
     running = True
     init_time = datetime.now(timezone.utc)
     
+    def groq_transcribe(now, duration):
+        client = Groq(api_key=os.getenv('GROQ_API_KEY'))
+        with open(temp_file, 'rb') as audio_file:
+            result = client.audio.transcriptions.create(
+                file=(temp_file, audio_file.read()),
+                model="whisper-large-v3-turbo",
+                response_format="verbose_json",
+            )
+        for segment in result.segments:
+            text = segment['text'].strip()
+            if not text or text[-1] in ('.', '?', '!', '。', '？', '！'):
+                text = text[:-1] if text else ""
+            
+            if text and 'chinese' in result.language.lower():
+                text = converter.convert(text)
+            
+            if text.strip():
+                transcription = {
+                    "id": len(transcription_data["transcriptions"]),
+                    "text": text.strip(),
+                    "start_time": now.timestamp() + segment['start'] - duration,
+                    "end_time": now.timestamp() + segment['end'] - duration,
+                    "init_time": init_time.timestamp()
+                }
+                transcription_data["transcriptions"].append(transcription)
+                transcription_data["last_updated"] = datetime.now().isoformat()
+                logger.info(f"Transcribed: {text}")
+                
+                # Save to file
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump(transcription_data, f, ensure_ascii=False, indent=2)
+                
+                # Translate text in a separate thread to avoid blocking
+                threading.Thread(target=translate_text, args=(transcription,), daemon=True).start()
+        
+        
+        
     def openai_transcribe(now, duration):
         # Transcribe with OpenAI GPT-4o
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
@@ -234,7 +275,7 @@ def transcribe_audio():
     
     # Audio overlap buffer (1 second overlap)
     overlap_buffer = b""
-    overlap_duration = recorder.pause_threshold * 0.6  # seconds
+    overlap_duration = recorder.pause_threshold * 0.65  # seconds
     
     def record_callback(_, audio):
         data_queue.put(audio.get_raw_data())
@@ -290,6 +331,8 @@ def transcribe_audio():
                 openai_transcribe(now, duration)
             elif transcriber == "whisperx":
                 whisperx_transcribe(now, duration)
+            elif transcriber == "groq":
+                groq_transcribe(now, duration)
             else:
                 raise ValueError(f"Invalid transcriber: {transcriber}")
                     
