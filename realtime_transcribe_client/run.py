@@ -35,6 +35,7 @@ record_timeout = int(os.getenv("TRANSCRIBE_RECORD_TIMEOUT", 10))
 energy_threshold = int(os.getenv("TRANSCRIBE_ENERGY_THRESHOLD", 100))
 pause_threshold_ms = int(os.getenv("TRANSCRIBE_PAUSE_THRESHOLD_MS", 600))
 api_endpoint = os.getenv("SERVER_ENDPOINT",'http://127.0.0.1:5000/api/sync/') + args.target_sid if args.target_sid else None
+ai_model = os.getenv("AI_MODEL", "gpt-4.1-nano")
 
 # Initialize components
 converter = opencc.OpenCC("s2tw")
@@ -80,13 +81,13 @@ def translate_text(data: dict):
             current_keywords = f.read()
         
         json_body = {
-            "model": "gpt-4.1-mini",
+            "model": ai_model,
             "temperature": 0.2,
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "developer", "content": f"""
-                 1. according to the reference and context, correct the text only in <translate_this> as "corrected text", keep the original grammar.
-                 2. Rewrite the "corrected text" into following languages (IETF BCP 47) as translated: {os.getenv('TRANSLATE_LANGUAGES')}
+                 1. according to the reference and context, correct the text only in <translate_this> as "corrected text", try be as close to the original grammar as possible.
+                 2. Rewrite the "corrected text" into following languages (IETF BCP 47) as "translated": {os.getenv('TRANSLATE_LANGUAGES')}
                  <reference>
                  This is a transcription about: {current_keywords}
                  </reference>
