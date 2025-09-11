@@ -46,8 +46,8 @@ recorder.dynamic_energy_threshold = True
 recorder.pause_threshold = pause_threshold_ms / 1000.0
 recorder.non_speaking_duration = recorder.pause_threshold
 audio_model = whisperx.load_model(model, device, compute_type="float16", asr_options={
-    "beam_size": 8,
-    "temperatures": 0.2
+    "beam_size": 10,
+    "temperatures": 0
 })
 # Initialize data storage
 file_path = Path(f"output/{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json")
@@ -55,7 +55,7 @@ file_path.parent.mkdir(parents=True, exist_ok=True)
 transcription_data = {"transcriptions": [], "last_updated": None, "status": "running"}
 
 with open(f"output/current_keywords.txt", "w", encoding="utf-8") as f:
-    f.write(os.getenv('COMMON_PROMPT'))
+    f.write('\n'.join(os.getenv('COMMON_PROMPT').split(',')))
     
 def translate_text(data: dict):
     """language code should be in IETF BCP 47 format"""
@@ -78,25 +78,26 @@ def translate_text(data: dict):
             output_dict["translated"][language] = f"{language} translated text"
         
         with open(f"output/current_keywords.txt", "r", encoding="utf-8") as f:
-            current_keywords = f.read()
+            current_keywords = f.read().split('\n')
         
         json_body = {
             "model": ai_model,
-            "temperature": 0.2,
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "developer", "content": f"""
-                 1. according to the reference and context, correct the text only in <translate_this> as "corrected text", try be as close to the original grammar as possible.
+                 1. correct the text only in <translate_this> as "corrected text", try be as close to the original grammar as possible.
                  2. Rewrite the "corrected text" into following languages (IETF BCP 47) as "translated": {os.getenv('TRANSLATE_LANGUAGES')}
-                 <reference>
-                 This is a transcription about: {current_keywords}
-                 </reference>
-                 
+                 3. If there are very special keywords in the "corrected text", add them to the "special_keywords" list.
                  Return in json format:
                  {output_dict}
                  """},
                 {"role": "user", "content": f"""
+                 <reference>
+                 This is a transcription about: { ','.join(current_keywords)}
+                 </reference>
+                 <context>
                  {context}
+                 </context>
                  <translate_this>
                  {data["text"]}
                  </translate_this>
@@ -123,12 +124,18 @@ def translate_text(data: dict):
             json.dump(transcription_data, f, ensure_ascii=False, indent=2)
         keywords = result["special_keywords"]
         
-        with open(f"output/current_keywords.txt", "a+", encoding="utf-8") as f:
-            f.seek(0)
-            current_keywords = f.read()
-            for keyword in keywords:
-                if keyword not in current_keywords:
-                    f.write(f"{keyword},")
+        # Read existing keywords first
+        with open(f"output/current_keywords.txt", "r", encoding="utf-8") as f:
+            current_keywords = f.read().split('\n')
+        
+        # Add new keywords
+        for keyword in keywords:
+            if keyword not in current_keywords:
+                current_keywords.append(keyword)
+        
+        # Write back to file
+        with open(f"output/current_keywords.txt", "w", encoding="utf-8") as f:
+            f.write('\n'.join(current_keywords))
                     
         if api_endpoint:
             with httpx.Client() as client:
@@ -191,10 +198,7 @@ def transcribe_audio():
             # Translate text in a separate thread to avoid blocking
             threading.Thread(target=translate_text, args=(transcription,), daemon=True).start()
             
-    def whisperx_transcribe(now: datetime, duration):
-        with open('output/current_keywords.txt', 'r', encoding='utf-8') as f:
-            prompt = f.read()
-        
+    def whisperx_transcribe(now: datetime, duration):        
         audio = whisperx.load_audio(temp_file)
         result = audio_model.transcribe(audio, batch_size=16)
         
