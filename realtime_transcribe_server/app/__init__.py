@@ -112,11 +112,13 @@ def sync(id):
     if not temp_file.exists():
         data = {"transcriptions": []}
     else:
-        data = json.loads(temp_file.read_text(encoding='utf-8'))
+        with open(temp_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
     data["stream_start_time"] = get_youtube_start_time(id)
     data["transcriptions"].append(body)
     data["transcriptions"].sort(key=lambda x: x["start_time"])
-    temp_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    with open(temp_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
     print("sync", temp_file)
     
     # Broadcast the update to connected clients
