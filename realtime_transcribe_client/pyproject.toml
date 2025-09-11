@@ -1,0 +1,29 @@
+[project]
+name = "realtime-srt-client"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "dotenv>=0.9.9",
+    "faster-whisper>=1.1.1",
+    "httpx>=0.28.1",
+    "openai>=1.98.0",
+    "opencc>=1.1.9",
+    "pyaudio>=0.2.14",
+    "speechrecognition>=3.14.3",
+    "torch>=2.7.1",
+    "torchvision>=0.22.1",
+    "whisperx>=3.4.2",
+]
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu126", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
