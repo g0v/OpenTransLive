@@ -21,3 +21,9 @@
     @apply mx-auto lg:max-w-5xl px-4;
   }
 }
+
+#qr-area:hover {
+  img {
+    display: block;
+  }
+}
