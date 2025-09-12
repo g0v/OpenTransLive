@@ -1,16 +1,14 @@
-from flask import Flask, jsonify, render_template, request, Response
+from flask import Flask, jsonify, render_template, request
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from pathlib import Path
 import uuid
 import json
 import threading
-import queue
 import time
 import requests
 import os
 import dotenv
 from datetime import datetime
-from queue import Empty
 
 dotenv.load_dotenv(override=True)
 
@@ -19,10 +17,6 @@ app.config['SECRET_KEY'] = 'your-secret-key-here'
 socketio = SocketIO(app, cors_allowed_origins="*")
 temp_dir = Path('temp')
 temp_dir.mkdir(parents=True, exist_ok=True)
-
-# Simple event broadcaster for SSE
-event_queues = {}
-event_lock = threading.Lock()
 
 # In-memory cache for transcriptions
 transcription_cache = {}
@@ -74,7 +68,7 @@ def get_youtube_start_time(video_id) -> datetime:
     return None
 
 def get_cached_transcription(id):
-    if id not in transcription_cache:
+    if id not in transcription_cache or time.time() - transcription_cache[id][1] > 3600:
         temp_file = temp_dir / f"{id}.json"
         if temp_file.exists():
             data = json.loads(temp_file.read_text(encoding='utf-8'))
@@ -83,15 +77,6 @@ def get_cached_transcription(id):
         transcription_cache[id] = (data, time.time())
     return transcription_cache[id][0]
 
-def get_event_queue(id):
-    with event_lock:
-        if id not in event_queues:
-            event_queues[id] = queue.Queue()
-        return event_queues[id]
-
-def update_event_queue(id, data):
-    queue = get_event_queue(id)
-    queue.put(data)
 
 def save_to_file_async(temp_file, data):
     """Save data to file in background thread"""
@@ -113,7 +98,9 @@ def yt(id):
 @app.route("/rt/<string:id>", methods=["get"])
 def rt(id):
     data = get_cached_transcription(id)
-    return render_template("rt.html", id=id, data=data)
+    sliced_data = data.copy()
+    sliced_data["transcriptions"] = sliced_data["transcriptions"][-50:]
+    return render_template("rt.html", id=id, data=sliced_data)
   
 @socketio.on('sync')
 def handle_sync(data):
@@ -137,24 +124,25 @@ def handle_sync(data):
     cached_data["transcriptions"].append(sync_data)
     cached_data["transcriptions"].sort(key=lambda x: x["start_time"])
     transcription_cache[session_id] = (cached_data, time.time())
-    
-    # Create sliced data for broadcasting (last 50 transcriptions)
-    sliced_data = cached_data.copy()
-    sliced_data["transcriptions"] = sliced_data["transcriptions"][-50:]
-    
-    # Update event queue for SSE clients (non-blocking)
-    update_event_queue(session_id, {"type": "update", "data": sliced_data})
-    
+
     # Save to file in background (non-blocking)
     save_to_file_async(temp_file, cached_data)
     
-    print("sync", temp_file)
+    print("sync", sync_data["start_time"], sync_data["result"]["corrected"])
     
     # Emit update to all clients in the session room
-    socketio.emit('transcription_update', sliced_data, room=session_id)
-    
-    # Send confirmation back to sender
-    emit('sync_success', {'status': 'success', 'temp_file': temp_file.name})
+    socketio.emit('transcription_update', sync_data, room=session_id)
+
+@socketio.on('connect')
+def handle_connect():
+    """Handle client connection"""
+    print(f"Client connected: {request.sid}")
+    emit('connected', {'status': 'connected', 'client_id': request.sid})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle client disconnection"""
+    print(f"Client disconnected: {request.sid}")
 
 @socketio.on('join_session')
 def handle_join_session(data):
@@ -174,24 +162,3 @@ def handle_leave_session(data):
         emit('left_session', {'session_id': session_id})
         print(f"Client left session: {session_id}")
 
-@app.route("/api/sse/<string:id>")
-def sse(id):
-    def generate():
-        queue = get_event_queue(id)
-        # Send initial connection message
-        yield f"data: {json.dumps({'type': 'connected', 'id': id})}\n\n"
-        
-        while True:
-            try:
-                # Wait for events with timeout
-                data = queue.get(timeout=30)
-                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-            except Empty:
-                # Send keepalive
-                yield f"data: {json.dumps({'type': 'keepalive'})}\n\n"
-    
-    response = Response(generate(), mimetype='text/event-stream')
-    response.headers['Cache-Control'] = 'no-cache'
-    response.headers['X-Accel-Buffering'] = 'no'
-    response.headers['Connection'] = 'keep-alive'
-    return response

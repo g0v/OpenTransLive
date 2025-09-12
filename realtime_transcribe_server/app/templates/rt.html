@@ -9,7 +9,7 @@
     ></select>
     <div id="qr-area">
       show qrcode
-      <img class="w-40 h-40 fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 hidden" src="" />
+      <img class="w-25vw h-25vw fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 hidden" src="" />
     </div>
     <div>
       <span
@@ -223,45 +223,46 @@
       const qrImg = document.getElementById('qr-area').querySelector('img');
       qrImg.src = `https://quickchart.io/qr?text=${window.location.href}`;
       
-      // Connect to SSE endpoint
-      const eventSource = new EventSource('/api/sse/{{ id }}');
+      // Connect to WebSocket
+      const socket = io();
 
-      eventSource.onopen = function() {
+      socket.on('connect', function() {
           statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-green-500';
           statusText.textContent = 'Connected';
-          console.log('SSE connection opened');
-      };
+          console.log('WebSocket connection opened');
+          
+          // Join the session room
+          socket.emit('join_session', { session_id: '{{ id }}' });
+      });
 
-      eventSource.onerror = function(event) {
+      socket.on('disconnect', function() {
           statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-red-500';
-          statusText.textContent = 'Connection error';
-          console.error('SSE connection error:', event);
-      };
+          statusText.textContent = 'Disconnected';
+          console.log('WebSocket connection closed');
+      });
 
-      eventSource.onmessage = function(event) {
-          try {
-              const data = JSON.parse(event.data);
-              console.log('SSE message received:', data);
+      socket.on('connected', function(data) {
+          console.log('WebSocket connected:', data);
+      });
 
-              // Skip keepalive messages
-              if (data.type === 'keepalive') {
-                  return;
-              }
+      socket.on('joined_session', function(data) {
+          console.log('Joined session:', data);
+          statusText.textContent = 'Connected to session: ' + data.session_id;
+      });
 
-              // Handle connection message
-              if (data.type === 'connected') {
-                  statusText.textContent = data.id;
-                  return;
-              }
-              if (data.type === 'update') {
-                  transcriptionsData = data.data;
-                  populateCombinedSelect();
-                  refreshView();
-              }
-          } catch (error) {
-              console.error('Error parsing SSE data:', error);
-          }
-      };
+      socket.on('transcription_update', function(data) {
+          console.log('Transcription update received:', data);
+          transcriptionsData["transcriptions"].push(data);
+          transcriptionsData["transcriptions"].sort((a, b) => a.start_time - b.start_time);
+          populateCombinedSelect();
+          refreshView();
+      });
+
+      socket.on('error', function(data) {
+          console.error('WebSocket error:', data);
+          statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-red-500';
+          statusText.textContent = 'Error: ' + data.message;
+      });
 
       // Handle window resize to recalculate grid
       window.addEventListener('resize', function() {
@@ -277,7 +278,7 @@
 
       // Cleanup on page unload
       window.addEventListener('beforeunload', function() {
-          eventSource.close();
+          socket.disconnect();
       });
   });
 </script>

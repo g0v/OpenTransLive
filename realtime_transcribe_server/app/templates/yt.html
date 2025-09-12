@@ -14,7 +14,7 @@
       <span class="border-l pl-2 ml-2">Start Time:</span>
       <span id="start-time">--:--:--</span>
       <span class="border-l pl-2 ml-2">Offset(Secs):</span>
-      <input type="number" id="offset-seconds" class="rounded-md p-1 border-2 border-dark w-16" value="0" step="0.1" />
+      <input type="number" id="offset-seconds" class="rounded-md p-1 border-2 border-dark w-16" value="5" step="0.1" />
       <div id="connection-status" class="text-sm ms-auto">
         <span
           id="status-indicator"
@@ -36,7 +36,10 @@
   let lastTranscription = null;
 
   function getLanguages() {
-    if (transcriptionsData.transcriptions) {
+    if (transcriptionsData.transcriptions && 
+        transcriptionsData.transcriptions.length > 0 && 
+        transcriptionsData.transcriptions[0].result && 
+        transcriptionsData.transcriptions[0].result.translated) {
       const languages = Object.keys(transcriptionsData.transcriptions[0].result.translated);
       const languageSelect = document.getElementById('language-select');
       languages.forEach(language => {
@@ -83,10 +86,10 @@
           const start_time = transcription.start_time + offsetSeconds;
           const end_time = transcription.end_time + offsetSeconds;
           if (start_time < currentTime && end_time > currentTime) {
-            if (lastTranscription && lastTranscription === transcription.id) {
-              continue;
+            if (lastTranscription && lastTranscription === start_time) {
+              break;
             }
-            lastTranscription = transcription.id;
+            lastTranscription = start_time;
             const currentLanguage = document.getElementById('language-select').value;
             dataContent.textContent += '\n' + transcription.result.translated[currentLanguage];
             if (timeoutId) {
@@ -104,51 +107,52 @@
   }
 
   document.addEventListener('DOMContentLoaded', function() {
-      setInterval(getCurrentTime, 100);
+      setInterval(getCurrentTime, 300);
       const statusIndicator = document.getElementById('status-indicator');
       const statusText = document.getElementById('status-text');
 
-      // Connect to SSE endpoint
-      const eventSource = new EventSource('/api/sse/{{ id }}');
+      // Connect to WebSocket
+      const socket = io();
 
-      eventSource.onopen = function() {
+      socket.on('connect', function() {
           statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-green-500';
           statusText.textContent = 'Connected';
-          console.log('SSE connection opened');
-      };
+          console.log('WebSocket connection opened');
+          
+          // Join the session room
+          socket.emit('join_session', { session_id: '{{ id }}' });
+      });
 
-      eventSource.onerror = function(event) {
+      socket.on('disconnect', function() {
           statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-red-500';
-          statusText.textContent = 'Connection error';
-          console.error('SSE connection error:', event);
-      };
+          statusText.textContent = 'Disconnected';
+          console.log('WebSocket connection closed');
+      });
 
-      eventSource.onmessage = function(event) {
-          try {
-              const data = JSON.parse(event.data);
-              console.log('SSE message received:', data);
+      socket.on('connected', function(data) {
+          console.log('WebSocket connected:', data);
+      });
 
-              // Skip keepalive messages
-              if (data.type === 'keepalive') {
-                  return;
-              }
+      socket.on('joined_session', function(data) {
+          console.log('Joined session:', data);
+          statusText.textContent = 'Connected to session: ' + data.session_id;
+      });
 
-              // Handle connection message
-              if (data.type === 'connected') {
-                  statusText.textContent = 'Connected to session: ' + data.id;
-                  return;
-              }
-              if (data.type === 'update') {
-                  transcriptionsData = data.data;
-              }
-          } catch (error) {
-              console.error('Error parsing SSE data:', error);
-          }
-      };
+      socket.on('transcription_update', function(data) {
+          console.log('Transcription update received:', data);
+          transcriptionsData["transcriptions"].push(data);
+          transcriptionsData["transcriptions"].sort((a, b) => a.start_time - b.start_time);
+      });
+
+      socket.on('error', function(data) {
+          console.error('WebSocket error:', data);
+          statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-red-500';
+          statusText.textContent = 'Error: ' + data.message;
+      });
 
       // Cleanup on page unload
       window.addEventListener('beforeunload', function() {
-          eventSource.close();
+          socket.disconnect();
       });
   });
 </script>
