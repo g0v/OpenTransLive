@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 model = os.getenv("TRANSCRIBE_MODEL", "large-v3")
 device = os.getenv("TRANSCRIBE_DEVICE", "auto")
 transcriber = os.getenv("TRANSCRIBER", "whisperx")
-record_timeout = int(os.getenv("RECORD_TIMEOUT", 8))
+record_timeout = int(os.getenv("RECORD_TIMEOUT", 4))
 energy_threshold = int(os.getenv("RECORD_ENERGY_THRESHOLD", 200))
 pause_threshold_ms = int(os.getenv("RECORD_PAUSE_THRESHOLD_MS", 800))
 server_url = os.getenv("SERVER_ENDPOINT", '127.0.0.1:5000')
@@ -47,7 +47,7 @@ converter = opencc.OpenCC("s2tw")
 source = sr.Microphone(sample_rate=16000)
 recorder = sr.Recognizer()
 recorder.energy_threshold = energy_threshold
-recorder.dynamic_energy_threshold = False
+recorder.dynamic_energy_threshold = True
 recorder.pause_threshold = pause_threshold_ms / 1000.0
 recorder.non_speaking_duration = recorder.pause_threshold
 if transcriber == "whisperx":
@@ -56,7 +56,7 @@ if transcriber == "whisperx":
         "temperatures": 0
     })
 
-file_path = Path(f"output/{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json")
+file_path = Path(f"output/{datetime.now().strftime('%Y-%m-%d')}/{datetime.now().strftime('%H-%M-%S')}.json")
 file_path.parent.mkdir(parents=True, exist_ok=True)
 transcription_data = {"transcriptions": [], "last_updated": None, "status": "running"}
 
@@ -73,10 +73,6 @@ def connect():
 @sio.event
 def disconnect():
     print("Disconnected from server")
-
-@sio.event
-def sync_success(data):
-    print(f"Sync successful: {data}")
 
 @sio.event
 def error(data):
@@ -142,7 +138,7 @@ def translate_text(data: dict):
             "temperature": 0,
             "messages": [
                 {"role": "developer", "content": f"""
-                 1. correct the text **only in <correct_this>** as "corrected text", try your best to fix mistranscribed words.
+                 1. Correct the text **only in <correct_this>** as "corrected text", keep original grammar.
                  2. Rewrite the "corrected text" into following languages (IETF BCP 47) as "translated": {os.getenv('TRANSLATE_LANGUAGES')}
                  3. If there are very special keywords in the "corrected text", add them to the "special_keywords" list.
                  Return in json format:
@@ -150,6 +146,7 @@ def translate_text(data: dict):
                  """},
                 {"role": "user", "content": f"""
                  <reference>
+                 This is a transcription about:
                  { ','.join(current_keywords)}
                  </reference>
                  <context>
@@ -175,7 +172,8 @@ def translate_text(data: dict):
         if response.status_code != 200:
             raise Exception(response.text)
         result = json.loads(response.json()["choices"][0]["message"]["content"].encode('utf-8').decode('utf-8'))
-        logger.info(result)
+        start_time = transcription_data["transcriptions"][data["id"]]["start_time"]
+        logger.info(f"{start_time} - {result}")
         transcription_data["transcriptions"][data["id"]]["result"] = result
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(transcription_data, f, ensure_ascii=False, indent=2)
@@ -251,31 +249,30 @@ def transcribe_audio():
                 # Translate text in a separate thread to avoid blocking
                 threading.Thread(target=translate_text, args=(transcription,), daemon=True).start()
         
-        
-        
     def openai_transcribe(now, duration):
         # Transcribe with OpenAI GPT-4o
-        with open(f"output/current_keywords.txt", "r", encoding="utf-8") as f:
-            current_keywords = f.read().split('\n')
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         with open(temp_file, 'rb') as audio_file:
             result = client.audio.transcriptions.create(
-                prompt=f"this is a transcription about {','.join(current_keywords)}",
                 model="gpt-4o-mini-transcribe",
                 chunking_strategy={
                     "type": "server_vad",
-                    "threshold": 0.6
+                    "threshold": 0.5
                 },
+                include=["logprobs"],
                 file=audio_file
             )
         # Process transcription results
-        text = result.text.strip()
+        text = converter.convert(result.text.strip())
         if not text or text[-1] in ('.', '?', '!', '。', '？', '！'):
             text = text[:-1] if text else ""
-        
-        text = converter.convert(text)
-        
-        if text.strip():
+                
+        logprobs = result.logprobs
+        l_sum = 0
+        for l in logprobs:
+            l_sum += l.logprob
+        l_avg = l_sum/len(logprobs)
+        if text.strip() and l_avg > -0.8:
             transcription = {
                 "id": len(transcription_data["transcriptions"]),
                 "text": text.strip(),
@@ -285,7 +282,7 @@ def transcribe_audio():
             }
             transcription_data["transcriptions"].append(transcription)
             transcription_data["last_updated"] = datetime.now().isoformat()
-            logger.info(f"Transcribed: {text}")
+            logger.info(f"{l_avg} - Transcribed: {text}")
             
             # Save to file
             with open(file_path, 'w', encoding='utf-8') as f:
@@ -293,6 +290,8 @@ def transcribe_audio():
             
             # Translate text in a separate thread to avoid blocking
             threading.Thread(target=translate_text, args=(transcription,), daemon=True).start()
+        else:
+            logger.info(f"ignored - {l_avg} - Transcribed: {text}")
             
     def whisperx_transcribe(now: datetime, duration):        
         audio = whisperx.load_audio(temp_file)
@@ -328,8 +327,6 @@ def transcribe_audio():
                 threading.Thread(target=translate_text, args=(transcription,), daemon=True).start()
         
         
-    
-    # Audio overlap buffer (1 second overlap)
     overlap_buffer = b""
     overlap_duration = recorder.pause_threshold * 0.65  # seconds
     
@@ -370,10 +367,6 @@ def transcribe_audio():
             else:
                 overlap_buffer = b""
             
-            if not audio_data:
-                continue
-            
-            
             # Convert to WAV and transcribe
             sr_audio = sr.AudioData(audio_data, source.SAMPLE_RATE, source.SAMPLE_WIDTH)
             now = datetime.now(timezone.utc)
@@ -410,7 +403,7 @@ if __name__ == "__main__":
     # Connect to WebSocket server if target session ID is provided
     if args.target_sid:
         try:
-            sio.connect(f"http://{server_url}")
+            sio.connect(f"{server_url}")
             print(f"Connected to WebSocket server at {server_url}")
         except Exception as e:
             logger.error(f"Failed to connect to WebSocket server: {e}")
