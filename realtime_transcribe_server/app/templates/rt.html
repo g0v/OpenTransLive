@@ -1,13 +1,13 @@
 {% extends "base.html" %} {% block content %}
 <div class="flex flex-col h-svh">
   <!-- Status Bar -->
-  <div class="flex items-center p-2 bg-gray-100 h-[6vh] gap-2">
-    <span class="text-sm">View:</span>
+  <div class="flex items-center p-2 bg-gray-100 h-[5vh] gap-2 text-xs">
+    <span>View:</span>
     <select
       id="combined-select"
       class="inline-block border-1 border-gray-400 rounded-md p-1 me-auto"
     ></select>
-    <div class="text-sm">
+    <div>
       <span
         id="status-indicator"
         class="inline-block w-3 h-3 rounded-full bg-gray-400"
@@ -20,13 +20,13 @@
   <div id="single-view" class="flex-grow overflow-auto">
     <div
       id="data-content"
-      class="p-2 break-all whitespace-pre-wrap text-lg max-h-full overflow-auto"
+      class="p-2 break-all whitespace-pre-wrap text-xl max-h-full overflow-auto"
     ></div>
   </div>
 
   <!-- Grid Layout View -->
   <div id="grid-view" class="flex-grow overflow-auto p-2 hidden">
-    <div id="grid-content" class="flex flex-wrap max-h-full whitespace-pre-wrap">
+    <div id="grid-content" class="flex flex-wrap max-h-full whitespace-pre-wrap text-xl">
       <!-- Grid items will be dynamically generated with auto-calculated columns -->
     </div>
   </div>
@@ -156,16 +156,12 @@
         
         languages.forEach(language => {
           const languageBox = document.createElement('div');
-          languageBox.className = `border-2 border-gray-200 py-1 w-[${99.9/actualCols}%] h-[${92/(languageCount/actualCols)}vh]`;
+          languageBox.className = `border-2 border-gray-200 py-1 w-[${99.9/actualCols}%] h-[${93/(languageCount/actualCols)}vh]`;
           languageBox.setAttribute('data-language', language);
 
           const languageCard = document.createElement('div');
-          languageCard.className = `px-1 h-full overflow-auto`;
+          languageCard.className = `px-1 h-full overflow-auto break-all whitespace-pre-wrap leading-relaxed`;
 
-          const languageContent = document.createElement('div');
-          languageContent.className = 'break-all whitespace-pre-wrap text-lg text-gray-700';
-
-          languageCard.appendChild(languageContent);
           languageBox.appendChild(languageCard);
           gridContent.appendChild(languageBox);
         });
