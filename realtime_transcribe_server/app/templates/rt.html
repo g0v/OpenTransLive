@@ -96,7 +96,7 @@
 
       // Only update if language changed or we have new content
       const currentContent = dataContent.textContent;
-      const newContent = transcriptionsData.transcriptions.slice(-100).map(subtitle => 
+      const newContent = transcriptionsData.transcriptions.map(subtitle => 
         subtitle.result.translated[selectedLanguage]
       ).join('\n');
 
@@ -114,7 +114,7 @@
     if (transcriptionsData.transcriptions?.length > 0) {
       const gridContent = document.getElementById('grid-content');
       const languages = Object.keys(transcriptionsData.transcriptions[0].result.translated);
-      const recentTranscriptions = transcriptionsData.transcriptions.slice(-50);
+      const recentTranscriptions = transcriptionsData.transcriptions;
 
       // Auto-calculate optimal grid size based on number of languages
       const languageCount = languages.length;

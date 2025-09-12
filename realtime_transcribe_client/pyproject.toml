@@ -12,9 +12,11 @@ dependencies = [
     "openai>=1.98.0",
     "opencc>=1.1.9",
     "pyaudio>=0.2.14",
+    "python-socketio>=5.10.0",
     "speechrecognition>=3.14.3",
     "torch>=2.7.1",
     "torchvision>=0.22.1",
+    "websocket-client>=1.8.0",
     "whisperx>=3.4.2",
 ]
 [tool.uv.sources]

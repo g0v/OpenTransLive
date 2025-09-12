@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "dotenv>=0.9.9",
-    "flask>=3.1.1",
+    "flask[async]>=3.1.1",
+    "flask-socketio>=5.3.0",
     "requests>=2.31.0",
 ]

@@ -5,6 +5,7 @@ import os
 import io
 import opencc
 import httpx
+import socketio
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import speech_recognition as sr
@@ -35,8 +36,12 @@ transcriber = os.getenv("TRANSCRIBER", "whisperx")
 record_timeout = int(os.getenv("RECORD_TIMEOUT", 8))
 energy_threshold = int(os.getenv("RECORD_ENERGY_THRESHOLD", 200))
 pause_threshold_ms = int(os.getenv("RECORD_PAUSE_THRESHOLD_MS", 800))
-api_endpoint = os.getenv("SERVER_ENDPOINT",'http://127.0.0.1:5000/api/sync/') + args.target_sid if args.target_sid else None
+server_url = os.getenv("SERVER_ENDPOINT", '127.0.0.1:5000')
+api_endpoint = f"http://{server_url}/api/sync/{args.target_sid}" if args.target_sid else None
 ai_model = os.getenv("AI_MODEL", "gpt-4.1-nano")
+
+# Initialize SocketIO client
+sio = socketio.Client()
 
 converter = opencc.OpenCC("s2tw")
 source = sr.Microphone(sample_rate=16000)
@@ -57,6 +62,54 @@ transcription_data = {"transcriptions": [], "last_updated": None, "status": "run
 
 with open(f"output/current_keywords.txt", "w", encoding="utf-8") as f:
     f.write('\n'.join(os.getenv('COMMON_PROMPT').split(',')))
+
+# WebSocket event handlers
+@sio.event
+def connect():
+    print("Connected to server")
+    if args.target_sid:
+        sio.emit('join_session', {'session_id': args.target_sid})
+
+@sio.event
+def disconnect():
+    print("Disconnected from server")
+
+@sio.event
+def sync_success(data):
+    print(f"Sync successful: {data}")
+
+@sio.event
+def error(data):
+    print(f"WebSocket error: {data}")
+
+@sio.event
+def transcription_update(data):
+    print(f"Received transcription update: {len(data.get('transcriptions', []))} transcriptions")
+
+def send_transcription_via_websocket(transcription_data):
+    """Send transcription data via WebSocket"""
+    if args.target_sid and sio.connected:
+        try:
+            # Add the session ID to the transcription data
+            websocket_data = transcription_data.copy()
+            websocket_data['id'] = args.target_sid
+            sio.emit('sync', websocket_data)
+        except Exception as e:
+            logger.error(f"Error sending via WebSocket: {e}")
+    elif api_endpoint:
+        # Fallback to HTTP POST if WebSocket is not available
+        try:
+            with httpx.Client() as client:
+                response = client.post(
+                    api_endpoint,
+                    json=transcription_data,
+                    headers={
+                        "Content-Type": "application/json; charset=utf-8"
+                    },
+                    timeout=None
+                )
+        except Exception as e:
+            logger.error(f"Error sending via HTTP: {e}")
     
 def translate_text(data: dict):
     """language code should be in IETF BCP 47 format"""
@@ -141,16 +194,8 @@ def translate_text(data: dict):
         with open(f"output/current_keywords.txt", "w", encoding="utf-8") as f:
             f.write('\n'.join(current_keywords))
                     
-        if api_endpoint:
-            with httpx.Client() as client:
-                response = client.post(
-                    api_endpoint,
-                    json=transcription_data["transcriptions"][data["id"]],
-                    headers={
-                        "Content-Type": "application/json; charset=utf-8"
-                    },
-                    timeout=None
-                )
+        # Send transcription via WebSocket
+        send_transcription_via_websocket(transcription_data["transcriptions"][data["id"]])
     except Exception as e:
         logger.error(f"Error translating text: {str(e)}")
 
@@ -216,7 +261,7 @@ def transcribe_audio():
         with open(temp_file, 'rb') as audio_file:
             result = client.audio.transcriptions.create(
                 prompt=f"this is a transcription about {','.join(current_keywords)}",
-                model="gpt-4o-transcribe",
+                model="gpt-4o-mini-transcribe",
                 chunking_strategy={
                     "type": "server_vad",
                     "threshold": 0.6
@@ -362,4 +407,18 @@ def transcribe_audio():
         logger.info("Transcription stopped")
 
 if __name__ == "__main__":
-    transcribe_audio()
+    # Connect to WebSocket server if target session ID is provided
+    if args.target_sid:
+        try:
+            sio.connect(f"http://{server_url}")
+            print(f"Connected to WebSocket server at {server_url}")
+        except Exception as e:
+            logger.error(f"Failed to connect to WebSocket server: {e}")
+            print("Falling back to HTTP POST mode")
+    
+    try:
+        transcribe_audio()
+    finally:
+        # Disconnect WebSocket when done
+        if sio.connected:
+            sio.disconnect()

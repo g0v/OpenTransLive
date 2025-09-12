@@ -1,4 +1,5 @@
 from flask import Flask, jsonify, render_template, request, Response
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from pathlib import Path
 import uuid
 import json
@@ -14,6 +15,8 @@ from queue import Empty
 dotenv.load_dotenv(override=True)
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'your-secret-key-here'
+socketio = SocketIO(app, cors_allowed_origins="*")
 temp_dir = Path('temp')
 temp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -104,27 +107,69 @@ def rt(id):
     data = get_cached_transcription(id)
     return render_template("rt.html", id=id, data=data)
   
-@app.route("/api/sync/<string:id>", methods=["post"])
-def sync(id):
-    body = request.get_json()
-    temp_file = temp_dir / f"{id}.json"
-    body.pop("id")
+@socketio.on('sync')
+def handle_sync(data):
+    """Handle WebSocket sync events"""
+    session_id = data.get('id')
+    if not session_id:
+        emit('error', {'message': 'Session ID is required'})
+        return
+    
+    temp_file = temp_dir / f"{session_id}.json"
+    
+    # Remove id from the data before processing
+    sync_data = data.copy()
+    sync_data.pop("id", None)
+    
+    # Get cached transcription data
+    cached_data = get_cached_transcription(session_id)
     if not temp_file.exists():
-        data = {"transcriptions": []}
+        cached_data = {"transcriptions": []}
     else:
         with open(temp_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    data["stream_start_time"] = get_youtube_start_time(id)
-    data["transcriptions"].append(body)
-    data["transcriptions"].sort(key=lambda x: x["start_time"])
+            cached_data = json.load(f)
+    
+    # Add stream start time and append new transcription
+    cached_data["stream_start_time"] = get_youtube_start_time(session_id)
+    cached_data["transcriptions"].append(sync_data)
+    cached_data["transcriptions"].sort(key=lambda x: x["start_time"])
+    
+    # Create sliced data for broadcasting (last 50 transcriptions)
+    sliced_data = cached_data.copy()
+    sliced_data["transcriptions"] = sliced_data["transcriptions"][-50:]
+    
+    # Update event queue for SSE clients
+    update_event_queue(session_id, {"type": "update", "data": sliced_data})
+    
+    # Save full data to file
     with open(temp_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(cached_data, f, ensure_ascii=False, indent=2)
+    
     print("sync", temp_file)
     
-    # Broadcast the update to connected clients
-    update_event_queue(id, {"type": "update", "data": data})
+    # Emit update to all clients in the session room
+    socketio.emit('transcription_update', sliced_data, room=session_id)
     
-    return jsonify({"status": "success", "temp_file": temp_file.name})
+    # Send confirmation back to sender
+    emit('sync_success', {'status': 'success', 'temp_file': temp_file.name})
+
+@socketio.on('join_session')
+def handle_join_session(data):
+    """Handle client joining a session room"""
+    session_id = data.get('session_id')
+    if session_id:
+        join_room(session_id)
+        emit('joined_session', {'session_id': session_id})
+        print(f"Client joined session: {session_id}")
+
+@socketio.on('leave_session')
+def handle_leave_session(data):
+    """Handle client leaving a session room"""
+    session_id = data.get('session_id')
+    if session_id:
+        leave_room(session_id)
+        emit('left_session', {'session_id': session_id})
+        print(f"Client left session: {session_id}")
 
 @app.route("/api/sse/<string:id>")
 def sse(id):
