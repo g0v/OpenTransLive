@@ -33,7 +33,7 @@ model = os.getenv("TRANSCRIBE_MODEL", "large-v3")
 device = os.getenv("TRANSCRIBE_DEVICE", "auto")
 transcriber = os.getenv("TRANSCRIBER", "whisperx")
 record_timeout = int(os.getenv("RECORD_TIMEOUT", 8))
-energy_threshold = int(os.getenv("RECORD_ENERGY_THRESHOLD", 100))
+energy_threshold = int(os.getenv("RECORD_ENERGY_THRESHOLD", 200))
 pause_threshold_ms = int(os.getenv("RECORD_PAUSE_THRESHOLD_MS", 800))
 api_endpoint = os.getenv("SERVER_ENDPOINT",'http://127.0.0.1:5000/api/sync/') + args.target_sid if args.target_sid else None
 ai_model = os.getenv("AI_MODEL", "gpt-4.1-nano")
@@ -42,7 +42,7 @@ converter = opencc.OpenCC("s2tw")
 source = sr.Microphone(sample_rate=16000)
 recorder = sr.Recognizer()
 recorder.energy_threshold = energy_threshold
-recorder.dynamic_energy_threshold = True
+recorder.dynamic_energy_threshold = False
 recorder.pause_threshold = pause_threshold_ms / 1000.0
 recorder.non_speaking_duration = recorder.pause_threshold
 if transcriber == "whisperx":
@@ -169,12 +169,15 @@ def transcribe_audio():
     init_time = datetime.now(timezone.utc)
     
     def groq_transcribe(now, duration):
+        with open(f"output/current_keywords.txt", "r", encoding="utf-8") as f:
+            current_keywords = f.read().split('\n')
         client = Groq(api_key=os.getenv('GROQ_API_KEY'))
         with open(temp_file, 'rb') as audio_file:
             result = client.audio.transcriptions.create(
                 file=(temp_file, audio_file.read()),
                 model="whisper-large-v3-turbo",
                 response_format="verbose_json",
+                prompt=f"this is a transcription about {','.join(current_keywords)}"
             )
         for segment in result.segments:
             text = segment['text'].strip()
@@ -207,10 +210,17 @@ def transcribe_audio():
         
     def openai_transcribe(now, duration):
         # Transcribe with OpenAI GPT-4o
+        with open(f"output/current_keywords.txt", "r", encoding="utf-8") as f:
+            current_keywords = f.read().split('\n')
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         with open(temp_file, 'rb') as audio_file:
             result = client.audio.transcriptions.create(
+                prompt=f"this is a transcription about {','.join(current_keywords)}",
                 model="gpt-4o-transcribe",
+                chunking_strategy={
+                    "type": "server_vad",
+                    "threshold": 0.6
+                },
                 file=audio_file
             )
         # Process transcription results
@@ -242,6 +252,7 @@ def transcribe_audio():
     def whisperx_transcribe(now: datetime, duration):        
         audio = whisperx.load_audio(temp_file)
         result = audio_model.transcribe(audio, batch_size=16)
+        
         
         # Process transcription results
         for segment in result['segments']:
@@ -327,15 +338,17 @@ def transcribe_audio():
             with open(temp_file, 'w+b') as f:
                 f.write(wav_data.read())
             
-            if transcriber == "openai":
-                openai_transcribe(now, duration)
-            elif transcriber == "whisperx":
-                whisperx_transcribe(now, duration)
-            elif transcriber == "groq":
-                groq_transcribe(now, duration)
-            else:
-                raise ValueError(f"Invalid transcriber: {transcriber}")
-                    
+            try:
+                if transcriber == "openai":
+                    openai_transcribe(now, duration)
+                elif transcriber == "whisperx":
+                    whisperx_transcribe(now, duration)
+                elif transcriber == "groq":
+                    groq_transcribe(now, duration)
+                else:
+                    raise ValueError(f"Invalid transcriber: {transcriber}")
+            except Exception as e:
+                logger.error(f"Error transcribing audio: {e}")
     
     except KeyboardInterrupt:
         logger.info("Stopping transcription...")
