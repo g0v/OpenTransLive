@@ -74,13 +74,14 @@ def get_youtube_start_time(video_id) -> datetime:
     return None
 
 def get_cached_transcription(id):
-    temp_file = temp_dir / f"{id}.json"
-    if temp_file.exists():
-        data = json.loads(temp_file.read_text(encoding='utf-8'))
-    else:
-        data = {}
-    transcription_cache[id] = (data, time.time())
-    return data
+    if id not in transcription_cache:
+        temp_file = temp_dir / f"{id}.json"
+        if temp_file.exists():
+            data = json.loads(temp_file.read_text(encoding='utf-8'))
+        else:
+            data = {"transcriptions": []}
+        transcription_cache[id] = (data, time.time())
+    return transcription_cache[id][0]
 
 def get_event_queue(id):
     with event_lock:
@@ -91,6 +92,13 @@ def get_event_queue(id):
 def update_event_queue(id, data):
     queue = get_event_queue(id)
     queue.put(data)
+
+def save_to_file_async(temp_file, data):
+    """Save data to file in background thread"""
+    def save():
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    threading.Thread(target=save, daemon=True).start()
 
 @app.route("/")
 def hello_world():
@@ -123,27 +131,22 @@ def handle_sync(data):
     
     # Get cached transcription data
     cached_data = get_cached_transcription(session_id)
-    if not temp_file.exists():
-        cached_data = {"transcriptions": []}
-    else:
-        with open(temp_file, "r", encoding="utf-8") as f:
-            cached_data = json.load(f)
     
     # Add stream start time and append new transcription
     cached_data["stream_start_time"] = get_youtube_start_time(session_id)
     cached_data["transcriptions"].append(sync_data)
     cached_data["transcriptions"].sort(key=lambda x: x["start_time"])
+    transcription_cache[session_id] = (cached_data, time.time())
     
     # Create sliced data for broadcasting (last 50 transcriptions)
     sliced_data = cached_data.copy()
     sliced_data["transcriptions"] = sliced_data["transcriptions"][-50:]
     
-    # Update event queue for SSE clients
+    # Update event queue for SSE clients (non-blocking)
     update_event_queue(session_id, {"type": "update", "data": sliced_data})
     
-    # Save full data to file
-    with open(temp_file, "w", encoding="utf-8") as f:
-        json.dump(cached_data, f, ensure_ascii=False, indent=2)
+    # Save to file in background (non-blocking)
+    save_to_file_async(temp_file, cached_data)
     
     print("sync", temp_file)
     
