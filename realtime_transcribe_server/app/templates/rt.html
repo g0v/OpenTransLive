@@ -273,7 +273,10 @@
 
       window.addEventListener('load', function() {
         populateCombinedSelect();
-        document.getElementById('combined-select').dispatchEvent(new Event('change'));
+        const params = new URLSearchParams(window.location.search);
+        const initialLayout = params.get('layout') || 'grid';
+        document.getElementById('combined-select').value = initialLayout;
+        switchLayout(initialLayout);
       });
 
       // Cleanup on page unload
