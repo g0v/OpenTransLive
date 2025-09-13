@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, jsonify, render_template, request, session, Response
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from pathlib import Path
 import uuid
@@ -88,7 +88,12 @@ def save_to_file_async(temp_file, data):
 @app.route("/")
 def hello_world():
     return render_template("index.html")
-  
+
+@app.route("/download/<string:id>", methods=["get"])
+def download(id):
+    with open(temp_dir / f"{id}.json", "r", encoding="utf-8") as f:
+        return Response(f.read(), mimetype="application/json")
+
 @app.route("/yt/<string:id>", methods=["get"])
 def yt(id):
     data = get_cached_transcription(id)

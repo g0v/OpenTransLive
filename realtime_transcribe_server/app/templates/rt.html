@@ -7,10 +7,11 @@
       id="combined-select"
       class="inline-block border-1 border-gray-400 rounded-md p-1 me-auto"
     ></select>
-    <div id="qr-area">
+    <div id="qr-area" class="cursor-pointer bg-gray-200 px-2 py-1 rounded-md">
       show qrcode
       <img class="w-25vw h-25vw fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 hidden" src="" />
     </div>
+    <a href="/download/{{ id }}" target="_blank" class="text-xs cursor-pointer bg-gray-200 px-2 py-1 rounded-md">JSON</a>
     <div>
       <span
         id="status-indicator"
