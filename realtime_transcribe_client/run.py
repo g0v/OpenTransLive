@@ -399,7 +399,7 @@ if __name__ == "__main__":
     # Connect to WebSocket server if target session ID is provided
     if args.target_sid:
         try:
-            sio.connect(f"{server_url}")
+            sio.connect(f"{server_url}", auth={'token': os.getenv('SECRET_KEY')})
             print(f"Connected to WebSocket server at {server_url}")
         except Exception as e:
             logger.error(f"Failed to connect to WebSocket server: {e}")

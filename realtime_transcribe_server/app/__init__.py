@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, session
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from pathlib import Path
 import uuid
@@ -105,6 +105,9 @@ def rt(id):
 @socketio.on('sync')
 def handle_sync(data):
     """Handle WebSocket sync events"""
+    if not session.get('is_admin'):
+        emit('error', {'message': 'Unauthorized'})
+        return
     session_id = data.get('id')
     if not session_id:
         emit('error', {'message': 'Session ID is required'})
@@ -134,9 +137,13 @@ def handle_sync(data):
     socketio.emit('transcription_update', sync_data, room=session_id)
 
 @socketio.on('connect')
-def handle_connect():
+def handle_connect(auth):
     """Handle client connection"""
-    print(f"Client connected: {request.sid}")
+    if auth and auth.get('token') == os.getenv('SECRET_KEY'):
+        print(f"Admin connected: {request.sid}")
+        session['is_admin'] = True
+    else:
+        print(f"Client connected: {request.sid}")
     emit('connected', {'status': 'connected', 'client_id': request.sid})
 
 @socketio.on('disconnect')
