@@ -33,9 +33,9 @@ logger = logging.getLogger(__name__)
 model = os.getenv("TRANSCRIBE_MODEL", "large-v3")
 device = os.getenv("TRANSCRIBE_DEVICE", "auto")
 transcriber = os.getenv("TRANSCRIBER", "whisperx")
-record_timeout = int(os.getenv("RECORD_TIMEOUT", 4))
-energy_threshold = int(os.getenv("RECORD_ENERGY_THRESHOLD", 200))
-pause_threshold_ms = int(os.getenv("RECORD_PAUSE_THRESHOLD_MS", 800))
+record_timeout = int(os.getenv("RECORD_TIMEOUT", 5))
+energy_threshold = int(os.getenv("RECORD_ENERGY_THRESHOLD", 150))
+pause_threshold_ms = int(os.getenv("RECORD_PAUSE_THRESHOLD_MS", 1000))
 server_url = os.getenv("SERVER_ENDPOINT", '127.0.0.1:5000')
 api_endpoint = f"http://{server_url}/api/sync/{args.target_sid}" if args.target_sid else None
 ai_model = os.getenv("AI_MODEL", "gpt-4.1-nano")
@@ -47,9 +47,9 @@ converter = opencc.OpenCC("s2tw")
 source = sr.Microphone(sample_rate=16000)
 recorder = sr.Recognizer()
 recorder.energy_threshold = energy_threshold
-recorder.dynamic_energy_threshold = True
+recorder.dynamic_energy_threshold = False
 recorder.pause_threshold = pause_threshold_ms / 1000.0
-recorder.non_speaking_duration = recorder.pause_threshold
+recorder.non_speaking_duration = recorder.pause_threshold * 0.8
 if transcriber == "whisperx":
     audio_model = whisperx.load_model(model, device, compute_type="float16", asr_options={
         "beam_size": 10,
@@ -77,10 +77,6 @@ def disconnect():
 @sio.event
 def error(data):
     print(f"WebSocket error: {data}")
-
-@sio.event
-def transcription_update(data):
-    print(f"Received transcription update: {len(data.get('transcriptions', []))} transcriptions")
 
 def send_transcription_via_websocket(transcription_data):
     """Send transcription data via WebSocket"""
@@ -121,7 +117,7 @@ def translate_text(data: dict):
             if len(context) > 100:
                 context = context[-100:]
         output_dict = {
-            "corrected": "corrected text",
+            "corrected": "corrected text without <correct_this> tag",
             "special_keywords": [],
             "translated": {}
         }
@@ -138,7 +134,7 @@ def translate_text(data: dict):
             "temperature": 0,
             "messages": [
                 {"role": "developer", "content": f"""
-                 1. Correct the text **only in <correct_this>** as "corrected text", keep original grammar.
+                 1. Correct the text **only in <correct_this>** as "corrected text" according to the reference and context.
                  2. Rewrite the "corrected text" into following languages (IETF BCP 47) as "translated": {os.getenv('TRANSLATE_LANGUAGES')}
                  3. If there are very special keywords in the "corrected text", add them to the "special_keywords" list.
                  Return in json format:
@@ -257,7 +253,7 @@ def transcribe_audio():
                 model="gpt-4o-mini-transcribe",
                 chunking_strategy={
                     "type": "server_vad",
-                    "threshold": 0.5
+                    "threshold": 0.1
                 },
                 include=["logprobs"],
                 file=audio_file
