@@ -34,7 +34,7 @@ model = os.getenv("TRANSCRIBE_MODEL", "large-v3")
 device = os.getenv("TRANSCRIBE_DEVICE", "auto")
 transcriber = os.getenv("TRANSCRIBER", "whisperx")
 record_timeout = int(os.getenv("RECORD_TIMEOUT", 5))
-energy_threshold = int(os.getenv("RECORD_ENERGY_THRESHOLD", 150))
+energy_threshold = int(os.getenv("RECORD_ENERGY_THRESHOLD", 100))
 pause_threshold_ms = int(os.getenv("RECORD_PAUSE_THRESHOLD_MS", 1000))
 server_url = os.getenv("SERVER_ENDPOINT", '127.0.0.1:5000')
 api_endpoint = f"http://{server_url}/api/sync/{args.target_sid}" if args.target_sid else None
@@ -49,7 +49,7 @@ recorder = sr.Recognizer()
 recorder.energy_threshold = energy_threshold
 recorder.dynamic_energy_threshold = False
 recorder.pause_threshold = pause_threshold_ms / 1000.0
-recorder.non_speaking_duration = recorder.pause_threshold * 0.8
+recorder.non_speaking_duration = recorder.pause_threshold
 if transcriber == "whisperx":
     audio_model = whisperx.load_model(model, device, compute_type="float16", asr_options={
         "beam_size": 10,
@@ -66,17 +66,17 @@ with open(f"output/current_keywords.txt", "w", encoding="utf-8") as f:
 # WebSocket event handlers
 @sio.event
 def connect():
-    print("Connected to server")
+    logger.info("Connected to server")
     if args.target_sid:
         sio.emit('join_session', {'session_id': args.target_sid})
 
 @sio.event
 def disconnect():
-    print("Disconnected from server")
+    logger.info("Disconnected from server")
 
 @sio.event
 def error(data):
-    print(f"WebSocket error: {data}")
+    logger.info(f"WebSocket error: {data}")
 
 def send_transcription_via_websocket(transcription_data):
     """Send transcription data via WebSocket"""
@@ -123,7 +123,7 @@ def translate_text(data: dict):
         }
         for language in os.getenv('TRANSLATE_LANGUAGES').split(','):
             language = language.strip()
-            output_dict["translated"][language] = f"{language} translated text"
+            output_dict["translated"][language] = f"rewrited corrected text in {language}"
         
         with open(f"output/current_keywords.txt", "r", encoding="utf-8") as f:
             current_keywords = f.read().split('\n')
@@ -167,7 +167,8 @@ def translate_text(data: dict):
             )        
         if response.status_code != 200:
             raise Exception(response.text)
-        result = json.loads(response.json()["choices"][0]["message"]["content"].encode('utf-8').decode('utf-8'))
+        result = json.loads(
+            response.json()["choices"][0]["message"]["content"].encode('utf-8').decode('utf-8').replace('<correct_this>', '').replace('</correct_this>', ''))
         start_time = transcription_data["transcriptions"][data["id"]]["start_time"]
         logger.info(f"{start_time} - {result}")
         transcription_data["transcriptions"][data["id"]]["result"] = result
@@ -208,15 +209,12 @@ def transcribe_audio():
     init_time = datetime.now(timezone.utc)
     
     def groq_transcribe(now, duration):
-        with open(f"output/current_keywords.txt", "r", encoding="utf-8") as f:
-            current_keywords = f.read().split('\n')
         client = Groq(api_key=os.getenv('GROQ_API_KEY'))
         with open(temp_file, 'rb') as audio_file:
             result = client.audio.transcriptions.create(
                 file=(temp_file, audio_file.read()),
                 model="whisper-large-v3-turbo",
                 response_format="verbose_json",
-                prompt=f"this is a transcription about {','.join(current_keywords)}"
             )
         for segment in result.segments:
             text = segment['text'].strip()
@@ -253,7 +251,9 @@ def transcribe_audio():
                 model="gpt-4o-mini-transcribe",
                 chunking_strategy={
                     "type": "server_vad",
-                    "threshold": 0.1
+                    "prefix_padding_ms": pause_threshold_ms,
+                    "silence_duration_ms": pause_threshold_ms,
+                    "threshold": 0.0
                 },
                 include=["logprobs"],
                 file=audio_file
@@ -268,7 +268,7 @@ def transcribe_audio():
         for l in logprobs:
             l_sum += l.logprob
         l_avg = l_sum/len(logprobs)
-        if text.strip() and l_avg > -0.8:
+        if text.strip() and l_avg > -1:
             transcription = {
                 "id": len(transcription_data["transcriptions"]),
                 "text": text.strip(),
@@ -292,8 +292,7 @@ def transcribe_audio():
     def whisperx_transcribe(now: datetime, duration):        
         audio = whisperx.load_audio(temp_file)
         result = audio_model.transcribe(audio, batch_size=16)
-        
-        
+
         # Process transcription results
         for segment in result['segments']:
             text = segment['text'].strip()
@@ -400,10 +399,9 @@ if __name__ == "__main__":
     if args.target_sid:
         try:
             sio.connect(f"{server_url}", auth={'token': os.getenv('SECRET_KEY')})
-            print(f"Connected to WebSocket server at {server_url}")
+            logger.info(f"Connected to WebSocket server at {server_url}")
         except Exception as e:
-            logger.error(f"Failed to connect to WebSocket server: {e}")
-            print("Falling back to HTTP POST mode")
+            logger.error(f"Failed to connect to WebSocket server: {e}\nFalling back to HTTP POST mode")
     
     try:
         transcribe_audio()
