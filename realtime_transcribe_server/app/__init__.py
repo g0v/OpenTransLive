@@ -28,7 +28,7 @@ def get_youtube_start_time(video_id) -> datetime:
     Returns the actualStartTime if available, otherwise None.
     """
     data = None
-    if video_id in youtube_data_cache:
+    if video_id in youtube_data_cache and youtube_data_cache[video_id] is not None:
         data = youtube_data_cache[video_id]
     else:
         api_key = os.getenv('YOUTUBE_API_KEY')
