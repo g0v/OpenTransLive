@@ -1,5 +1,3 @@
-import threading
-import time
 import json
 import os
 import io
@@ -15,7 +13,7 @@ from queue import Queue
 from tempfile import NamedTemporaryFile
 from openai import OpenAI
 from groq import Groq
-import threading
+import asyncio
 import argparse
 import whisperx
 
@@ -102,28 +100,44 @@ def send_transcription_via_websocket(transcription_data):
                 )
         except Exception as e:
             logger.error(f"Error sending via HTTP: {e}")
-    
-def translate_text(data: dict):
+
+async def async_chat_completion(json_body):
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://api.openai.com/v1/chat/completions",
+            json=json_body,
+            headers={
+                "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
+                "Content-Type": "application/json"
+            },
+            timeout=None
+        )
+    return response
+
+async def translate_text(data: dict):
     """language code should be in IETF BCP 47 format"""
+    languages = [language.strip() for language in os.getenv('TRANSLATE_LANGUAGES').split(',')]
     try:                    
-        context = ""
+        context = {
+            "corrected": "",
+            "translated": {
+                language: "" for language in languages
+            }
+        }
         if data["id"] > 3:
             for transcription in transcription_data["transcriptions"][data["id"] - min(20, len(transcription_data["transcriptions"])):data["id"]]:
                 if "result" in transcription:
-                    context += transcription["result"]["corrected"]
+                    context["corrected"] += transcription["result"]["corrected"]
+                    for language in languages:
+                        context["translated"][language] += transcription["result"]["translated"][language]
                 else:
-                    context += transcription["text"]
-                context += ""
-            if len(context) > 100:
-                context = context[-100:]
+                    context["corrected"] += transcription["text"]
+                    for language in languages:
+                        context["translated"][language] += transcription["text"]
         output_dict = {
-            "corrected": "corrected text without <correct_this> tag",
+            "corrected": "corrected text",
             "special_keywords": [],
-            "translated": {}
         }
-        for language in os.getenv('TRANSLATE_LANGUAGES').split(','):
-            language = language.strip()
-            output_dict["translated"][language] = f"rewrited corrected text in {language}"
         
         with open(f"output/current_keywords.txt", "r", encoding="utf-8") as f:
             current_keywords = f.read().split('\n')
@@ -135,8 +149,7 @@ def translate_text(data: dict):
             "messages": [
                 {"role": "developer", "content": f"""
                  1. Correct the text **only in <correct_this>** as "corrected text" according to the reference and context.
-                 2. Rewrite the "corrected text" into following languages (IETF BCP 47) as "translated": {os.getenv('TRANSLATE_LANGUAGES')}
-                 3. If there are very special keywords in the "corrected text", add them to the "special_keywords" list.
+                 2. If there are very special keywords in the "corrected text", add them to the "special_keywords" list.
                  Return in json format:
                  {output_dict}
                  """},
@@ -146,7 +159,7 @@ def translate_text(data: dict):
                  { ','.join(current_keywords)}
                  </reference>
                  <context>
-                 {context}
+                 {context["corrected"]}
                  </context>
                  <correct_this>
                  {data["text"]}
@@ -155,46 +168,66 @@ def translate_text(data: dict):
                 }
             ]
         }
-        with httpx.Client() as client:
-            response = client.post(
-                "https://api.openai.com/v1/chat/completions",
-                json=json_body,
-                headers={
-                    "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
-                    "Content-Type": "application/json"
-                },
-                timeout=None
-            )        
+        response = await async_chat_completion(json_body)
         if response.status_code != 200:
             raise Exception(response.text)
         result = json.loads(
             response.json()["choices"][0]["message"]["content"].encode('utf-8').decode('utf-8').replace('<correct_this>', '').replace('</correct_this>', ''))
+        keywords = result["special_keywords"]
+        # Add new keywords
+        for keyword in keywords:
+            if keyword not in current_keywords:
+                current_keywords.append(keyword)
+        # Write back to file
+        with open(f"output/current_keywords.txt", "w", encoding="utf-8") as f:
+            f.write('\n'.join(current_keywords))
+
+        translated = {}
+        atasks = []
+        async def _worker(language):
+            json_body = {
+                "model": ai_model,
+                "temperature": 0,
+                "messages": [
+                    {"role": "developer", 
+                     "content": f"Rewrite the text only in <translate_this> into {language}, and only return the translated text."},
+                    {"role": "user", "content": f"""
+                    <reference>
+                    This is a transcription about:
+                    { ','.join(current_keywords)}
+                    </reference>
+                    <context>
+                    {context["translated"][language]}
+                    </context>
+                    <translate_this>
+                    {result["corrected"]}
+                    </translate_this>
+                    """
+                    }
+                ]
+            }
+            response = await async_chat_completion(json_body)
+            if response.status_code != 200:
+                raise Exception(response.text)
+            translated[language] = response.json()["choices"][0]["message"]["content"].encode('utf-8').decode('utf-8').replace('<translate_this>', '').replace('</translate_this>', '')
+        for language in languages:
+            atasks.append(_worker(language))
+        await asyncio.gather(*atasks)
+            
+        result["translated"] = translated
         start_time = transcription_data["transcriptions"][data["id"]]["start_time"]
         logger.info(f"{start_time} - {result}")
         transcription_data["transcriptions"][data["id"]]["result"] = result
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(transcription_data, f, ensure_ascii=False, indent=2)
-        keywords = result["special_keywords"]
-        
-        # Read existing keywords first
-        with open(f"output/current_keywords.txt", "r", encoding="utf-8") as f:
-            current_keywords = f.read().split('\n')
-        
-        # Add new keywords
-        for keyword in keywords:
-            if keyword not in current_keywords:
-                current_keywords.append(keyword)
-        
-        # Write back to file
-        with open(f"output/current_keywords.txt", "w", encoding="utf-8") as f:
-            f.write('\n'.join(current_keywords))
                     
         # Send transcription via WebSocket
         send_transcription_via_websocket(transcription_data["transcriptions"][data["id"]])
     except Exception as e:
         logger.error(f"Error translating text: {str(e)}")
+        raise e
 
-def transcribe_audio():
+async def transcribe_audio():
     """Main transcription function"""
     
     # Initialize microphone
@@ -208,7 +241,7 @@ def transcribe_audio():
     running = True
     init_time = datetime.now(timezone.utc)
     
-    def groq_transcribe(now, duration):
+    async def groq_transcribe(now, duration):
         client = Groq(api_key=os.getenv('GROQ_API_KEY'))
         with open(temp_file, 'rb') as audio_file:
             result = client.audio.transcriptions.create(
@@ -241,9 +274,9 @@ def transcribe_audio():
                     json.dump(transcription_data, f, ensure_ascii=False, indent=2)
                 
                 # Translate text in a separate thread to avoid blocking
-                threading.Thread(target=translate_text, args=(transcription,), daemon=True).start()
+                asyncio.create_task(translate_text(transcription))
         
-    def openai_transcribe(now, duration):
+    async def openai_transcribe(now, duration):
         # Transcribe with OpenAI GPT-4o
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         with open(temp_file, 'rb') as audio_file:
@@ -285,11 +318,12 @@ def transcribe_audio():
                 json.dump(transcription_data, f, ensure_ascii=False, indent=2)
             
             # Translate text in a separate thread to avoid blocking
-            threading.Thread(target=translate_text, args=(transcription,), daemon=True).start()
+            asyncio.create_task(translate_text(transcription))
+            
         else:
             logger.info(f"ignored - {l_avg} - Transcribed: {text}")
             
-    def whisperx_transcribe(now: datetime, duration):        
+    async def whisperx_transcribe(now: datetime, duration):        
         audio = whisperx.load_audio(temp_file)
         result = audio_model.transcribe(audio, batch_size=16)
 
@@ -319,7 +353,7 @@ def transcribe_audio():
                     json.dump(transcription_data, f, ensure_ascii=False, indent=2)
                 
                 # Translate text in a separate thread to avoid blocking
-                threading.Thread(target=translate_text, args=(transcription,), daemon=True).start()
+                asyncio.create_task(translate_text(transcription))
         
         
     overlap_buffer = b""
@@ -333,7 +367,7 @@ def transcribe_audio():
     
     try:
         while running:
-            time.sleep(0.1)
+            await asyncio.sleep(0.1)
             
             if data_queue.empty():
                 continue
@@ -373,11 +407,11 @@ def transcribe_audio():
             
             try:
                 if transcriber == "openai":
-                    openai_transcribe(now, duration)
+                   await openai_transcribe(now, duration)
                 elif transcriber == "whisperx":
-                    whisperx_transcribe(now, duration)
+                    await whisperx_transcribe(now, duration)
                 elif transcriber == "groq":
-                    groq_transcribe(now, duration)
+                    await groq_transcribe(now, duration)
                 else:
                     raise ValueError(f"Invalid transcriber: {transcriber}")
             except Exception as e:
@@ -404,7 +438,7 @@ if __name__ == "__main__":
             logger.error(f"Failed to connect to WebSocket server: {e}\nFalling back to HTTP POST mode")
     
     try:
-        transcribe_audio()
+        asyncio.run(transcribe_audio())
     finally:
         # Disconnect WebSocket when done
         if sio.connected:
