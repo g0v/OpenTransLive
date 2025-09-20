@@ -1,3 +1,9 @@
+# This file is part of g0v/realtime_transcribe.
+# Copyright (c) 2025 Sean Gau
+# Licensed under the GNU AGPL v3.0
+# See LICENSE for details.
+
+
 from flask import Flask, jsonify, render_template, request, session, Response
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from pathlib import Path
