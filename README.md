@@ -4,6 +4,10 @@ A complete real-time speech transcription and translation system with web interf
 
 一個完整的即時語音轉錄和翻譯系統，具備網頁介面和 YouTube 同步支援。
 
+![螢幕擷取畫面_15-9-2025_1231_transcribe g0v tw](https://github.com/user-attachments/assets/9a7ff25a-557d-43b7-8071-e7a6ca176c5f)
+![螢幕擷取畫面_15-9-2025_115957_transcribe g0v tw](https://github.com/user-attachments/assets/6e36b33b-9d41-4734-a833-4a84fa3943cc)
+
+
 ## Features / 功能特色
 
 ### English
