@@ -1,3 +1,10 @@
+# This file is part of g0v/realtime_transcribe.
+# Copyright (c) 2025 Sean Gau
+# Licensed under the GNU AGPL v3.0
+# See LICENSE for details.
+ 
+
+
 import json
 import os
 import io
