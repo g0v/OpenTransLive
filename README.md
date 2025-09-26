@@ -115,7 +115,7 @@ realtime_transcribe/
    SECRET_KEY=secret-key-to-check-is-admin
    
    # Server configuration / 伺服器設定
-   YOUTUBE_API_KEY=your_youtube_api_key_here  # Optional / 選用
+   YOUTUBE_API_KEY=your_youtube_api_key_here  # 獲取 YT 直播時間用
    SECRET_KEY=secret-key-to-check-is-admin
    ```
 
