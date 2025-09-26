@@ -124,13 +124,13 @@ realtime_transcribe/
    **Terminal 1 - Start the server / 終端機 1 - 啟動伺服器**:
    ```bash
    cd realtime_transcribe_server
-   python main.py
+   uv run python main.py
    ```
 
    **Terminal 2 - Start the client / 終端機 2 - 啟動客戶端**:
    ```bash
    cd realtime_transcribe_client
-   python run.py -t your_session_id
+   uv run python run.py -t your_session_id
    ```
 
 ## Usage / 使用方式
