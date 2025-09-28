@@ -101,12 +101,12 @@ realtime_transcribe/
 
    ```bash
    # Client configuration / 客戶端設定
-   OPENAI_API_KEY=your_openai_api_key_here
+   OPENAI_API_KEY=your_openai_api_key_here # Required
    GROQ_API_KEY=your_groq_api_key_here  # Optional / 選用
    TRANSCRIBE_MODEL=large-v3
    TRANSCRIBER=whisperx  # Options: "whisperx", "openai", "groq"
    TRANSLATE_LANGUAGES=zh-Hant,ja,ko,en
-   COMMON_PROMPT=This is a meeting about software development
+   COMMON_PROMPT="This is a meeting about software development"
    SERVER_ENDPOINT=http://127.0.0.1:5000
    AI_MODEL=gpt-4.1-nano
    RECORD_TIMEOUT=5
@@ -398,9 +398,4 @@ This project is open source. Please check the license file for details.
 ## Contributing / 貢獻
 
 Contributions are welcome! Please feel free to submit issues and pull requests.
-歡迎貢獻！請隨時提交問題和拉取請求。
-
-## Support / 支援
-
-For support and questions, please open an issue in the repository.
-如需支援和問題，請在儲存庫中開啟問題。
+歡迎貢獻！請隨時提出 issue 和 pull request。
