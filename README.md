@@ -107,7 +107,7 @@ realtime_transcribe/
    TRANSCRIBER=whisperx  # Options: "whisperx", "openai", "groq"
    TRANSLATE_LANGUAGES=zh-Hant,ja,ko,en
    COMMON_PROMPT=This is a meeting about software development
-   SERVER_ENDPOINT=http://127.0.0.1:5000/
+   SERVER_ENDPOINT=http://127.0.0.1:5000
    AI_MODEL=gpt-4.1-nano
    RECORD_TIMEOUT=5
    RECORD_ENERGY_THRESHOLD=150
@@ -250,7 +250,7 @@ GET /                    # Main dashboard
 | `TRANSCRIBER` | Transcription engine / 轉錄引擎 | `whisperx` | `whisperx`, `openai`, `groq` |
 | `TRANSLATE_LANGUAGES` | Comma-separated target languages / 目標語言（逗號分隔） | `en,zh-tw` | IETF BCP 47 format |
 | `COMMON_PROMPT` | Context prompt for better transcription / 轉錄上下文提示 | - | Free text |
-| `SERVER_ENDPOINT` | Server API endpoint / 伺服器 API 端點 | `http://127.0.0.1:5000/` | URL |
+| `SERVER_ENDPOINT` | Server API endpoint / 伺服器 API 端點 | `http://127.0.0.1:5000` | URL |
 | `AI_MODEL` | AI model for translation / 翻譯用的 AI 模型 | `gpt-4.1-nano` | OpenAI model name |
 | `RECORD_TIMEOUT` | Recording timeout in seconds / 錄音超時時間（秒） | `5` | Integer |
 | `RECORD_ENERGY_THRESHOLD` | Energy threshold for speech detection / 語音偵測能量閾值 | `150` | Integer |
