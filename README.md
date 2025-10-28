@@ -1,4 +1,4 @@
-# Real-time Transcription System / 即時語音轉錄系統
+# OpenTransLive / 開源即時語音翻譯系統
 
 A complete real-time speech transcription and translation system with web interface and YouTube synchronization support.
 
