@@ -26,7 +26,7 @@ import whisperx
 
 
 dotenv.load_dotenv(override=True)
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(prog="opentranslive transcribe client")
 parser.add_argument("-t", "--target-sid", help="target session id", default=None)
 args = parser.parse_args()
 

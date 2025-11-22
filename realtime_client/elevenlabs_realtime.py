@@ -1,5 +1,4 @@
 from datetime import datetime, timezone, timedelta
-from elevenlabs import AudioFormat, CommitStrategy, ElevenLabs, RealtimeAudioOptions
 from typing import Generator, Iterator
 from urllib.parse import urlencode
 import os
@@ -10,7 +9,6 @@ import logging
 import opencc
 import queue
 import dotenv
-import argparse
 from websockets.asyncio.client import connect as ws_connect
 import json
 import httpx
@@ -18,9 +16,6 @@ import httpx
 dotenv.load_dotenv(override=True)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-parser = argparse.ArgumentParser()
-parser.add_argument("-t", "--target-sid", help="target session id", default=None)
-args = parser.parse_args()
 pya = pyaudio.PyAudio()
 converter = opencc.OpenCC("s2tw")
 
@@ -28,6 +23,7 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 16000
 CHUNK = int(RATE / 10)  # 100ms
+PARTIAL_INTERVAL = 1.5
 
 class MicrophoneStream:
     """Opens a recording stream as a generator yielding the audio chunks."""
@@ -88,8 +84,8 @@ class MicrophoneStream:
             yield b"".join(data)
 
 
-class TranscriptionLoop:
-    def __init__(self):
+class ScribeRealtime:
+    def __init__(self, language_code, callback = None):
         self.out_queue = None
         self.session = None
         self.audio_stream = None
@@ -97,7 +93,10 @@ class TranscriptionLoop:
         self.connection = None
         self.is_running = True
         self.segStartTime = None
-        self.partial_task = None
+        self.callback = callback
+        self.init_time = datetime.now(timezone.utc)
+        self.last_partial_time = datetime.now(timezone.utc)
+        self.last_partial_text = ""
         self.out_buff = b""
         self.ws = None
         self.api_key = os.getenv("ELEVENLABS_API_KEY")
@@ -119,9 +118,45 @@ class TranscriptionLoop:
     # WebSocket message handlers
     def on_session_started(self, data):
         logger.info(f"Session started: {data}")
-    
+
     def on_transcript(self, data):
-        logger.info(f"Transcript received: {data}")    
+        """Process streaming responses from Google Speech-to-Text API."""
+        try:
+            transcript: str = data["text"].strip()
+            partial = (data["message_type"] == "partial_transcript")
+                
+            if transcript[-1:] in (",", ".", "。", "，"):
+                transcript = transcript[:-1]
+            
+            if not partial and transcript == self.last_partial_text:
+                return
+            
+            if self.segStartTime is None:
+                self.segStartTime = datetime.now(timezone.utc)
+    
+            transcription = {
+                "partial": partial,
+                "text": transcript,
+                "start_time": self.segStartTime.timestamp() - 0.3,
+                "end_time": datetime.now(timezone.utc).timestamp(),
+                "init_time": self.init_time.timestamp()
+            }
+            
+            if not partial:
+                self.segStartTime = None
+                if self.callback:
+                    asyncio.create_task(self.callback(transcription))
+            else:
+                if datetime.now(timezone.utc).timestamp() > self.last_partial_time.timestamp() + PARTIAL_INTERVAL:
+                    self.last_partial_time = datetime.now(timezone.utc)
+                    if self.callback:
+                        asyncio.create_task(self.callback(transcription, partial=True))
+                        
+                    
+        except Exception as e:
+            print(f"Error processing response: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
       
     def on_error(self, error):
         logger.error(f"Error: {error}")
@@ -136,6 +171,7 @@ class TranscriptionLoop:
                 audio_generator = stream.generator()
                 print("Listening...")
                 for content in audio_generator:
+                    await asyncio.sleep(0.01)
                     if self.ws:
                         base64_data = base64.b64encode(content).decode("utf-8")
                         message = {
@@ -155,16 +191,18 @@ class TranscriptionLoop:
         """Receive messages from WebSocket"""
         try:
             while True:
+                await asyncio.sleep(0.01)
                 message = await self.ws.recv()
                 data = json.loads(message)
-                logger.info(f"Received: {data}")
                 
-                if data.get("type") == "session_started":
+                if data.get("message_type") == "session_started":
                     self.on_session_started(data)
-                elif data.get("type") in ["partial_transcript", "committed_transcript"]:
+                elif data.get("message_type") in ["partial_transcript", "committed_transcript"]:
                     self.on_transcript(data)
-                elif data.get("type") in ["error", "auth_error", "quota_exceeded_error"]:
+                elif data.get("message_type") in ["error", "auth_error", "quota_exceeded_error"]:
                     self.on_error(data.get("error"))
+                else:
+                    logger.error(f"unhandled message: {data}")
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -178,10 +216,10 @@ class TranscriptionLoop:
             
             params = urlencode({
                 "token": self.get_token(),
-                "modelId": "scribe_v2_realtime",
-                "audioFormat": "pcm_16000",
-                "commitStrategy": "vad",
-                "includeTimestamps": True,
+                "model_id": "scribe_v2_realtime",
+                "audio_format": "pcm_16000",
+                "commit_strategy": "vad",
+                "include_timestamps": False
             })
             ws_url = f"{self.ws_url}?{params}"
             
@@ -207,7 +245,7 @@ class TranscriptionLoop:
 
 if __name__ == "__main__":
     try:
-        loop = TranscriptionLoop()
+        loop = ScribeRealtime(None)
         asyncio.run(loop.run())
     except KeyboardInterrupt:
         logger.info("Exiting...")

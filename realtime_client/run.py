@@ -1,4 +1,5 @@
 from google_stt_v2 import GoogleSTTV2
+from elevenlabs_realtime import ScribeRealtime
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import os
@@ -14,8 +15,9 @@ import argparse
 dotenv.load_dotenv(override=True)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(prog="opentranslive realtime client")
 parser.add_argument("-t", "--target-sid", help="target session id", default=None)
+parser.add_argument("-s", "--service", help="transcribe service provider (elevenlabs or google)", default="elevenlabs")
 args = parser.parse_args()
 sio = socketio.Client()
 converter = opencc.OpenCC("s2tw")
@@ -23,6 +25,8 @@ converter = opencc.OpenCC("s2tw")
 SERVER_URL = os.getenv("SERVER_ENDPOINT", 'http://localhost:5000')
 API_ENDPOINT = f"http://{SERVER_URL}/api/sync/{args.target_sid}" if args.target_sid else None
 AI_MODEL = os.getenv("AI_MODEL", "gpt-4.1-nano")
+TRANSCRIBE_SERVICE = args.service
+
 
 file_path = Path(f"output/{datetime.now().strftime('%Y-%m-%d')}/{datetime.now().strftime('%H-%M-%S')}.json")
 file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -297,7 +301,12 @@ async def main():
             logger.error(f"Failed to connect to WebSocket server: {e}\nFalling back to HTTP POST mode")
     
     try:
-        stt = GoogleSTTV2(language_code=languages, callback=on_transcript)
+        if TRANSCRIBE_SERVICE == "elevenlabs":
+            stt = ScribeRealtime(language_code=languages, callback=on_transcript)
+        elif TRANSCRIBE_SERVICE == "google":
+            stt = GoogleSTTV2(language_code=languages, callback=on_transcript)
+        else:
+            raise ValueError(f"Invalid transcribe service: {TRANSCRIBE_SERVICE}")
         async with asyncio.TaskGroup() as tg:
             tg.create_task(stt.run())
             tg.create_task(senderLoop())

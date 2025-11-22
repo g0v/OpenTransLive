@@ -82,6 +82,7 @@ class GoogleSTTV2:
         self.callback = callback
         self.init_time = datetime.now(timezone.utc)
         self.last_partial_time = datetime.now(timezone.utc)
+        self.last_partial_text = ""
         self.segStartTime = None
         self.buff = {
             "partial": queue.Queue(),
@@ -147,22 +148,26 @@ class GoogleSTTV2:
         """Process streaming responses from Google Speech-to-Text API."""
         try:
             transcript: str = result.alternatives[0].transcript.strip()
+            partial = (result.is_final == False)
+                
+            if transcript[-1:] in (",", ".", "。", "，"):
+                transcript = transcript[:-1]
+            
+            if not partial and transcript == self.last_partial_text:
+                return
             
             if self.segStartTime is None:
                 self.segStartTime = datetime.now(timezone.utc)
-                
-            if transcript[-1] in (",", ".", "。", "，"):
-                transcript = transcript[:-1]
     
             transcription = {
-                "partial": result.is_final == False,
+                "partial": partial,
                 "text": transcript,
                 "start_time": self.segStartTime.timestamp() - 0.3,
                 "end_time": datetime.now(timezone.utc).timestamp(),
                 "init_time": self.init_time.timestamp()
             }
             
-            if result.is_final:
+            if not partial:
                 self.segStartTime = None
                 if self.callback:
                     await self.callback(transcription)

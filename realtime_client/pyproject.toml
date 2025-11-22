@@ -13,5 +13,6 @@ dependencies = [
     "logging>=0.4.9.6",
     "opencc>=1.1.9",
     "pyaudio>=0.2.14",
+    "python-socketio>=5.14.3",
     "websockets>=14.0",
 ]
