@@ -1,0 +1,17 @@
+[project]
+name = "realtime-client"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "datetime>=5.5",
+    "dotenv>=0.9.9",
+    "google-cloud-speech>=2.34.0",
+    "google-genai>=1.49.0",
+    "httpx>=0.28.1",
+    "logging>=0.4.9.6",
+    "opencc>=1.1.9",
+    "pyaudio>=0.2.14",
+    "websockets>=14.0",
+]
