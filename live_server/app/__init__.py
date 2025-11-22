@@ -19,7 +19,7 @@ from datetime import datetime
 dotenv.load_dotenv(override=True)
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your-secret-key-here'
+app.config['SECRET_KEY'] = str(uuid.uuid4())
 socketio = SocketIO(app, cors_allowed_origins="*")
 temp_dir = Path('temp')
 temp_dir.mkdir(parents=True, exist_ok=True)
@@ -135,8 +135,11 @@ def handle_sync(data):
     
     # Add stream start time and append new transcription
     cached_data["stream_start_time"] = get_youtube_start_time(session_id)
-    cached_data["transcriptions"].append(sync_data)
-    cached_data["transcriptions"].sort(key=lambda x: x["start_time"])
+    if sync_data.get("partial", False):
+        cached_data["partial"] = sync_data
+    else:
+        cached_data["transcriptions"].append(sync_data)
+        cached_data["transcriptions"].sort(key=lambda x: x["start_time"])
     transcription_cache[session_id] = (cached_data, time.time())
 
     # Save to file in background (non-blocking)

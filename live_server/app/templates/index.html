@@ -1,0 +1,124 @@
+{% extends "base.html" %} {% block title %}Real-time Transcription Server{%
+endblock %} {% block content %}
+<div class="container mx-auto px-4 py-8">
+  <h1 class="text-3xl font-bold mb-6">Real-time Transcription Server</h1>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div class="bg-white p-6 rounded-lg shadow">
+      <h2 class="text-xl font-semibold mb-4">Create New Session</h2>
+      <form id="create-form" class="space-y-4">
+        <div>
+          <label
+            for="session-id"
+            class="block text-sm font-medium text-gray-700"
+            >Session ID</label
+          >
+          <input
+            type="text"
+            id="session-id"
+            name="session-id"
+            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+            placeholder="Enter session ID"
+          />
+        </div>
+        <button
+          type="submit"
+          target="yt"
+          class="w-full bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          Youtube Embed View
+        </button>
+        <button
+          type="submit"
+          target="rt"
+          class="w-full bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          Real-time View
+        </button>
+      </form>
+    </div>
+
+    <div class="bg-white p-6 rounded-lg shadow">
+      <h2 class="text-xl font-semibold mb-4">Test Sync API</h2>
+      <form id="sync-form" class="space-y-4">
+        <div>
+          <label for="test-id" class="block text-sm font-medium text-gray-700"
+            >Session ID</label
+          >
+          <input
+            type="text"
+            id="test-id"
+            name="test-id"
+            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+            placeholder="Enter session ID to test"
+          />
+        </div>
+        <div>
+          <label for="test-data" class="block text-sm font-medium text-gray-700"
+            >Test Data (JSON)</label
+          >
+          <textarea
+            id="test-data"
+            name="test-data"
+            rows="4"
+            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+            placeholder='{"message": "Hello World", "timestamp": "2024-01-01"}'
+          ></textarea>
+        </div>
+        <button
+          type="submit"
+          class="w-full bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+        >
+          Send Test Data
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %} {% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const createForm = document.getElementById('create-form')
+    const syncForm = document.getElementById('sync-form')
+
+    createForm.addEventListener('submit', function (e) {
+      e.preventDefault()
+      console.log(e.submitter)
+      const sessionId = document.getElementById('session-id').value.trim()
+      const target = e.submitter.getAttribute('target')
+      if (sessionId) {
+        window.open(`/${target}/${sessionId}`, '_blank')
+      }
+    })
+
+    syncForm.addEventListener('submit', function (e) {
+      e.preventDefault()
+      const sessionId = document.getElementById('test-id').value.trim()
+      const testData = document.getElementById('test-data').value.trim()
+
+      if (sessionId && testData) {
+        try {
+          const data = JSON.parse(testData)
+
+          fetch(`/api/sync/${sessionId}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+          })
+            .then(response => response.json())
+            .then(result => {
+              alert('Data sent successfully!')
+            })
+            .catch(error => {
+              alert('Error sending data: ' + error.message)
+            })
+        } catch (error) {
+          alert('Invalid JSON data: ' + error.message)
+        }
+      }
+    })
+  })
+</script>
+{% endblock %}

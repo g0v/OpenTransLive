@@ -140,6 +140,7 @@
 
       socket.on('transcription_update', function(data) {
           console.log('Transcription update received:', data);
+          if (data.partial) return; // Ignore partial updates
           transcriptionsData["transcriptions"].push(data);
           transcriptionsData["transcriptions"].sort((a, b) => a.start_time - b.start_time);
       });

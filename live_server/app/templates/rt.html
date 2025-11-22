@@ -1,0 +1,301 @@
+{% extends "base.html" %} {% block content %}
+<div class="flex flex-col h-svh">
+  <!-- Status Bar -->
+  <div class="flex items-center p-2 bg-gray-100 h-[5vh] gap-2 text-xs">
+    <span>View:</span>
+    <select
+      id="combined-select"
+      class="inline-block border-1 border-gray-400 rounded-md p-1 me-auto"
+    ></select>
+    <div id="qr-area" class="cursor-pointer bg-gray-200 px-2 py-1 rounded-md">
+      show qrcode
+      <img class="w-25vw h-25vw fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 hidden" src="" />
+    </div>
+    <a href="/download/{{ id }}" target="_blank" class="text-xs cursor-pointer bg-gray-200 px-2 py-1 rounded-md">JSON</a>
+    <div>
+      <span
+        id="status-indicator"
+        class="inline-block w-3 h-3 rounded-full bg-gray-400"
+      ></span>
+      <span id="status-text" class="ms-1">Connecting...</span>
+    </div>
+  </div>
+
+  <!-- Single Language View -->
+  <div id="single-view" class="flex-grow overflow-auto">
+    <div
+      id="data-content"
+      class="p-2 break-all whitespace-pre-wrap text-xl max-h-full overflow-auto"
+    ></div>
+  </div>
+
+  <!-- Grid Layout View -->
+  <div id="grid-view" class="flex-grow overflow-auto p-2 hidden">
+    <div id="grid-content" class="flex flex-wrap max-h-full whitespace-pre-wrap text-xl">
+      <!-- Grid items will be dynamically generated with auto-calculated columns -->
+    </div>
+  </div>
+</div>
+{% endblock %} {% block scripts %}
+<script>
+  let transcriptionsData = {{ data | tojson(indent = 2) }};
+  let lastSubtitle = null;
+  let currentLayout = 'grid'; // 'single' or 'grid'
+  let currentLanguages = [];
+  const statusIndicator = document.getElementById('status-indicator');
+  const statusText = document.getElementById('status-text');
+
+  function populateCombinedSelect() {
+    if (transcriptionsData.transcriptions) {
+      const languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1].result.translated);
+      const combinedSelect = document.getElementById('combined-select');
+      if (currentLanguages.length >= 0 && languages.every(language => currentLanguages.includes(language))) {
+        return;
+      }
+      let currentSelect = combinedSelect.value;
+      if (!currentSelect) {
+        currentSelect = 'grid';
+      }
+      currentLanguages = languages;
+      // Clear existing options
+      combinedSelect.innerHTML = '';
+
+      const gridOption = document.createElement('option');
+      gridOption.value = 'grid';
+      gridOption.textContent = 'All';
+      combinedSelect.appendChild(gridOption);
+
+      // Add language-specific options
+      languages.forEach(language => {
+        const option = document.createElement('option');
+        option.value = `single-${language}`;
+        option.textContent = `${language}`;
+        combinedSelect.appendChild(option);
+      });
+
+      combinedSelect.value = currentSelect;
+      combinedSelect.dispatchEvent(new Event('change'));
+    }
+  }
+
+  function refreshView() {
+    if (currentLayout === 'single') {
+      refreshSingleView();
+    } else {
+      refreshGridView();
+    }
+  }
+
+  function refreshSingleView() {
+    if (transcriptionsData.transcriptions?.length > 0) {
+      const dataContent = document.getElementById('data-content');
+      const selectedValue = document.getElementById('combined-select').value;
+
+      let selectedLanguage;
+      if (selectedValue.startsWith('single-')) {
+        selectedLanguage = selectedValue.replace('single-', '');
+      } else {
+        // Default to first available language for 'single' option
+        selectedLanguage = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1].result.translated)[0];
+      }
+
+      // Only update if language changed or we have new content
+      const currentContent = dataContent.textContent;
+      const newContent = transcriptionsData.transcriptions.map(subtitle => 
+        subtitle.result.translated[selectedLanguage]
+      ).join('\n');
+      if (transcriptionsData.partial) {
+        newContent += "\n" + transcriptionsData.partial.result.translated[selectedLanguage];
+      }
+
+      if (currentContent !== newContent) {
+        dataContent.textContent = newContent;
+        // Ensure auto-scroll to bottom
+        setTimeout(() => {
+          dataContent.scrollTop = dataContent.scrollHeight;
+        }, 10);
+      }
+    }
+  }
+
+  function refreshGridView() {
+    if (transcriptionsData.transcriptions?.length > 0) {
+      const gridContent = document.getElementById('grid-content');
+      const languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1].result.translated);
+      const recentTranscriptions = transcriptionsData.transcriptions;
+
+      // Auto-calculate optimal grid size based on number of languages
+      const languageCount = languages.length;
+      let gridCols;
+
+      if (languageCount <= 1) {
+        gridCols = 1;
+      } else if (languageCount <= 4) {
+        gridCols = 2; // 2x2 grid
+      } else if (languageCount <= 9) {
+        gridCols = 3; // 3x3 grid
+      } else if (languageCount <= 16) {
+        gridCols = 4; // 4x4 grid
+      } else if (languageCount <= 25) {
+        gridCols = 5; // 5x5 grid
+      } else {
+        gridCols = Math.ceil(Math.sqrt(languageCount)); // Auto-calculate for more languages
+      }
+
+      // Apply the calculated grid columns with responsive behavior
+      const screenWidth = window.innerWidth;
+      let actualCols = gridCols;
+      
+      // Adjust for smaller screens
+      if (screenWidth < 768) { // Mobile
+        actualCols = Math.min(gridCols, 1);
+      } else if (screenWidth < 1024) { // Tablet
+        actualCols = Math.min(gridCols, 2);
+      } else if (screenWidth < 1280) { // Small desktop
+        actualCols = Math.min(gridCols, 3);
+      }
+      let actualRows = Math.ceil(languageCount / actualCols);
+      
+      // Check if we need to rebuild the grid (language count changed or first time)
+      const existingBoxes = gridContent.children;
+      const needsRebuild = existingBoxes.length !== languages.length;
+
+      if (needsRebuild) {
+        gridContent.innerHTML = '';
+        
+        languages.forEach(language => {
+          const languageBox = document.createElement('div');
+          languageBox.className = `border-2 border-gray-200 py-1 w-[${99.9/actualCols}%] h-[${93/actualRows}vh]`;
+          languageBox.setAttribute('data-language', language);
+
+          const languageCard = document.createElement('div');
+          languageCard.className = `px-1 h-full overflow-auto break-all whitespace-pre-wrap leading-relaxed`;
+
+          languageBox.appendChild(languageCard);
+          gridContent.appendChild(languageBox);
+        });
+      }
+
+      // Update content for each language box
+      languages.forEach(language => {
+        const languageBox = gridContent.querySelector(`[data-language="${language}"]`);
+        if (languageBox) {
+          const languageContent = languageBox.querySelector('div > div');
+          const languageCard = languageBox.querySelector('div');
+          
+          let content = '';
+          recentTranscriptions.forEach(subtitle => {
+            content += subtitle.result.translated[language] + '\n';
+          });
+          if (transcriptionsData.partial) {
+            content += transcriptionsData.partial.result.translated[language] + '\n';
+          }
+          
+          // Only update if content changed
+          if (languageContent.textContent !== content) {
+            languageContent.textContent = content;
+            setTimeout(() => {
+              languageCard.scrollTop = languageCard.scrollHeight;
+            }, 10);
+          }
+        }
+      });
+    }
+  }
+
+  function switchLayout(selectedValue) {
+    if (selectedValue === 'grid') {
+      currentLayout = 'grid';
+      const singleView = document.getElementById('single-view');
+      const gridView = document.getElementById('grid-view');
+      singleView.classList.add('hidden');
+      gridView.classList.remove('hidden');
+    } else {
+      currentLayout = 'single';
+      const singleView = document.getElementById('single-view');
+      const gridView = document.getElementById('grid-view');
+      singleView.classList.remove('hidden');
+      gridView.classList.add('hidden');
+    }
+
+    refreshView();
+  }
+
+  // Combined select event listener
+  document.getElementById('combined-select').addEventListener('change', function() {
+    switchLayout(this.value);
+  });
+
+  document.addEventListener('DOMContentLoaded', function() {
+
+      const qrImg = document.getElementById('qr-area').querySelector('img');
+      qrImg.src = `https://quickchart.io/qr?text=${window.location.href}`;
+      
+      // Connect to WebSocket
+      const socket = io();
+
+      socket.on('connect', function() {
+          statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-green-500';
+          statusText.textContent = 'Connected';
+          console.log('WebSocket connection opened');
+          
+          // Join the session room
+          socket.emit('join_session', { session_id: '{{ id }}' });
+      });
+
+      socket.on('disconnect', function() {
+          statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-red-500';
+          statusText.textContent = 'Disconnected';
+          console.log('WebSocket connection closed');
+      });
+
+      socket.on('connected', function(data) {
+          console.log('WebSocket connected:', data);
+      });
+
+      socket.on('joined_session', function(data) {
+          console.log('Joined session:', data);
+          statusText.textContent = 'Connected to session: ' + data.session_id;
+      });
+
+      socket.on('transcription_update', function(data) {
+          console.log('Transcription update received:', data);
+          if (data.partial) {
+            transcriptionsData["partial"] = data;
+          } else {
+            transcriptionsData["partial"] = null;
+            transcriptionsData["transcriptions"].push(data);
+            transcriptionsData["transcriptions"].sort((a, b) => a.start_time - b.start_time);
+          }
+          populateCombinedSelect();
+          refreshView();
+      });
+
+      socket.on('error', function(data) {
+          console.error('WebSocket error:', data);
+          statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-red-500';
+          statusText.textContent = 'Error: ' + data.message;
+      });
+
+      // Handle window resize to recalculate grid
+      window.addEventListener('resize', function() {
+          if (currentLayout === 'grid') {
+              refreshGridView();
+          }
+      });
+
+      window.addEventListener('load', function() {
+        populateCombinedSelect();
+        const params = new URLSearchParams(window.location.search);
+        const initialLayout = params.get('layout') || 'grid';
+        document.getElementById('combined-select').value = initialLayout;
+        switchLayout(initialLayout);
+      });
+
+      // Cleanup on page unload
+      window.addEventListener('beforeunload', function() {
+          socket.disconnect();
+      });
+  });
+</script>
+{% endblock %}

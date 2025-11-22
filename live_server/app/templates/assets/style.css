@@ -1,0 +1,29 @@
+@layer base {
+  h1 {
+    @apply text-3xl font-bold;
+  }
+  h2 {
+    @apply text-2xl font-bold;
+  }
+  h3 {
+    @apply text-xl font-bold;
+  }
+  h4 {
+    @apply text-lg font-bold;
+  }
+  button {
+    @apply cursor-pointer;
+  }
+}
+
+@layer utilities {
+  .container {
+    @apply mx-auto lg:max-w-5xl px-4;
+  }
+}
+
+#qr-area:hover {
+  img {
+    display: block;
+  }
+}
