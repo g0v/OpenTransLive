@@ -23,18 +23,18 @@ sio = socketio.Client()
 converter = opencc.OpenCC("s2tw")
 
 SERVER_URL = os.getenv("SERVER_ENDPOINT", 'http://localhost:5000')
-API_ENDPOINT = f"http://{SERVER_URL}/api/sync/{args.target_sid}" if args.target_sid else None
-AI_MODEL = os.getenv("AI_MODEL", "gpt-4.1-nano")
+AI_MODEL = os.getenv("AI_MODEL", "gpt-4.1-mini")
 TRANSCRIBE_SERVICE = args.service
+NEED_CORRECT = False
 
 
 file_path = Path(f"output/{datetime.now().strftime('%Y-%m-%d')}/{datetime.now().strftime('%H-%M-%S')}.json")
 file_path.parent.mkdir(parents=True, exist_ok=True)
 transcription_data = {"transcriptions": [], "partial": None, "last_updated": None, "status": "running"}
 init_time = datetime.now(timezone.utc)
-languages = [language.strip() for language in os.getenv('TRANSLATE_LANGUAGES').split(',')]
+languages = [language.strip() for language in os.getenv('TRANSLATE_LANGUAGES', '').split(',')]
 with open(f"output/current_keywords.txt", "w", encoding="utf-8") as f:
-    f.write('\n'.join(os.getenv('COMMON_PROMPT').split(',')))
+    f.write('\n'.join(os.getenv('COMMON_PROMPT', '').split(',')))
 
 partial_tasks = asyncio.Queue(maxsize=5)
 commit_tasks = asyncio.Queue()
@@ -44,7 +44,7 @@ commit_tasks = asyncio.Queue()
 def connect():
     logger.info("Connected to server")
     if args.target_sid:
-        sio.emit('join_session', {'session_id': args.target_sid})
+        sio.emit('join_session', {'session_id': args.target_sid, 'secret_key': os.getenv('SECRET_KEY')})
 
 @sio.event
 def disconnect():
@@ -64,20 +64,6 @@ async def send_transcription_via_websocket(transcription_data):
             sio.emit('sync', websocket_data)
         except Exception as e:
             logger.error(f"Error sending via WebSocket: {e}")
-    elif API_ENDPOINT:
-        # Fallback to HTTP POST if WebSocket is not available
-        try:
-            with httpx.Client() as client:
-                response = client.post(
-                    API_ENDPOINT,
-                    json=transcription_data,
-                    headers={
-                        "Content-Type": "application/json; charset=utf-8"
-                    },
-                    timeout=None
-                )
-        except Exception as e:
-            logger.error(f"Error sending via HTTP: {e}")
 
 async def async_chat_completion(json_body):
     async with httpx.AsyncClient() as client:
@@ -134,7 +120,7 @@ async def handle_trascribed_text(data: dict, need_correct=True):
                     Return only the corrected text, no any comment.
                     """},
                     {"role": "user", "content": f"""
-                    {(' '.join(context['corrected']))[-100:]}
+                    {(' '.join(context['corrected']))[-50:]}
                     <correct_this>
                     {data["text"]}
                     </correct_this>
@@ -154,7 +140,7 @@ async def handle_trascribed_text(data: dict, need_correct=True):
             if transcription_data["partial"]:
                 prev = f"""
                 <prev_translation>
-                {transcription_data["partial"]["result"]["translated"][language]}
+                {transcription_data["partial"]["result"]["translated"][language]}......
                 </prev_translation>
                 """
             else:
@@ -174,7 +160,7 @@ async def handle_trascribed_text(data: dict, need_correct=True):
                     {prev}
                     """},
                     {"role": "user", "content": f"""
-                    {(' '.join(context['translated'][language]))[-100:]}
+                    {(' '.join(context['translated'][language]))[-50:]}
                     <translate_this>
                     {result["corrected"]}
                     </translate_this>
@@ -248,7 +234,7 @@ async def main():
         logger.info(f"Received {transcription}")
         if partial:
             try:
-                partial_tasks.put_nowait(asyncio.create_task(handle_trascribed_text(transcription)))
+                partial_tasks.put_nowait(asyncio.create_task(handle_trascribed_text(transcription, NEED_CORRECT)))
             except asyncio.QueueFull:
                 logger.warning("Tasks queue is full!! Translate is slower than transcribe, drop.")
             except Exception as e:
@@ -260,7 +246,7 @@ async def main():
                 _t.cancel()
                 
             transcription_data["transcriptions"].append(transcription)
-            await commit_tasks.put(asyncio.create_task(handle_trascribed_text(transcription)))
+            await commit_tasks.put(asyncio.create_task(handle_trascribed_text(transcription, NEED_CORRECT)))
         
         await asyncio.sleep(0.01)
         transcription_data["last_updated"] = datetime.now().isoformat()        
@@ -295,10 +281,10 @@ async def main():
     # Connect to WebSocket server if target session ID is provided
     if args.target_sid:
         try:
-            sio.connect(f"{SERVER_URL}", auth={'token': os.getenv('SECRET_KEY')})
+            sio.connect(f"{SERVER_URL}", auth={'secret_key': os.getenv('SECRET_KEY')})
             logger.info(f"Connected to WebSocket server at {SERVER_URL}")
         except Exception as e:
-            logger.error(f"Failed to connect to WebSocket server: {e}\nFalling back to HTTP POST mode")
+            logger.error(f"Failed to connect to WebSocket server: {e}")
     
     try:
         if TRANSCRIBE_SERVICE == "elevenlabs":

@@ -22,8 +22,8 @@ converter = opencc.OpenCC("s2tw")
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 16000
-CHUNK = int(RATE / 10)  # 100ms
-PARTIAL_INTERVAL = 1.5
+CHUNK = int(RATE / 8)
+PARTIAL_INTERVAL = 2
 
 class MicrophoneStream:
     """Opens a recording stream as a generator yielding the audio chunks."""

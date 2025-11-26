@@ -66,14 +66,14 @@ file_path.parent.mkdir(parents=True, exist_ok=True)
 transcription_data = {"transcriptions": [], "last_updated": None, "status": "running"}
 
 with open(f"output/current_keywords.txt", "w", encoding="utf-8") as f:
-    f.write('\n'.join(os.getenv('COMMON_PROMPT').split(',')))
+    f.write('\n'.join(os.getenv('COMMON_PROMPT', '').split(',')))
 
 # WebSocket event handlers
 @sio.event
 def connect():
     logger.info("Connected to server")
     if args.target_sid:
-        sio.emit('join_session', {'session_id': args.target_sid})
+        sio.emit('join_session', {'session_id': args.target_sid, 'secret_key': os.getenv('SECRET_KEY')})
 
 @sio.event
 def disconnect():
@@ -123,7 +123,7 @@ async def async_chat_completion(json_body):
 
 async def translate_text(data: dict):
     """language code should be in IETF BCP 47 format"""
-    languages = [language.strip() for language in os.getenv('TRANSLATE_LANGUAGES').split(',')]
+    languages = [language.strip() for language in os.getenv('TRANSLATE_LANGUAGES','').split(',')]
     try:                    
         context = {
             "corrected": "",
@@ -439,7 +439,7 @@ if __name__ == "__main__":
     # Connect to WebSocket server if target session ID is provided
     if args.target_sid:
         try:
-            sio.connect(f"{server_url}", auth={'token': os.getenv('SECRET_KEY')})
+            sio.connect(f"{server_url}", auth={'secret_key': os.getenv('SECRET_KEY')})
             logger.info(f"Connected to WebSocket server at {server_url}")
         except Exception as e:
             logger.error(f"Failed to connect to WebSocket server: {e}\nFalling back to HTTP POST mode")

@@ -1,124 +1,98 @@
-{% extends "base.html" %} {% block title %}Real-time Transcription Server{%
-endblock %} {% block content %}
-<div class="container mx-auto px-4 py-8">
-  <h1 class="text-3xl font-bold mb-6">Real-time Transcription Server</h1>
+{% extends "base.html" %}
+{% block title %}OpenTransLive - Real-time Translation{% endblock %}
 
-  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-    <div class="bg-white p-6 rounded-lg shadow">
-      <h2 class="text-xl font-semibold mb-4">Create New Session</h2>
-      <form id="create-form" class="space-y-4">
-        <div>
-          <label
-            for="session-id"
-            class="block text-sm font-medium text-gray-700"
-            >Session ID</label
-          >
-          <input
-            type="text"
-            id="session-id"
-            name="session-id"
-            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            placeholder="Enter session ID"
-          />
+{% block content %}
+<div class="min-h-screen bg-gray-50 font-sans text-gray-900">
+    <!-- Hero Section -->
+    <div class="relative overflow-hidden bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white">
+        <div class="absolute inset-0 opacity-10 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]"></div>
+        <div class="container mx-auto px-6 py-24 relative z-10 text-center">
+            <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight mb-6 drop-shadow-md">
+                OpenTransLive
+            </h1>
+            <p class="text-xl md:text-2xl font-light max-w-3xl mx-auto mb-10 text-indigo-100 drop-shadow-sm">
+                An open-source, real-time voice transcription and translation system.
+            </p>
+            <a href="#create-session" class="inline-block bg-white text-indigo-600 font-bold py-3 px-8 rounded-full shadow-lg hover:bg-gray-100 transition duration-300 transform hover:-translate-y-1">
+                Start Now
+            </a>
         </div>
-        <button
-          type="submit"
-          target="yt"
-          class="w-full bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        >
-          Youtube Embed View
-        </button>
-        <button
-          type="submit"
-          target="rt"
-          class="w-full bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        >
-          Real-time View
-        </button>
-      </form>
     </div>
 
-    <div class="bg-white p-6 rounded-lg shadow">
-      <h2 class="text-xl font-semibold mb-4">Test Sync API</h2>
-      <form id="sync-form" class="space-y-4">
-        <div>
-          <label for="test-id" class="block text-sm font-medium text-gray-700"
-            >Session ID</label
-          >
-          <input
-            type="text"
-            id="test-id"
-            name="test-id"
-            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            placeholder="Enter session ID to test"
-          />
+    <!-- Features Grid -->
+    <div class="container mx-auto px-6 py-20">
+        <h2 class="text-3xl font-bold text-center mb-16 text-gray-800">Key Features</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-10">
+            <!-- Feature 1 -->
+            <div class="bg-white rounded-xl shadow-xl p-8 hover:shadow-2xl transition duration-300 border-t-4 border-indigo-500 transform hover:-translate-y-1">
+                <div class="text-indigo-500 mb-4">
+                    <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+                </div>
+                <h3 class="text-xl font-bold mb-3">Real-time Transcription</h3>
+                <p class="text-gray-600">Instant speech-to-text using state-of-the-art models like OpenAI Whisper, Google Scrub, and Elevenlabs Scribe.</p>
+            </div>
+            <!-- Feature 2 -->
+            <div class="bg-white rounded-xl shadow-xl p-8 hover:shadow-2xl transition duration-300 border-t-4 border-purple-500 transform hover:-translate-y-1">
+                <div class="text-purple-500 mb-4">
+                    <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"></path></svg>
+                </div>
+                <h3 class="text-xl font-bold mb-3">Multi-language Translation</h3>
+                <p class="text-gray-600">Context-aware translation into multiple languages powered by AI.</p>
+            </div>
+            <!-- Feature 3 -->
+            <div class="bg-white rounded-xl shadow-xl p-8 hover:shadow-2xl transition duration-300 border-t-4 border-pink-500 transform hover:-translate-y-1">
+                <div class="text-pink-500 mb-4">
+                    <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                </div>
+                <h3 class="text-xl font-bold mb-3">YouTube Integration</h3>
+                <p class="text-gray-600">Seamlessly sync subtitles with YouTube videos and live streams.</p>
+            </div>
         </div>
-        <div>
-          <label for="test-data" class="block text-sm font-medium text-gray-700"
-            >Test Data (JSON)</label
-          >
-          <textarea
-            id="test-data"
-            name="test-data"
-            rows="4"
-            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            placeholder='{"message": "Hello World", "timestamp": "2024-01-01"}'
-          ></textarea>
-        </div>
-        <button
-          type="submit"
-          class="w-full bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
-        >
-          Send Test Data
-        </button>
-      </form>
     </div>
-  </div>
+
+    <!-- Create Session Section -->
+    <div id="create-session" class="bg-gray-100 py-20">
+        <div class="container mx-auto px-6">
+            <div class="max-w-4xl mx-auto bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col md:flex-row">
+                <div class="md:w-1/2 bg-gradient-to-br from-indigo-600 to-purple-700 p-10 text-white flex flex-col justify-center">
+                    <h3 class="text-3xl font-bold mb-4">Start a Session</h3>
+                    <p class="mb-6 opacity-90">Enter a Session ID to begin transcribing or viewing a live stream. Choose your preferred view mode.</p>
+                    <ul class="space-y-2 text-sm opacity-80">
+                        <li class="flex items-center"><svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Secure & Private</li>
+                        <li class="flex items-center"><svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg> Low Latency</li>
+                    </ul>
+                </div>
+                <div class="md:w-1/2 p-10 flex flex-col justify-center">
+                    <form id="create-form" class="space-y-6" action="{{ url_for('create_session') }}" method="post">
+                        <div>
+                            <label for="session-id" class="block text-sm font-medium text-gray-700 mb-2">Session ID</label>
+                            <input type="text" id="session-id" name="sid" class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-200 outline-none" placeholder="e.g., my-meeting-01" required>
+                        </div>
+                        <div class="space-y-3">
+                            <button type="submit" target="rt" class="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 transition duration-300 shadow-md flex justify-center items-center group">
+                                Create Session
+                            </button>
+                            <!--button type="submit" target="yt" class="w-full bg-white text-red-600 border-2 border-red-100 font-bold py-3 px-4 rounded-lg hover:bg-red-50 transition duration-300 flex justify-center items-center">
+                                <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg>
+                                YouTube Embed View
+                            </button-->
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-gray-400 py-8 text-center">
+        <div class="container mx-auto px-6">
+            <p>&copy; 2025 OpenTransLive. <a href="https://github.com/g0v/OpenTransLive" target="_blank" class="underline hover:filter hover:filter-[brightness(1.2)]">View on GitHub.</a></p>
+        </div>
+    </footer>
 </div>
-{% endblock %} {% block scripts %}
+{% endblock %}
+
+{% block scripts %}
 <script>
-  document.addEventListener('DOMContentLoaded', function () {
-    const createForm = document.getElementById('create-form')
-    const syncForm = document.getElementById('sync-form')
-
-    createForm.addEventListener('submit', function (e) {
-      e.preventDefault()
-      console.log(e.submitter)
-      const sessionId = document.getElementById('session-id').value.trim()
-      const target = e.submitter.getAttribute('target')
-      if (sessionId) {
-        window.open(`/${target}/${sessionId}`, '_blank')
-      }
-    })
-
-    syncForm.addEventListener('submit', function (e) {
-      e.preventDefault()
-      const sessionId = document.getElementById('test-id').value.trim()
-      const testData = document.getElementById('test-data').value.trim()
-
-      if (sessionId && testData) {
-        try {
-          const data = JSON.parse(testData)
-
-          fetch(`/api/sync/${sessionId}`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(data)
-          })
-            .then(response => response.json())
-            .then(result => {
-              alert('Data sent successfully!')
-            })
-            .catch(error => {
-              alert('Error sending data: ' + error.message)
-            })
-        } catch (error) {
-          alert('Invalid JSON data: ' + error.message)
-        }
-      }
-    })
-  })
 </script>
 {% endblock %}

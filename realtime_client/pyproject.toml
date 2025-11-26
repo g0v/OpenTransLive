@@ -14,5 +14,6 @@ dependencies = [
     "opencc>=1.1.9",
     "pyaudio>=0.2.14",
     "python-socketio>=5.14.3",
+    "websocket-client>=1.9.0",
     "websockets>=14.0",
 ]
