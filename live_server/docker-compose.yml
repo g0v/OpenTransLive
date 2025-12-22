@@ -1,0 +1,22 @@
+services:
+  redis:
+    image: redis:latest
+    container_name: opentranslive-redis
+
+  mongodb:
+    image: mongo:latest
+    container_name: opentranslive-db
+    volumes:
+      - mongo_data:/data/db
+
+  backend:
+    build: .
+    container_name: opentranslive-app
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./app:/app/app
+    command: ["./.venv/bin/uvicorn", "app:socket_app", "--host", "0.0.0.0", "--port", "5000", "--ws", "websockets"]
+
+volumes:
+  mongo_data:

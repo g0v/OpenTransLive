@@ -5,8 +5,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "aioredis>=2.0.1",
     "dotenv>=0.9.9",
-    "flask[async]>=3.1.1",
-    "flask-socketio>=5.3.0",
-    "requests>=2.31.0",
+    "fastapi[standard]>=0.126.0",
+    "itsdangerous>=2.2.0",
+    "mongoengine>=0.29.1",
+    "python-socketio>=5.15.1",
+    "redis>=7.1.0",
+    "requests>=2.32.5",
+    "uvicorn>=0.40.0",
+    "websockets>=15.0.1",
 ]
