@@ -24,6 +24,11 @@ dotenv.load_dotenv(override=True)
 # Import MongoDB models
 from .database import Room, TranscriptionStore
 from .config import SETTINGS, REDIS_URL
+from .scribe_manager import ScribeSessionManager
+import os
+
+active_scribe_managers = {}
+active_translation_managers = {}
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -46,7 +51,7 @@ sio = socketio.AsyncServer(
     async_mode='asgi',
     client_manager=mgr,
     cors_allowed_origins='*',
-    logger=True
+    logger=False
 )
 
 # Wrap with ASGI application
@@ -232,38 +237,47 @@ async def panel(request: Request, sid: str, secret_key: str | None = Query(defau
     
     return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key})
 
+@app.get("/live/{sid}", response_class=HTMLResponse)
+async def live(request: Request, sid: str):
+    return templates.TemplateResponse("live.html", {"request": request, "sid": sid})
+
+
+@app.get("/realtime/{sid}", response_class=HTMLResponse)
+async def realtime(request: Request, sid: str):
+    return templates.TemplateResponse("realtime.html", {"request": request, "sid": sid})
+
 
 # Socket.IO Event Handlers
 @sio.event
-async def connect(sid, environ, auth):
+async def connect(socket_id, environ, auth):
     """Handle client connection"""
     # Create a session-like object for socket.io
     if auth and auth.get('secret_key') == SETTINGS["SECRET_KEY"]:
-        await sio.save_session(sid, {'verified': True})
-        print(f"Admin client connected: {sid}")
+        await sio.save_session(socket_id, {'verified': True})
+        print(f"Admin client connected: {socket_id}")
     else:
-        await sio.save_session(sid, {'verified': False})
-        print(f"Client connected: {sid}")
-    await sio.emit('connected', {'status': 'connected', 'client_id': sid}, to=sid)
+        await sio.save_session(socket_id, {'verified': False})
+        print(f"Client connected: {socket_id}")
+    await sio.emit('connected', {'status': 'connected', 'client_id': socket_id}, to=socket_id)
 
 @sio.event
-async def disconnect(sid):
+async def disconnect(socket_id):
     """Handle client disconnection"""
-    print(f"Client disconnected: {sid}")
+    print(f"Client disconnected: {socket_id}")
 
 @sio.event
-async def sync(sid, data):
+async def sync(socket_id, data):
     """Handle WebSocket sync events"""
-    session = await sio.get_session(sid)
+    session = await sio.get_session(socket_id)
     
     if not session.get('verified'):
         if not session.get('secret_key') or session.get('secret_key') != data.get('secret_key'):
-            await sio.emit('error', {'message': 'Unauthorized'}, to=sid)
+            await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
             return
     
     session_id = data.get('id')
     if not session_id:
-        await sio.emit('error', {'message': 'Session ID is required'}, to=sid)
+        await sio.emit('error', {'message': 'Session ID is required'}, to=socket_id)
         return
     
 
@@ -300,31 +314,107 @@ async def sync(sid, data):
     await sio.emit('transcription_update', sync_data, room=session_id)
 
 @sio.event
-async def join_session(sid, data):
+async def join_session(socket_id, data):
     """Handle client joining a session room"""
     session_id = data.get('session_id')
     secret_key = data.get('secret_key')
     
-    session = await sio.get_session(sid)
+    session = await sio.get_session(socket_id)
     
     if secret_key:
         # Verify room exists with matching secret key using MongoEngine
-        room = Room.objects(sid=session_id, secret_key=secret_key).first()
+        room = Room.objects(socket_id=session_id, secret_key=secret_key).first()
         if room:
             session['secret_key'] = secret_key
             session['verified'] = True
-            await sio.save_session(sid, session)
+            await sio.save_session(socket_id, session)
             print(f"Client verified: {session_id}")
     
     if session_id:
-        await sio.enter_room(sid, session_id)
-        await sio.emit('joined_session', {'session_id': session_id}, to=sid)
+        await sio.enter_room(socket_id, session_id)
+        await sio.emit('joined_session', {'session_id': session_id}, to=socket_id)
 
 @sio.event
-async def leave_session(sid, data):
+async def leave_session(socket_id, data):
     """Handle client leaving a session room"""
     session_id = data.get('session_id')
     if session_id:
-        await sio.leave_room(sid, session_id)
-        await sio.emit('left_session', {'session_id': session_id}, to=sid)
+        await sio.leave_room(socket_id, session_id)
+        await sio.emit('left_session', {'session_id': session_id}, to=socket_id)
         print(f"Client left session: {session_id}")
+
+async def on_translation_completed(session_id, sync_data):
+    # Fetch fresh cached_data before saving/emitting
+    cached_data = await get_cached_transcription(session_id)
+    yt_start_time = get_youtube_start_time(session_id)
+    if yt_start_time:
+        cached_data["stream_start_time"] = yt_start_time
+
+    if sync_data.get("partial", False):
+        cached_data["partial"] = sync_data
+        await redis_client.setex(f"transcription:{session_id}", 3600, json.dumps(cached_data))
+    else:
+        cached_data["transcriptions"].append(sync_data)
+        cached_data["transcriptions"].sort(key=lambda x: x["start_time"])
+        await redis_client.setex(f"transcription:{session_id}", 3600, json.dumps(cached_data))
+        asyncio.create_task(save_segment_background(session_id, sync_data, cached_data.get("stream_start_time")))
+    print(sync_data, flush=True)
+    await sio.emit('transcription_update', sync_data, room=session_id)
+
+async def on_scribe_transcription(session_id, transcription):
+    """Callback for Scribe transcription"""
+    # Prepare context
+    cached_data = await get_cached_transcription(session_id)
+    sync_data = transcription.copy()
+    
+    manager = active_translation_managers.get(session_id)
+    if not manager:
+        from .translator import TranslationQueueManager
+        manager = TranslationQueueManager(on_translation_completed)
+        active_translation_managers[session_id] = manager
+        asyncio.create_task(manager.start())
+        
+    await manager.put(session_id, sync_data, cached_data, redis_client)
+
+@sio.event
+async def realtime_connect(socket_id, data):
+    """Handle client realtime_connect events"""
+    rooms = sio.rooms(socket_id)
+    session_id = next((r for r in rooms if r != socket_id), None)
+    
+    manager = active_scribe_managers.get(session_id)
+    if not manager or not manager.is_running:
+        manager = ScribeSessionManager(session_id, on_scribe_transcription)
+        active_scribe_managers[session_id] = manager
+        asyncio.create_task(manager.start())
+    
+    manager = active_translation_managers.get(session_id)
+    if not manager:
+        from .translator import TranslationQueueManager
+        manager = TranslationQueueManager(on_translation_completed)
+        active_translation_managers[session_id] = manager
+        asyncio.create_task(manager.start())
+
+@sio.event
+async def audio_buffer_append(socket_id, data):
+    """Handle client audio buffer append events"""
+    rooms = sio.rooms(socket_id)
+    session_id = next((r for r in rooms if r != socket_id), None)
+    
+    if not session_id:
+        print("No session ID found for socket ID:", socket_id, flush=True)
+        return
+
+    base64_audio = data.get("audio")
+    if not base64_audio:
+        print("No audio data found in request", flush=True)
+        return
+    
+    manager = active_scribe_managers.get(session_id)
+    if not manager or not manager.is_running:
+        manager = ScribeSessionManager(session_id, on_scribe_transcription)
+        active_scribe_managers[session_id] = manager
+        asyncio.create_task(manager.start())
+        
+    await manager.push_audio(base64_audio)
+    

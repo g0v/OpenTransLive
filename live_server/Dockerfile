@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # 1. Build Stage: Install dependencies into a virtual environment
-FROM python:3.13-slim AS build
+FROM python:3.11-slim AS build
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync
 
 # 2. Final Stage: Create the production image
-FROM python:3.13-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 

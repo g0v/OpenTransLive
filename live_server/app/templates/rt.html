@@ -39,7 +39,7 @@
 
   function populateCombinedSelect() {
     if (transcriptionsData.transcriptions) {
-      const languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1].result.translated);
+      const languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
       const combinedSelect = document.getElementById('combined-select');
       if (currentLanguages.length >= 0 && languages.every(language => currentLanguages.includes(language))) {
         return;
@@ -88,7 +88,7 @@
         selectedLanguage = selectedValue.replace('single-', '');
       } else {
         // Default to first available language for 'single' option
-        selectedLanguage = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1].result.translated)[0];
+        selectedLanguage = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {})[0];
       }
 
       // Only update if language changed or we have new content
@@ -113,7 +113,7 @@
   function refreshGridView() {
     if (transcriptionsData.transcriptions?.length > 0) {
       const gridContent = document.getElementById('grid-content');
-      const languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1].result.translated);
+      const languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
       const recentTranscriptions = transcriptionsData.transcriptions;
 
       // Auto-calculate optimal grid size based on number of languages
