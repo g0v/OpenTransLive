@@ -180,6 +180,7 @@ async def handle_trascribed_text(data: dict, need_correct=True):
             json_body = {
                 "model": AI_MODEL,
                 "temperature": 0,
+                "response_format": {"type": "json_object"},
                 "messages": [
                     {"role": "developer", 
                      "content": f"""If there are very special keywords in the provide text, add them to the special_keywords list.
