@@ -100,14 +100,16 @@ class ScribeSessionManager:
 
             msg_type = data.get("message_type")
             partial = (msg_type == "partial_transcript")
+            now = datetime.now(timezone.utc)
             
             # Efficiently strip specific punctuation
             transcript = transcript.rstrip(",.。，")
-            
-            if not partial and transcript == self.last_partial_text:
+            delta_t = (now - self.last_partial_time).total_seconds()
+            if partial and (transcript == self.last_partial_text or 
+                            delta_t < self.partial_interval):
+                print(f"skip partial: {transcript}, {delta_t}", flush=True)
                 return
             
-            now = datetime.now(timezone.utc)
             if self.seg_start_time is None:
                 self.seg_start_time = now
 
@@ -119,14 +121,14 @@ class ScribeSessionManager:
                 "result": {"corrected": transcript}
             }
             
-            if not partial:
-                self.seg_start_time = None
+            if partial:
+                self.last_partial_time = now
+                self.last_partial_text = transcript
                 await self.callback(self.session_id, transcription)
             else:
-                if (now - self.last_partial_time).total_seconds() > self.partial_interval:
-                    self.last_partial_time = now
-                    self.last_partial_text = transcript
-                    await self.callback(self.session_id, transcription)
+                self.seg_start_time = None
+                await self.callback(self.session_id, transcription)
+                
         except Exception as e:
             logger.error(f"Error handling transcript: {e}")
 

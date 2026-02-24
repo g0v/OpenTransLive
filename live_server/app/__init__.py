@@ -287,27 +287,6 @@ async def disconnect(socket_id):
     """Handle client disconnection"""
     print(f"Client disconnected: {socket_id}")
 
-@sio.event
-async def sync(socket_id, data):
-    """Handle WebSocket sync events"""
-    session = await sio.get_session(socket_id)
-    
-    if not session.get('verified'):
-        if not session.get('secret_key') or session.get('secret_key') != data.get('secret_key'):
-            await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
-            return
-    
-    session_id = data.get('id')
-    if not session_id:
-        await sio.emit('error', {'message': 'Session ID is required'}, to=socket_id)
-        return
-    
-    # Remove id from the data before processing
-    sync_data = data.copy()
-    sync_data.pop("id", None)
-    
-    await _process_transcription_update(session_id, sync_data)
-
 async def _process_transcription_update(session_id, sync_data):
     """Internal helper to process transcription updates (cache, DB, and broadcast)"""
     # Fetch cached transcription data (Redis or DB)
@@ -351,6 +330,27 @@ async def _process_transcription_update(session_id, sync_data):
     
     # Emit update to all clients in the session room
     await sio.emit('transcription_update', sync_data, room=session_id)
+    
+@sio.event
+async def sync(socket_id, data):
+    """Handle WebSocket sync events"""
+    session = await sio.get_session(socket_id)
+    
+    if not session.get('verified'):
+        if not session.get('secret_key') or session.get('secret_key') != data.get('secret_key'):
+            await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+            return
+    
+    session_id = data.get('id')
+    if not session_id:
+        await sio.emit('error', {'message': 'Session ID is required'}, to=socket_id)
+        return
+    
+    # Remove id from the data before processing
+    sync_data = data.copy()
+    sync_data.pop("id", None)
+    
+    await _process_transcription_update(session_id, sync_data)
 
 @sio.event
 async def join_session(socket_id, data):
