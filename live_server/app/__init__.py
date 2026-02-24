@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 import socketio
+from contextlib import asynccontextmanager
 from typing import Any
 from pathlib import Path
 from datetime import datetime, timezone
@@ -30,8 +31,26 @@ import os
 active_scribe_managers = {}
 active_translation_managers = {}
 
-# Initialize FastAPI app
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    yield
+    # Shutdown
+    print("Shutting down resources...")
+    # Close shared translator client
+    from .translator import close_async_client
+    await close_async_client()
+    
+    # Stop all active scribe managers
+    for manager in active_scribe_managers.values():
+        await manager.stop()
+    
+    # Stop all active translation managers
+    for manager in active_translation_managers.values():
+        await manager.stop()
+
+# Initialize FastAPI app with lifespan
+app = FastAPI(lifespan=lifespan)
 
 # Add session middleware
 app.add_middleware(SessionMiddleware, secret_key=str(uuid.uuid4()))
@@ -113,35 +132,38 @@ def get_youtube_start_time(video_id: str) -> float | None:
     return None
 
 async def get_cached_transcription(id) -> Any:
-    # Try fetching from Redis first
+    # Try fetching committed transcriptions and partial separately from Redis
     try:
-        cached_json = await redis_client.get(f"transcription:{id}")
-        if cached_json:
-            return json.loads(cached_json)
-    except Exception as e:
-        print(f"Redis get error: {e}")
-
-    # Fallback to DB
-    def fetch_db():
-        return TranscriptionStore.objects(sid=id).first()
+        committed_json = await redis_client.get(f"transcription:{id}")
+        partial_json = await redis_client.get(f"transcription:{id}:partial")
         
-    store = await asyncio.to_thread(fetch_db)
-    
-    if store:
-        data = {
-            "transcriptions": store.transcriptions,
-            "stream_start_time": store.stream_start_time
-        }
-    else:
-        data = {"transcriptions": []}
-    
-    # Update Redis
-    try:
-        await redis_client.setex(f"transcription:{id}", 3600, json.dumps(data))
-    except Exception as e:
-        print(f"Redis set error: {e}")
+        data = None
+        if committed_json:
+            data = json.loads(committed_json)
         
-    return data
+        # Fallback to DB if no committed data in Redis
+        if data is None:
+            def fetch_db():
+                return TranscriptionStore.objects(sid=id).first()
+            store = await asyncio.to_thread(fetch_db)
+            if store:
+                data = {
+                    "transcriptions": store.transcriptions,
+                    "stream_start_time": store.stream_start_time
+                }
+                # Backfill Redis
+                await redis_client.setex(f"transcription:{id}", 3600, json.dumps(data))
+            else:
+                data = {"transcriptions": []}
+        
+        # Merge partial data if exists
+        if partial_json:
+            data["partial"] = json.loads(partial_json)
+            
+        return data
+    except Exception as e:
+        print(f"Redis/DB error in get_cached_transcription: {e}")
+        return {"transcriptions": []}
 
 
 def _push_segment_mongo_sync(sid, segment, stream_start_time):
@@ -280,13 +302,15 @@ async def sync(socket_id, data):
         await sio.emit('error', {'message': 'Session ID is required'}, to=socket_id)
         return
     
-
-    
     # Remove id from the data before processing
     sync_data = data.copy()
     sync_data.pop("id", None)
     
-    # Get cached transcription data (Redis or DB)
+    await _process_transcription_update(session_id, sync_data)
+
+async def _process_transcription_update(session_id, sync_data):
+    """Internal helper to process transcription updates (cache, DB, and broadcast)"""
+    # Fetch cached transcription data (Redis or DB)
     cached_data = await get_cached_transcription(session_id)
     
     # Add stream start time
@@ -295,20 +319,35 @@ async def sync(socket_id, data):
          cached_data["stream_start_time"] = yt_start_time
     
     if sync_data.get("partial", False):
-        cached_data["partial"] = sync_data
-        # Update Redis Only
-        await redis_client.setex(f"transcription:{session_id}", 3600, json.dumps(cached_data))
+        # Update Redis Partial Only - Atomically
+        await redis_client.setex(f"transcription:{session_id}:partial", 3600, json.dumps(sync_data))
     else:
+        # Fetch fresh committed data, append new segment, and update Redis
+        # Note: In high-concurrency, we'd use a Lua script or Redis List for atomicity,
+        # but here we'll update the main transcription list.
+        # (Re-fetching here to match on_translation_completed's pattern which is slightly safer)
+        cached_data = await get_cached_transcription(session_id)
         cached_data["transcriptions"].append(sync_data)
         cached_data["transcriptions"].sort(key=lambda x: x["start_time"])
         
-        # Update Redis
-        await redis_client.setex(f"transcription:{session_id}", 3600, json.dumps(cached_data))
+        # Separate partial from committed when saving
+        committed_only = {
+            "transcriptions": cached_data["transcriptions"],
+            "stream_start_time": cached_data.get("stream_start_time")
+        }
         
-        # Save to MongoDB in background - Optimized: Push only the new segment
+        await redis_client.setex(f"transcription:{session_id}", 3600, json.dumps(committed_only))
+        # Clear partial when a segment is committed
+        await redis_client.delete(f"transcription:{session_id}:partial")
+        
+        # Save to MongoDB in background
         asyncio.create_task(save_segment_background(session_id, sync_data, cached_data.get("stream_start_time")))
     
-    print("sync", sync_data["start_time"], sync_data["result"]["corrected"])
+    # Log the update
+    log_msg = f"sync {sync_data['start_time']}"
+    if "result" in sync_data and "corrected" in sync_data["result"]:
+        log_msg += f" {sync_data['result']['corrected']}"
+    print(log_msg, flush=True)
     
     # Emit update to all clients in the session room
     await sio.emit('transcription_update', sync_data, room=session_id)
@@ -344,22 +383,7 @@ async def leave_session(socket_id, data):
         print(f"Client left session: {session_id}")
 
 async def on_translation_completed(session_id, sync_data):
-    # Fetch fresh cached_data before saving/emitting
-    cached_data = await get_cached_transcription(session_id)
-    yt_start_time = get_youtube_start_time(session_id)
-    if yt_start_time:
-        cached_data["stream_start_time"] = yt_start_time
-
-    if sync_data.get("partial", False):
-        cached_data["partial"] = sync_data
-        await redis_client.setex(f"transcription:{session_id}", 3600, json.dumps(cached_data))
-    else:
-        cached_data["transcriptions"].append(sync_data)
-        cached_data["transcriptions"].sort(key=lambda x: x["start_time"])
-        await redis_client.setex(f"transcription:{session_id}", 3600, json.dumps(cached_data))
-        asyncio.create_task(save_segment_background(session_id, sync_data, cached_data.get("stream_start_time")))
-    print(sync_data, flush=True)
-    await sio.emit('transcription_update', sync_data, room=session_id)
+    await _process_transcription_update(session_id, sync_data)
 
 async def on_scribe_transcription(session_id, transcription):
     """Callback for Scribe transcription"""

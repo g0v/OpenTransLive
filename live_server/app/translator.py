@@ -9,21 +9,39 @@ from .config import REALTIME_SETTINGS
 logger = logging.getLogger(__name__)
 
 
+_client: httpx.AsyncClient | None = None
+
+def get_async_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0))
+    return _client
+
+async def close_async_client():
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
+
 async def async_chat_completion(json_body):
     api_key = REALTIME_SETTINGS.get('OPENAI_API_KEY')
     if not api_key:
         return None
-    async with httpx.AsyncClient() as client:
+    
+    client = get_async_client()
+    try:
         response = await client.post(
             "https://api.openai.com/v1/chat/completions",
             json=json_body,
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
-            },
-            timeout=10.0
+            }
         )
-    return response
+        return response
+    except Exception as e:
+        logger.error(f"HTTP request error: {e}")
+        return None
 
 async def get_current_keywords(redis_client, session_id):
     try:
@@ -94,6 +112,11 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         ]
     }
     
+    # Correction and Keyword extraction (if not partial) can actually start together if keywords are from raw text, 
+    # but usually we want keywords from corrected text. 
+    # However, translation MUST wait for correction.
+    
+    # 1. Correction
     try:
         response = await async_chat_completion(json_body)
         if response and response.status_code == 200:
@@ -101,9 +124,9 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     except Exception as e:
         logger.error(f"Correction error: {e}")
 
-    # Translate text
+    # 2. Parallel: Translation + Keyword Extraction
     translated = {}
-    async def _worker(language):
+    async def _translation_worker(language):
         prev_translation = ""
         if cached_data.get("partial"):
             pt_trans = cached_data["partial"].get("result", {}).get("translated", {}).get(language, "")
@@ -129,7 +152,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
             logger.error(f"Translation error for {language}: {e}")
             translated[language] = result['corrected']
 
-    async def _worker2():
+    async def _keyword_worker():
         json_body = {
             "model": AI_MODEL,
             "temperature": 0,
@@ -147,11 +170,12 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         except Exception as e:
             logger.error(f"Keywords extraction error: {e}")
 
-    atasks = [_worker(lang) for lang in languages]
+    atasks = [_translation_worker(lang) for lang in languages]
     if not partial:
-        atasks.append(_worker2())
+        atasks.append(_keyword_worker())
     
-    await asyncio.gather(*atasks)
+    if atasks:
+        await asyncio.gather(*atasks)
         
     result["translated"] = translated
     
@@ -210,9 +234,13 @@ class TranslationQueueManager:
 
     async def _process(self, session_id, sync_data, cached_data, redis_client):
         try:
+            start_t = asyncio.get_event_loop().time()
             result_data = await translate_transcription(session_id, sync_data, cached_data, redis_client)
+            end_t = asyncio.get_event_loop().time()
+            
+            logger.debug(f"Translation processed in {end_t - start_t:.3f}s for session {session_id}")
             await self.callback(session_id, result_data)
         except asyncio.CancelledError:
-            pass
+            logger.debug(f"Translation task cancelled for session {session_id}")
         except Exception as e:
-            logger.error(f"Process translation error: {e}")
+            logger.error(f"Process translation error: {e}", exc_info=True)
