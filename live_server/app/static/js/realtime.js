@@ -8,7 +8,7 @@ socket.on('connect', function () {
   console.log('WebSocket connection opened');
 
   // Join the session room
-  socket.emit('join_session', { session_id: sessionId });
+  socket.emit('join_session', { session_id: sessionId, secret_key: user_secret_key });
 });
 
 socket.on('disconnect', function () {
@@ -25,6 +25,12 @@ socket.on('joined_session', function (data) {
   console.log('Joined session:', data);
   statusText.textContent = 'Connected to session: ' + data.session_id;
   socket.emit('realtime_connect', { session_id: sessionId });
+});
+
+socket.on('error', function (data) {
+  console.error('WebSocket error:', data);
+  stopSession();
+  setMicState('off');
 });
 
 async function startSession() {
@@ -59,6 +65,7 @@ async function startSession() {
       const base64Audio = btoa(String.fromCharCode(...new Uint8Array(buffer)));
 
       socket.emit('audio_buffer_append', {
+        secret_key: user_secret_key,
         audio: base64Audio
       });
 
@@ -86,5 +93,4 @@ async function stopSession() {
   }
 }
 
-document.querySelector('#start-btn').addEventListener('click', startSession);
-document.querySelector('#stop-btn').addEventListener('click', stopSession);
+// startSession / stopSession are called by the mic toggle in panel.html

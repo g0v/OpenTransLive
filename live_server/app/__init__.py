@@ -55,7 +55,9 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=str(uuid.uuid4()))
 
 # Setup templates
+timestamp = datetime.now(timezone.utc).timestamp()
 templates = Jinja2Templates(directory="app/templates")
+templates.env.globals["timestamp"] = timestamp
 
 # Mount static files
 static_dir = Path("app/static")
@@ -305,16 +307,6 @@ async def panel(request: Request, sid: str, secret_key: str | None = Query(defau
     
     return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key})
 
-@app.get("/live/{sid}", response_class=HTMLResponse)
-async def live(request: Request, sid: str):
-    return templates.TemplateResponse("live.html", {"request": request, "sid": sid})
-
-
-@app.get("/realtime/{sid}", response_class=HTMLResponse)
-async def realtime(request: Request, sid: str):
-    return templates.TemplateResponse("realtime.html", {"request": request, "sid": sid})
-
-
 # Socket.IO Event Handlers
 @sio.event
 async def connect(socket_id, environ, auth):
@@ -485,6 +477,14 @@ async def realtime_connect(socket_id, data):
 @sio.event
 async def audio_buffer_append(socket_id, data):
     """Handle client audio buffer append events"""
+    session = await sio.get_session(socket_id)
+
+    if not session.get('verified'):
+        if not session.get('secret_key') or session.get('secret_key') != data.get('secret_key'):
+            await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+            return
+    session['verified'] = True
+
     rooms = sio.rooms(socket_id)
     session_id = next((r for r in rooms if r != socket_id), None)
     

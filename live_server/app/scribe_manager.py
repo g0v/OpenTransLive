@@ -147,7 +147,7 @@ class ScribeSessionManager:
                 "audio_format": "pcm_16000",
                 "commit_strategy": "vad",
                 "vad_silence_threshold_secs": 1.5,
-                "vad_threshold": 0.4,
+                "vad_threshold": 0.3,
                 "min_speech_duration_ms": 100,
                 "min_silence_duration_ms": 100,
                 "include_timestamps": "false"
