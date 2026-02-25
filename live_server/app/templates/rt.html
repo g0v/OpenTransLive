@@ -252,12 +252,27 @@
 
     socket.on('transcription_update', function (data) {
       console.log('Transcription update received:', data);
+
+      // Check if last_committed is missing from our local list
+      if (data.last_committed) {
+        const last_committed = data.last_committed;
+        const exists = transcriptionsData["transcriptions"].some(t => t.start_time === last_committed.start_time);
+        if (!exists) {
+          console.log('Adding missing last_committed segment:', last_committed.start_time);
+          transcriptionsData["transcriptions"].push(last_committed);
+          transcriptionsData["transcriptions"].sort((a, b) => a.start_time - b.start_time);
+        }
+      }
+
       if (data.partial) {
         transcriptionsData["partial"] = data;
       } else {
         transcriptionsData["partial"] = null;
-        transcriptionsData["transcriptions"].push(data);
-        transcriptionsData["transcriptions"].sort((a, b) => a.start_time - b.start_time);
+        const exists = transcriptionsData["transcriptions"].some(t => t.start_time === data.start_time);
+        if (!exists) {
+          transcriptionsData["transcriptions"].push(data);
+          transcriptionsData["transcriptions"].sort((a, b) => a.start_time - b.start_time);
+        }
       }
       populateCombinedSelect();
       refreshView();

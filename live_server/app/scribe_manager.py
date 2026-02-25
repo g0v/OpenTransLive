@@ -107,8 +107,8 @@ class ScribeSessionManager:
             delta_t = (now - self.last_partial_time).total_seconds()
             if partial and (transcript == self.last_partial_text or 
                             delta_t < self.partial_interval):
-                print(f"skip partial: {transcript}, {delta_t}", flush=True)
                 return
+            print(f"accept transcript {'partial' if partial else 'committed'}: {transcript}, {delta_t}", flush=True)
             
             if self.seg_start_time is None:
                 self.seg_start_time = now
@@ -124,10 +124,10 @@ class ScribeSessionManager:
             if partial:
                 self.last_partial_time = now
                 self.last_partial_text = transcript
-                await self.callback(self.session_id, transcription)
+                asyncio.create_task(self.callback(self.session_id, transcription))
             else:
                 self.seg_start_time = None
-                await self.callback(self.session_id, transcription)
+                asyncio.create_task(self.callback(self.session_id, transcription))
                 
         except Exception as e:
             logger.error(f"Error handling transcript: {e}")
@@ -146,7 +146,11 @@ class ScribeSessionManager:
                 "model_id": "scribe_v2_realtime",
                 "audio_format": "pcm_16000",
                 "commit_strategy": "vad",
-                "include_timestamps": "false"  # urlencode expects str
+                "vad_silence_threshold_secs": 1.5,
+                "vad_threshold": 0.4,
+                "min_speech_duration_ms": 100,
+                "min_silence_duration_ms": 100,
+                "include_timestamps": "false"
             })
             url = f"{self.ws_url}?{params}"
             

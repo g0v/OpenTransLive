@@ -17,13 +17,12 @@ import uuid
 import json
 import asyncio
 import time
-import requests
 import dotenv
 
 dotenv.load_dotenv(override=True)
 
 # Import MongoDB models
-from .database import Room, TranscriptionStore
+from .database import rooms_collection, transcription_store_collection
 from .config import SETTINGS, REDIS_URL
 from .scribe_manager import ScribeSessionManager
 import os
@@ -86,7 +85,7 @@ youtube_data_cache = {}
 import redis.asyncio as redis
 redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
-def get_youtube_start_time(video_id: str) -> float | None:
+async def get_youtube_start_time(video_id: str) -> float | None:
     """
     Get the actual stream start time for a YouTube video using YouTube Data API v3.
     Returns the actualStartTime if available, otherwise None.
@@ -94,6 +93,8 @@ def get_youtube_start_time(video_id: str) -> float | None:
     data = None
     if video_id in youtube_data_cache and youtube_data_cache[video_id] is not None:
         data = youtube_data_cache[video_id]
+    elif video_id in youtube_data_cache: # Negative cache
+        return None
     else:
         api_key = SETTINGS["YOUTUBE_API_KEY"]
         if not api_key:
@@ -106,7 +107,9 @@ def get_youtube_start_time(video_id: str) -> float | None:
             'key': api_key
         }
         try:
-            response = requests.get(url, params=params, timeout=10)
+            from .translator import get_async_client
+            client = get_async_client()
+            response = await client.get(url, params=params, timeout=10.0)
             response.raise_for_status()
             
             data = response.json()
@@ -114,14 +117,14 @@ def get_youtube_start_time(video_id: str) -> float | None:
             if 'items' in data and len(data['items']) > 0:
                 data = data['items'][0]
                 youtube_data_cache[video_id] = data
-        except requests.exceptions.RequestException as e:
+            else:
+                youtube_data_cache[video_id] = None # negative cache
+                
+        except Exception as e:
             print(f"Error fetching YouTube data: {e}")
             return None
-        except Exception as e:
-            print(f"Unexpected error: {e}")
-            return None
-    print(data)
-    if 'liveStreamingDetails' in data:
+    
+    if data and 'liveStreamingDetails' in data:
         live_details = data['liveStreamingDetails']
         # Check for actualStartTime (when stream actually started)
         if 'actualStartTime' in live_details:
@@ -132,27 +135,41 @@ def get_youtube_start_time(video_id: str) -> float | None:
     return None
 
 async def get_cached_transcription(id) -> Any:
-    # Try fetching committed transcriptions and partial separately from Redis
+    # Try fetching committed transcriptions (ZSET) and partial from Redis
     try:
-        committed_json = await redis_client.get(f"transcription:{id}")
+        # ZSET for committed transcriptions, stored as JSON strings with start_time as score
+        committed_json_list = await redis_client.zrange(f"transcription:{id}:list", 0, -1)
+        meta_json = await redis_client.get(f"transcription:{id}:meta")
         partial_json = await redis_client.get(f"transcription:{id}:partial")
         
         data = None
-        if committed_json:
-            data = json.loads(committed_json)
+        if committed_json_list:
+            data = {
+                "transcriptions": [json.loads(j) for j in committed_json_list],
+                "stream_start_time": None
+            }
+            if meta_json:
+                meta = json.loads(meta_json)
+                data["stream_start_time"] = meta.get("stream_start_time")
         
-        # Fallback to DB if no committed data in Redis
+        # Migration/Fallback: Check if old String-style cache exists
         if data is None:
-            def fetch_db():
-                return TranscriptionStore.objects(sid=id).first()
-            store = await asyncio.to_thread(fetch_db)
+            old_committed_json = await redis_client.get(f"transcription:{id}")
+            if old_committed_json:
+                data = json.loads(old_committed_json)
+                # Migrate to ZSET in background
+                asyncio.create_task(migrate_to_zset(id, data))
+        
+        # Final fallback to DB if no data in Redis
+        if data is None:
+            store = await transcription_store_collection.find_one({"sid": id})
             if store:
                 data = {
-                    "transcriptions": store.transcriptions,
-                    "stream_start_time": store.stream_start_time
+                    "transcriptions": store.get("transcriptions", []),
+                    "stream_start_time": store.get("stream_start_time")
                 }
                 # Backfill Redis
-                await redis_client.setex(f"transcription:{id}", 3600, json.dumps(data))
+                asyncio.create_task(migrate_to_zset(id, data))
             else:
                 data = {"transcriptions": []}
         
@@ -165,22 +182,47 @@ async def get_cached_transcription(id) -> Any:
         print(f"Redis/DB error in get_cached_transcription: {e}")
         return {"transcriptions": []}
 
-
-def _push_segment_mongo_sync(sid, segment, stream_start_time):
-    """Synchronously push a single segment to MongoDB"""
+async def migrate_to_zset(id, data):
+    """Helper to migrate old list storage to Redis ZSET and Meta keys"""
     try:
-        TranscriptionStore.objects(sid=sid).update_one(
-            push__transcriptions=segment,
-            set__stream_start_time=stream_start_time,
-            set__updated_at=datetime.now(timezone.utc),
+        if not data.get("transcriptions"):
+            return
+            
+        # Add to ZSET
+        pipe = redis_client.pipeline()
+        for seg in data["transcriptions"]:
+            pipe.zadd(f"transcription:{id}:list", {json.dumps(seg): seg["start_time"]})
+        
+        # Set Meta
+        meta = {"stream_start_time": data.get("stream_start_time")}
+        pipe.setex(f"transcription:{id}:meta", 3600, json.dumps(meta))
+        
+        # Set expiry for ZSET
+        pipe.expire(f"transcription:{id}:list", 3600)
+        
+        # Delete old key
+        pipe.delete(f"transcription:{id}")
+        await pipe.execute()
+    except Exception as e:
+        print(f"Migration error for {id}: {e}")
+
+
+async def save_segment_background(sid, segment, stream_start_time):
+    """Push segment to MongoDB in background"""
+    try:
+        await transcription_store_collection.update_one(
+            {"sid": sid},
+            {
+                "$push": {"transcriptions": segment},
+                "$set": {
+                    "stream_start_time": stream_start_time,
+                    "updated_at": datetime.now(timezone.utc)
+                }
+            },
             upsert=True
         )
     except Exception as e:
         print(f"Error saving to MongoDB: {e}")
-
-async def save_segment_background(sid, segment, stream_start_time):
-    """Push segment to MongoDB in background"""
-    await asyncio.to_thread(_push_segment_mongo_sync, sid, segment, stream_start_time)
 
 
 # FastAPI Routes
@@ -205,7 +247,7 @@ async def download(id: str):
 async def yt(request: Request, id: str):
     data = await get_cached_transcription(id)
     # Note: This might overwrite stream_start_time in the display data, but not cache
-    data["stream_start_time"] = get_youtube_start_time(id) 
+    data["stream_start_time"] = await get_youtube_start_time(id) 
     return templates.TemplateResponse("yt.html", {"request": request, "id": id, "data": data})
 
 @app.get("/rt/{id}", response_class=HTMLResponse)
@@ -219,8 +261,8 @@ async def rt(request: Request, id: str):
 async def create_session(request: Request, sid: str = Form(...)):
     session_secret_key = str(uuid.uuid4())
     
-    # Check if room already exists using MongoEngine
-    existing_room = Room.objects(sid=sid).first()
+    # Check if room already exists using Motor
+    existing_room = await rooms_collection.find_one({"sid": sid})
     if existing_room:
         return HTMLResponse(content="""
         <html lang="en">
@@ -238,8 +280,12 @@ async def create_session(request: Request, sid: str = Form(...)):
         """)
     
     # Create new room
-    room = Room(sid=sid, secret_key=session_secret_key)
-    room.save()
+    await rooms_collection.insert_one({
+        "sid": sid,
+        "secret_key": session_secret_key,
+        "created_at": datetime.now(timezone.utc),
+        "extra": {}
+    })
     
     request.session["secret_key"] = session_secret_key
     return RedirectResponse(url=f"/panel/{sid}?secret_key={session_secret_key}", status_code=303)
@@ -252,8 +298,8 @@ async def panel(request: Request, sid: str, secret_key: str | None = Query(defau
     if not user_secret_key:
         raise HTTPException(status_code=401, detail="Unauthorized")
     
-    # Verify room exists with matching secret key using MongoEngine
-    room = Room.objects(sid=sid, secret_key=user_secret_key).first()
+    # Verify room exists with matching secret key using Motor
+    room = await rooms_collection.find_one({"sid": sid, "secret_key": user_secret_key})
     if not room:
         raise HTTPException(status_code=401, detail="Unauthorized")
     
@@ -293,34 +339,46 @@ async def _process_transcription_update(session_id, sync_data):
     cached_data = await get_cached_transcription(session_id)
     
     # Add stream start time
-    yt_start_time = get_youtube_start_time(session_id)
+    yt_start_time = await get_youtube_start_time(session_id)
     if yt_start_time:
          cached_data["stream_start_time"] = yt_start_time
     
+    # Get last committed segment if available
+    last_committed = None
+    last_committed_json = await redis_client.zrange(f"transcription:{session_id}:list", -1, -1)
+    if last_committed_json:
+        last_committed = json.loads(last_committed_json[0])
+    
     if sync_data.get("partial", False):
+        # Skip if partial data is older than the last committed one
+        if last_committed and sync_data["start_time"] < last_committed["start_time"]:
+            print(f"skip older partial: {sync_data['start_time']} < {last_committed['start_time']}", flush=True)
+            return
+
         # Update Redis Partial Only - Atomically
         await redis_client.setex(f"transcription:{session_id}:partial", 3600, json.dumps(sync_data))
     else:
-        # Fetch fresh committed data, append new segment, and update Redis
-        # Note: In high-concurrency, we'd use a Lua script or Redis List for atomicity,
-        # but here we'll update the main transcription list.
-        # (Re-fetching here to match on_translation_completed's pattern which is slightly safer)
-        cached_data = await get_cached_transcription(session_id)
-        cached_data["transcriptions"].append(sync_data)
-        cached_data["transcriptions"].sort(key=lambda x: x["start_time"])
+        # Atomic ZSET update
+        pipe = redis_client.pipeline()
+        # Add new segment to ZSET with start_time as score
+        pipe.zadd(f"transcription:{session_id}:list", {json.dumps(sync_data): sync_data["start_time"]})
         
-        # Separate partial from committed when saving
-        committed_only = {
-            "transcriptions": cached_data["transcriptions"],
-            "stream_start_time": cached_data.get("stream_start_time")
-        }
+        # Update Meta (expiry and stream_start_time)
+        meta = {"stream_start_time": yt_start_time or cached_data.get("stream_start_time")}
+        pipe.setex(f"transcription:{session_id}:meta", 3600, json.dumps(meta))
+        pipe.expire(f"transcription:{session_id}:list", 3600)
         
-        await redis_client.setex(f"transcription:{session_id}", 3600, json.dumps(committed_only))
-        # Clear partial when a segment is committed
-        await redis_client.delete(f"transcription:{session_id}:partial")
+        # Clear partial
+        pipe.delete(f"transcription:{session_id}:partial")
+        await pipe.execute()
+        
+        # Get the actual last committed after ZADD (to handle potential out-of-order)
+        new_last_json = await redis_client.zrange(f"transcription:{session_id}:list", -1, -1)
+        if new_last_json:
+            last_committed = json.loads(new_last_json[0])
         
         # Save to MongoDB in background
-        asyncio.create_task(save_segment_background(session_id, sync_data, cached_data.get("stream_start_time")))
+        asyncio.create_task(save_segment_background(session_id, sync_data, meta["stream_start_time"]))
     
     # Log the update
     log_msg = f"sync {sync_data['start_time']}"
@@ -328,8 +386,13 @@ async def _process_transcription_update(session_id, sync_data):
         log_msg += f" {sync_data['result']['corrected']}"
     print(log_msg, flush=True)
     
+    # Include last_committed in the payload
+    payload = sync_data.copy()
+    if last_committed:
+        payload["last_committed"] = last_committed
+    
     # Emit update to all clients in the session room
-    await sio.emit('transcription_update', sync_data, room=session_id)
+    await sio.emit('transcription_update', payload, room=session_id)
     
 @sio.event
 async def sync(socket_id, data):
@@ -361,8 +424,8 @@ async def join_session(socket_id, data):
     session = await sio.get_session(socket_id)
     
     if secret_key:
-        # Verify room exists with matching secret key using MongoEngine
-        room = Room.objects(socket_id=session_id, secret_key=secret_key).first()
+        # Verify room exists with matching secret key using Motor
+        room = await rooms_collection.find_one({"sid": session_id, "secret_key": secret_key})
         if room:
             session['secret_key'] = secret_key
             session['verified'] = True

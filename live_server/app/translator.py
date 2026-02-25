@@ -61,7 +61,7 @@ async def save_current_keywords(redis_client, session_id, keywords):
     except Exception as e:
         logger.error(f"Redis set keywords error: {e}")
 
-async def translate_transcription(session_id, data: dict, cached_data: dict, redis_client):
+async def translate_transcription(session_id, data: dict, cached_data: dict, redis_client, skip_correction=False):
     """
     data: the new transcription segment, e.g. {"partial": True, "result": {"corrected": "..."}}
     cached_data: the history `{"transcriptions": [...]}`
@@ -75,7 +75,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     if not languages:
         return data
 
-    partial = data.get("partial", False)
+    partial = data.get("partial") is True
     text = data.get("result", {}).get("corrected", "")
     if not text:
         return data
@@ -102,25 +102,27 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         "special_keywords": [],
     }
     
-    # Correct text
-    json_body = {
-        "model": AI_MODEL,
-        "temperature": 0,
-        "messages": [
-            {"role": "developer", "content": f"This is a transcription about:\n{', '.join(current_keywords)}\n\nCorrect the text **only in <correct_this>** as \"corrected text\" according to the reference and context.\nReturn only the corrected text, no any comment."},
-            {"role": "user", "content": f"{(' '.join(context['corrected']))[-50:]}\n<correct_this>\n{text}\n</correct_this>"}
-        ]
-    }
-    
     # Correction and Keyword extraction (if not partial) can actually start together if keywords are from raw text, 
     # but usually we want keywords from corrected text. 
     # However, translation MUST wait for correction.
     
     # 1. Correction
     try:
-        response = await async_chat_completion(json_body)
-        if response and response.status_code == 200:
-            result["corrected"] = response.json()["choices"][0]["message"]["content"].replace('<correct_this>', '').replace('</correct_this>', '').strip()
+        if not skip_correction:
+            # Correct text
+            json_body = {
+                "model": AI_MODEL,
+                "temperature": 0,
+                "messages": [
+                    {"role": "developer", "content": f"This is a transcription about:\n{', '.join(current_keywords)}\n\nCorrect the text **only in <correct_this>** as \"corrected text\" according to the reference and context.\nReturn only the corrected text, no any comment."},
+                    {"role": "user", "content": f"{(' '.join(context['corrected']))[-50:]}\n<correct_this>\n{text}\n</correct_this>"}
+                ]
+            }
+            response = await async_chat_completion(json_body)
+            if response and response.status_code == 200:
+                result["corrected"] = response.json()["choices"][0]["message"]["content"].replace('<correct_this>', '').replace('</correct_this>', '').strip()
+        else:
+            result["corrected"] = text
     except Exception as e:
         logger.error(f"Correction error: {e}")
 
@@ -128,7 +130,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     translated = {}
     async def _translation_worker(language):
         prev_translation = ""
-        if cached_data.get("partial"):
+        if cached_data.get("partial") is True:
             pt_trans = cached_data["partial"].get("result", {}).get("translated", {}).get(language, "")
             if pt_trans:
                 prev_translation = f"<prev_translation>\n{pt_trans}......\n</prev_translation>\n"
@@ -214,9 +216,10 @@ class TranslationQueueManager:
 
     async def put(self, session_id, sync_data, cached_data, redis_client):
         item = (session_id, sync_data, cached_data, redis_client)
-        if sync_data.get("partial", False):
-            if self.partial_task and not self.partial_task.done():
-                self.partial_task.cancel()
+        if self.partial_task and not self.partial_task.done():
+            print(f"{session_id} partial update too fast, cancel previous", flush=True)
+            self.partial_task.cancel()
+        if sync_data.get("partial") is True:
             self.partial_task = asyncio.create_task(self._process(*item))
         else:
             await self.commit_queue.put(item)
@@ -231,15 +234,12 @@ class TranslationQueueManager:
                 break
             except Exception as e:
                 logger.error(f"Queue loop error: {e}")
+            await asyncio.sleep(0.01)
 
     async def _process(self, session_id, sync_data, cached_data, redis_client):
         try:
-            start_t = asyncio.get_event_loop().time()
-            result_data = await translate_transcription(session_id, sync_data, cached_data, redis_client)
-            end_t = asyncio.get_event_loop().time()
-            
-            logger.debug(f"Translation processed in {end_t - start_t:.3f}s for session {session_id}")
-            await self.callback(session_id, result_data)
+            result_data = await translate_transcription(session_id, sync_data, cached_data, redis_client, skip_correction=True)
+            asyncio.create_task(self.callback(session_id, result_data))
         except asyncio.CancelledError:
             logger.debug(f"Translation task cancelled for session {session_id}")
         except Exception as e:
