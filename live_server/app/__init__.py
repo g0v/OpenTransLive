@@ -104,10 +104,6 @@ async def is_realtime_authorized(session: dict, data: dict = None) -> bool:
     if user_secret_key and hmac.compare_digest(user_secret_key, SETTINGS["SECRET_KEY"]):
         return True
 
-    # If no tokens in DB, allow everyone (backward compat)
-    if await realtime_tokens_collection.count_documents({}, limit=1) == 0:
-        return True
-
     token = None
     if data and isinstance(data, dict):
         token = data.get('realtime_token')
@@ -115,6 +111,10 @@ async def is_realtime_authorized(session: dict, data: dict = None) -> bool:
         token = session.get('realtime_token')
     if not token:
         return False
+
+    # If no tokens in DB, allow everyone with a token (backward compat)
+    if await realtime_tokens_collection.count_documents({}, limit=1) == 0:
+        return True
 
     doc = await realtime_tokens_collection.find_one({"token": token})
     return doc is not None
