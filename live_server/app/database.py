@@ -8,3 +8,4 @@ db = client[MONGODB_SETTINGS.get('db', 'opentranslive-db')]
 
 rooms_collection = db['room']
 transcription_store_collection = db['transcription_store']
+realtime_tokens_collection = db['realtime_tokens']

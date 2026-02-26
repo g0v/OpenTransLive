@@ -22,10 +22,11 @@ import dotenv
 dotenv.load_dotenv(override=True)
 
 # Import MongoDB models
-from .database import rooms_collection, transcription_store_collection
+from .database import rooms_collection, transcription_store_collection, realtime_tokens_collection
 from .config import SETTINGS, REDIS_URL
 from .scribe_manager import ScribeSessionManager
 import os
+import hmac
 
 active_scribe_managers = {}
 active_translation_managers = {}
@@ -86,6 +87,76 @@ youtube_data_cache = {}
 # Initialize Redis client
 import redis.asyncio as redis
 redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+
+async def is_realtime_authorized(session: dict, data: dict = None) -> bool:
+    """Check if the socket is authorized to use server-side realtime features.
+
+    Returns True if:
+    1. The socket is an admin connection (global SECRET_KEY), OR
+    2. No tokens exist in DB (no restrictions configured), OR
+    3. A valid realtime_token is found in data or session
+    """
+    if session.get('admin'):
+        return True
+
+    # If no tokens in DB, allow everyone (backward compat)
+    if await realtime_tokens_collection.count_documents({}, limit=1) == 0:
+        return True
+
+    token = None
+    if data and isinstance(data, dict):
+        token = data.get('realtime_token')
+    if not token:
+        token = session.get('realtime_token')
+    if not token:
+        return False
+
+    doc = await realtime_tokens_collection.find_one({"token": token})
+    return doc is not None
+
+
+def _verify_admin(request: Request):
+    """Verify admin via Authorization: Bearer {SECRET_KEY} header."""
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    provided = auth_header[7:]
+    if not hmac.compare_digest(provided, SETTINGS["SECRET_KEY"]):
+        raise HTTPException(status_code=403, detail="Invalid SECRET_KEY")
+
+
+@app.get("/api/tokens")
+async def list_tokens(request: Request):
+    """List all realtime tokens (admin only)."""
+    _verify_admin(request)
+    docs = await realtime_tokens_collection.find({}, {"_id": 0}).to_list(length=1000)
+    return docs
+
+
+@app.post("/api/tokens")
+async def create_token(request: Request):
+    """Create a new realtime token (admin only)."""
+    _verify_admin(request)
+    body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    token = str(uuid.uuid4())
+    doc = {
+        "token": token,
+        "label": body.get("label", ""),
+        "created_at": datetime.now(timezone.utc),
+    }
+    await realtime_tokens_collection.insert_one(doc)
+    return {"token": token, "label": doc["label"], "created_at": doc["created_at"].isoformat()}
+
+
+@app.delete("/api/tokens/{token}")
+async def delete_token(request: Request, token: str):
+    """Revoke a realtime token (admin only)."""
+    _verify_admin(request)
+    result = await realtime_tokens_collection.delete_one({"token": token})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Token not found")
+    return {"deleted": token}
+
 
 async def get_youtube_start_time(video_id: str) -> float | None:
     """
@@ -293,19 +364,22 @@ async def create_session(request: Request, sid: str = Form(...)):
     return RedirectResponse(url=f"/panel/{sid}?secret_key={session_secret_key}", status_code=303)
 
 @app.get("/panel/{sid}", response_class=HTMLResponse)
-async def panel(request: Request, sid: str, secret_key: str | None = Query(default=None)):
+async def panel(request: Request, sid: str, secret_key: str | None = Query(default=None), realtime_token: str | None = Query(default=None)):
     if secret_key:
         request.session["secret_key"] = secret_key
+    if realtime_token:
+        request.session["realtime_token"] = realtime_token
     user_secret_key = request.session.get("secret_key")
+    user_realtime_token = request.session.get("realtime_token", "")
     if not user_secret_key:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    
+
     # Verify room exists with matching secret key using Motor
     room = await rooms_collection.find_one({"sid": sid, "secret_key": user_secret_key})
     if not room:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    
-    return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key})
+
+    return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key, "user_realtime_token": user_realtime_token})
 
 # Socket.IO Event Handlers
 @sio.event
@@ -313,10 +387,10 @@ async def connect(socket_id, environ, auth):
     """Handle client connection"""
     # Create a session-like object for socket.io
     if auth and auth.get('secret_key') == SETTINGS["SECRET_KEY"]:
-        await sio.save_session(socket_id, {'verified': True})
+        await sio.save_session(socket_id, {'verified': True, 'admin': True})
         print(f"Admin client connected: {socket_id}")
     else:
-        await sio.save_session(socket_id, {'verified': False})
+        await sio.save_session(socket_id, {'verified': False, 'admin': False})
         print(f"Client connected: {socket_id}")
     await sio.emit('connected', {'status': 'connected', 'client_id': socket_id}, to=socket_id)
 
@@ -412,9 +486,10 @@ async def join_session(socket_id, data):
     """Handle client joining a session room"""
     session_id = data.get('session_id')
     secret_key = data.get('secret_key')
-    
+    realtime_token = data.get('realtime_token')
+
     session = await sio.get_session(socket_id)
-    
+
     if secret_key:
         # Verify room exists with matching secret key using Motor
         room = await rooms_collection.find_one({"sid": session_id, "secret_key": secret_key})
@@ -423,7 +498,11 @@ async def join_session(socket_id, data):
             session['verified'] = True
             await sio.save_session(socket_id, session)
             print(f"Client verified: {session_id}")
-    
+
+    if realtime_token:
+        session['realtime_token'] = realtime_token
+        await sio.save_session(socket_id, session)
+
     if session_id:
         await sio.enter_room(socket_id, session_id)
         await sio.emit('joined_session', {'session_id': session_id}, to=socket_id)
@@ -458,9 +537,19 @@ async def on_scribe_transcription(session_id, transcription):
 @sio.event
 async def realtime_connect(socket_id, data):
     """Handle client realtime_connect events"""
+    session = await sio.get_session(socket_id)
+
+    if not session.get('verified'):
+        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        return
+
+    if not await is_realtime_authorized(session, data):
+        await sio.emit('error', {'message': 'Unauthorized: realtime token required'}, to=socket_id)
+        return
+
     rooms = sio.rooms(socket_id)
     session_id = next((r for r in rooms if r != socket_id), None)
-    
+
     manager = active_scribe_managers.get(session_id)
     if not manager or not manager.is_running:
         manager = ScribeSessionManager(session_id, on_scribe_transcription)
@@ -484,6 +573,10 @@ async def audio_buffer_append(socket_id, data):
             await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
             return
     session['verified'] = True
+
+    if not await is_realtime_authorized(session, data):
+        await sio.emit('error', {'message': 'Unauthorized: realtime token required'}, to=socket_id)
+        return
 
     rooms = sio.rooms(socket_id)
     session_id = next((r for r in rooms if r != socket_id), None)
