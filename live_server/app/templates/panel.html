@@ -19,6 +19,7 @@
       <span id="status-text">Connecting...</span>
     </span>
     <!-- Mic Toggle Button -->
+    {% if is_realtime_enabled %}
     <button id="mic-toggle-btn" title="Toggle microphone" class="mic-btn mic-off mx-auto" aria-pressed="false">
       <!-- Mic ON icon -->
       <iconify-icon id="mic-icon-on" icon="mdi:microphone" width="20" height="20" style="display:none"></iconify-icon>
@@ -26,6 +27,7 @@
       <iconify-icon id="mic-icon-off" icon="mdi:microphone-off" width="20" height="20"></iconify-icon>
       <span id="mic-label">MIC OFF</span>
     </button>
+    {% endif %}
 
     <div class="flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700 ms-auto">
       <span class="pl-2 text-xs text-gray-500 uppercase font-bold">SECRET_KEY</span>
@@ -143,25 +145,26 @@
   let recording = false
 
   function setMicState(state) {
+    if (!micBtn) return
     // state: 'off' | 'on' | 'busy'
     micBtn.className = 'mic-btn mic-' + state
     micBtn.disabled = (state === 'busy')
     micBtn.setAttribute('aria-pressed', state === 'on' ? 'true' : 'false')
 
     if (state === 'on') {
-      iconOn.style.display = ''
-      iconOff.style.display = 'none'
-      micLabel.textContent = 'MIC ON'
+      if (iconOn) iconOn.style.display = ''
+      if (iconOff) iconOff.style.display = 'none'
+      if (micLabel) micLabel.textContent = 'MIC ON'
       micBtn.title = 'Stop microphone'
     } else if (state === 'busy') {
-      iconOn.style.display = 'none'
-      iconOff.style.display = ''
-      micLabel.textContent = 'STOPPING…'
+      if (iconOn) iconOn.style.display = 'none'
+      if (iconOff) iconOff.style.display = ''
+      if (micLabel) micLabel.textContent = 'STOPPING…'
       micBtn.title = 'Please wait…'
     } else {
-      iconOn.style.display = 'none'
-      iconOff.style.display = ''
-      micLabel.textContent = 'MIC OFF'
+      if (iconOn) iconOn.style.display = 'none'
+      if (iconOff) iconOff.style.display = ''
+      if (micLabel) micLabel.textContent = 'MIC OFF'
       micBtn.title = 'Start microphone'
     }
   }
@@ -185,19 +188,21 @@
         setTimeout(() => { element.style.backgroundColor = origBg }, 200)
       })
     })
-    micBtn.addEventListener('click', async () => {
-      if (recording) {
-        setMicState('busy')
-        await stopSession()
-        recording = false
-        setMicState('off')
-      } else {
-        setMicState('busy')
-        await startSession()
-        recording = true
-        setMicState('on')
-      }
-    })
+    if (micBtn) {
+      micBtn.addEventListener('click', async () => {
+        if (recording) {
+          setMicState('busy')
+          await stopSession()
+          recording = false
+          setMicState('off')
+        } else {
+          setMicState('busy')
+          await startSession()
+          recording = true
+          setMicState('on')
+        }
+      })
+    }
   })
 </script>
 <script src="/static/js/realtime.js?v={{ timestamp }}"></script>

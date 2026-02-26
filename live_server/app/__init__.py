@@ -99,6 +99,11 @@ async def is_realtime_authorized(session: dict, data: dict = None) -> bool:
     if session.get('admin'):
         return True
 
+    # Check if session has a secret_key that matches global SECRET_KEY
+    user_secret_key = session.get('secret_key')
+    if user_secret_key and hmac.compare_digest(user_secret_key, SETTINGS["SECRET_KEY"]):
+        return True
+
     # If no tokens in DB, allow everyone (backward compat)
     if await realtime_tokens_collection.count_documents({}, limit=1) == 0:
         return True
@@ -379,7 +384,9 @@ async def panel(request: Request, sid: str, secret_key: str | None = Query(defau
     if not room:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key, "user_realtime_token": user_realtime_token})
+    is_realtime_enabled = await is_realtime_authorized(request.session)
+
+    return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key, "user_realtime_token": user_realtime_token, "is_realtime_enabled": is_realtime_enabled})
 
 # Socket.IO Event Handlers
 @sio.event
