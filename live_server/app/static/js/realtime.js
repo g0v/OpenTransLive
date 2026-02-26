@@ -8,7 +8,7 @@ socket.on('connect', function () {
   console.log('WebSocket connection opened');
 
   // Join the session room
-  socket.emit('join_session', { session_id: sessionId, secret_key: user_secret_key });
+  socket.emit('join_session', { session_id: sessionId, secret_key: user_secret_key, realtime_token: user_realtime_token });
 });
 
 socket.on('disconnect', function () {
@@ -66,6 +66,7 @@ async function startSession() {
 
       socket.emit('audio_buffer_append', {
         secret_key: user_secret_key,
+        realtime_token: user_realtime_token,
         audio: base64Audio
       });
 
