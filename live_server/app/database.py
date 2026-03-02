@@ -3,7 +3,7 @@ import os
 from datetime import datetime, timezone
 from .config import MONGODB_SETTINGS
 
-client = AsyncMongoClient(host=MONGODB_SETTINGS.get('host', 'mongodb'), port=MONGODB_SETTINGS.get('port', 27017))
+client = AsyncMongoClient(host=MONGODB_SETTINGS.get('host', 'mongodb'), port=MONGODB_SETTINGS.get('port', 27017), tz_aware=True)
 db = client[MONGODB_SETTINGS.get('db', 'opentranslive-db')]
 
 rooms_collection = db['room']

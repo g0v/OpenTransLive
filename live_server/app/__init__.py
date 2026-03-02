@@ -369,6 +369,8 @@ async def panel(request: Request, sid: str):
         last_heartbeat = room.get("admin_last_heartbeat")
         admin_expired = False
         if last_heartbeat:
+            if last_heartbeat.tzinfo is None:
+                last_heartbeat = last_heartbeat.replace(tzinfo=timezone.utc)
             elapsed = (now - last_heartbeat).total_seconds()
             admin_expired = elapsed > ADMIN_TIMEOUT
         else:
