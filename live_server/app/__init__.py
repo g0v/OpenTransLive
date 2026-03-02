@@ -3,7 +3,7 @@
 # Licensed under the GNU AGPL v3.0
 # See LICENSE for details.
 
-from fastapi import FastAPI, Request, Form, HTTPException, Query
+from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, Response, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -364,16 +364,12 @@ async def create_session(request: Request, sid: str = Form(...)):
         "created_at": datetime.now(timezone.utc),
         "extra": {}
     })
-    
+
     request.session["secret_key"] = session_secret_key
-    return RedirectResponse(url=f"/panel/{sid}?secret_key={session_secret_key}", status_code=303)
+    return RedirectResponse(url=f"/panel/{sid}", status_code=303)
 
 @app.get("/panel/{sid}", response_class=HTMLResponse)
-async def panel(request: Request, sid: str, secret_key: str | None = Query(default=None), realtime_token: str | None = Query(default=None)):
-    if secret_key:
-        request.session["secret_key"] = secret_key
-    if realtime_token:
-        request.session["realtime_token"] = realtime_token
+async def panel(request: Request, sid: str):
     user_secret_key = request.session.get("secret_key")
     user_realtime_token = request.session.get("realtime_token", "")
     if not user_secret_key:
