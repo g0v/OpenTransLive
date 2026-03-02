@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # Add session middleware
-app.add_middleware(SessionMiddleware, secret_key=str(uuid.uuid4()))
+app.add_middleware(SessionMiddleware, secret_key=SETTINGS.get("SECRET_KEY", str(uuid.uuid4())))
 
 # Setup templates
 timestamp = datetime.now(timezone.utc).timestamp()
@@ -88,7 +88,7 @@ youtube_data_cache = {}
 import redis.asyncio as redis
 redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
-async def is_realtime_authorized(session: dict, data: dict = None) -> bool:
+async def is_realtime_authorized(session: dict, data: dict | None = None) -> bool:
     """Check if the socket is authorized to use server-side realtime features.
 
     Returns True if:
