@@ -503,6 +503,29 @@ async def disconnect(socket_id):
     """Handle client disconnection"""
     print(f"Client disconnected: {socket_id}")
 
+    # Get session data to check if this was an admin
+    session = await sio.get_session(socket_id)
+    user_uid = session.get('user_uid')
+    session_id = session.get('session_id')
+
+    if user_uid and session_id:
+        # Check if this user was the admin for this session
+        room = await rooms_collection.find_one({"sid": session_id})
+        if room and room.get("admin_uid") == user_uid:
+            # Release admin lock immediately on disconnect
+            await rooms_collection.update_one(
+                {"sid": session_id},
+                {
+                    "$set": {
+                        "secret_key": None,
+                        "admin_uid": None,
+                        "admin_last_heartbeat": None,
+                        "updated_at": datetime.now(timezone.utc)
+                    }
+                }
+            )
+            print(f"Admin lock released for session {session_id} on disconnect")
+
 async def _process_transcription_update(session_id, sync_data):
     """Internal helper to process transcription updates (cache, DB, and broadcast)"""
     # Fetch cached transcription data (Redis or DB)
@@ -591,6 +614,7 @@ async def join_session(socket_id, data):
     session_id = data.get('session_id')
     secret_key = data.get('secret_key')
     realtime_token = data.get('realtime_token')
+    user_uid = data.get('user_uid')
 
     session = await sio.get_session(socket_id)
 
@@ -600,8 +624,10 @@ async def join_session(socket_id, data):
         if room:
             session['secret_key'] = secret_key
             session['verified'] = True
+            session['user_uid'] = user_uid or room.get('admin_uid')
+            session['session_id'] = session_id
             await sio.save_session(socket_id, session)
-            print(f"Client verified: {session_id}")
+            print(f"Client verified: {session_id}, user_uid: {session.get('user_uid')}")
 
     if realtime_token:
         session['realtime_token'] = realtime_token

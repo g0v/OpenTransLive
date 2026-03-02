@@ -8,7 +8,7 @@ socket.on('connect', function () {
   console.log('WebSocket connection opened');
 
   // Join the session room
-  socket.emit('join_session', { session_id: sessionId, secret_key: user_secret_key, realtime_token: user_realtime_token });
+  socket.emit('join_session', { session_id: sessionId, secret_key: user_secret_key, realtime_token: user_realtime_token, user_uid: user_uid });
 });
 
 socket.on('disconnect', function () {
