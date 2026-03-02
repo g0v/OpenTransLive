@@ -335,38 +335,6 @@ async def rt(request: Request, id: str):
     sliced_data["transcriptions"] = sliced_data["transcriptions"][-50:]
     return templates.TemplateResponse("rt.html", {"request": request, "id": id, "data": sliced_data})
   
-@app.post("/create-session", response_class=HTMLResponse)
-async def create_session(request: Request, sid: str = Form(...)):
-    # Check if room already exists using Motor
-    existing_room = await rooms_collection.find_one({"sid": sid})
-    if existing_room:
-        return HTMLResponse(content="""
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8" />
-        </head>
-        <body>
-            <h1>Session already exists</h1>
-            <script>
-                alert("Session id already exists, go to panel or use another one.");
-                window.location.href = "/";
-            </script>
-        </body>
-        </html>
-        """)
-
-    # Create new room without secret_key (will be set by first user)
-    await rooms_collection.insert_one({
-        "sid": sid,
-        "secret_key": None,
-        "admin_uid": None,
-        "admin_last_heartbeat": None,
-        "created_at": datetime.now(timezone.utc),
-        "extra": {}
-    })
-
-    return RedirectResponse(url=f"/panel/{sid}", status_code=303)
-
 @app.get("/panel/{sid}", response_class=HTMLResponse)
 async def panel(request: Request, sid: str):
     # Ensure user has a UID
@@ -375,10 +343,19 @@ async def panel(request: Request, sid: str):
         user_uid = str(uuid.uuid4())
         request.session["user_uid"] = user_uid
 
-    # Find the room
+    # Find or create the room
     room = await rooms_collection.find_one({"sid": sid})
     if not room:
-        raise HTTPException(status_code=404, detail="Session not found")
+        # Create new room without secret_key (will be set by first user)
+        await rooms_collection.insert_one({
+            "sid": sid,
+            "secret_key": None,
+            "admin_uid": None,
+            "admin_last_heartbeat": None,
+            "created_at": datetime.now(timezone.utc),
+            "extra": {}
+        })
+        room = await rooms_collection.find_one({"sid": sid})
 
     # Admin timeout: 30 seconds
     ADMIN_TIMEOUT = 30

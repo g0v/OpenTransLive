@@ -72,7 +72,7 @@
                     </ul>
                 </div>
                 <div class="md:w-1/2 p-10 flex flex-col justify-center">
-                    <form id="create-form" class="space-y-6" action="{{ url_for('create_session') }}" method="post">
+                    <form id="create-form" class="space-y-6">
                         <div>
                             <label for="session-id" class="block text-sm font-medium text-gray-700 mb-2">Session
                                 ID</label>
@@ -81,7 +81,7 @@
                                 placeholder="e.g., my-meeting-01" required>
                         </div>
                         <div class="space-y-3">
-                            <button type="submit" target="rt"
+                            <button type="submit"
                                 class="w-full bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 transition duration-300 shadow-md flex justify-center items-center group">
                                 Start Session
                             </button>
@@ -104,5 +104,12 @@
 
 {% block scripts %}
 <script>
+  document.getElementById('create-form').addEventListener('submit', function(e) {
+    e.preventDefault()
+    const sid = document.getElementById('session-id').value.trim()
+    if (sid) {
+      window.location.href = `/panel/${encodeURIComponent(sid)}`
+    }
+  })
 </script>
 {% endblock %}
