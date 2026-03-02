@@ -3,7 +3,7 @@
 # Licensed under the GNU AGPL v3.0
 # See LICENSE for details.
 
-from fastapi import FastAPI, Request, Form, HTTPException, Query
+from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, Response, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # Add session middleware
-app.add_middleware(SessionMiddleware, secret_key=str(uuid.uuid4()))
+app.add_middleware(SessionMiddleware, secret_key=SETTINGS.get("SECRET_KEY", str(uuid.uuid4())))
 
 # Setup templates
 timestamp = datetime.now(timezone.utc).timestamp()
@@ -88,7 +88,7 @@ youtube_data_cache = {}
 import redis.asyncio as redis
 redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
-async def is_realtime_authorized(session: dict, data: dict = None) -> bool:
+async def is_realtime_authorized(session: dict, data: dict | None = None) -> bool:
     """Check if the socket is authorized to use server-side realtime features.
 
     Returns True if:
@@ -335,58 +335,155 @@ async def rt(request: Request, id: str):
     sliced_data["transcriptions"] = sliced_data["transcriptions"][-50:]
     return templates.TemplateResponse("rt.html", {"request": request, "id": id, "data": sliced_data})
   
-@app.post("/create-session", response_class=HTMLResponse)
-async def create_session(request: Request, sid: str = Form(...)):
-    session_secret_key = str(uuid.uuid4())
-    
-    # Check if room already exists using Motor
-    existing_room = await rooms_collection.find_one({"sid": sid})
-    if existing_room:
-        return HTMLResponse(content="""
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8" />
-        </head>
-        <body>
-            <h1>Session already exists</h1>
-            <script>
-                alert("Session id already exists, go to panel or use another one.");
-                window.location.href = "/";
-            </script>
-        </body>
-        </html>
-        """)
-    
-    # Create new room
-    await rooms_collection.insert_one({
-        "sid": sid,
-        "secret_key": session_secret_key,
-        "created_at": datetime.now(timezone.utc),
-        "extra": {}
-    })
-    
-    request.session["secret_key"] = session_secret_key
-    return RedirectResponse(url=f"/panel/{sid}?secret_key={session_secret_key}", status_code=303)
-
 @app.get("/panel/{sid}", response_class=HTMLResponse)
-async def panel(request: Request, sid: str, secret_key: str | None = Query(default=None), realtime_token: str | None = Query(default=None)):
-    if secret_key:
-        request.session["secret_key"] = secret_key
-    if realtime_token:
-        request.session["realtime_token"] = realtime_token
-    user_secret_key = request.session.get("secret_key")
-    user_realtime_token = request.session.get("realtime_token", "")
-    if not user_secret_key:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+async def panel(request: Request, sid: str):
+    # Ensure user has a UID
+    user_uid = request.session.get("user_uid")
+    if not user_uid:
+        user_uid = str(uuid.uuid4())
+        request.session["user_uid"] = user_uid
 
-    # Verify room exists with matching secret key using Motor
-    room = await rooms_collection.find_one({"sid": sid, "secret_key": user_secret_key})
+    # Find or create the room
+    room = await rooms_collection.find_one({"sid": sid})
     if not room:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        # Create new room without secret_key (will be set by first user)
+        await rooms_collection.insert_one({
+            "sid": sid,
+            "secret_key": None,
+            "admin_uid": None,
+            "admin_last_heartbeat": None,
+            "created_at": datetime.now(timezone.utc),
+            "extra": {}
+        })
+        room = await rooms_collection.find_one({"sid": sid})
 
+    # Admin timeout: 30 seconds
+    ADMIN_TIMEOUT = 30
+    now = datetime.now(timezone.utc)
+
+    # Check if there's already an admin
+    if room.get("admin_uid") and room.get("secret_key"):
+        # Check if admin heartbeat is stale
+        last_heartbeat = room.get("admin_last_heartbeat")
+        admin_expired = False
+        if last_heartbeat:
+            elapsed = (now - last_heartbeat).total_seconds()
+            admin_expired = elapsed > ADMIN_TIMEOUT
+        else:
+            # No heartbeat recorded, consider expired
+            admin_expired = True
+
+        if admin_expired:
+            # Admin session expired, clear it
+            await rooms_collection.update_one(
+                {"sid": sid},
+                {
+                    "$set": {
+                        "secret_key": None,
+                        "admin_uid": None,
+                        "admin_last_heartbeat": None,
+                        "updated_at": now
+                    }
+                }
+            )
+            # Re-fetch room to get clean state
+            room = await rooms_collection.find_one({"sid": sid})
+        else:
+            # Admin exists and is active - check if current user is the admin
+            user_secret_key = request.session.get("secret_key")
+            if user_secret_key != room["secret_key"] or user_uid != room["admin_uid"]:
+                raise HTTPException(status_code=403, detail="Session admin is already connected")
+            # User is the existing admin - update heartbeat
+            await rooms_collection.update_one(
+                {"sid": sid},
+                {"$set": {"admin_last_heartbeat": now, "updated_at": now}}
+            )
+
+    # If no admin or admin was cleared, make this user the admin
+    if not room.get("admin_uid") or not room.get("secret_key"):
+        session_secret_key = str(uuid.uuid4())
+        await rooms_collection.update_one(
+            {"sid": sid},
+            {
+                "$set": {
+                    "secret_key": session_secret_key,
+                    "admin_uid": user_uid,
+                    "admin_last_heartbeat": now,
+                    "updated_at": now
+                }
+            }
+        )
+        request.session["secret_key"] = session_secret_key
+        user_secret_key = session_secret_key
+    else:
+        user_secret_key = request.session.get("secret_key")
+
+    user_realtime_token = request.session.get("realtime_token", "")
     is_realtime_enabled = await is_realtime_authorized(request.session)
 
-    return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key, "user_realtime_token": user_realtime_token, "is_realtime_enabled": is_realtime_enabled})
+    return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_uid": user_uid, "user_secret_key": user_secret_key, "user_realtime_token": user_realtime_token, "is_realtime_enabled": is_realtime_enabled})
+
+@app.post("/heartbeat/{sid}")
+async def heartbeat(request: Request, sid: str):
+    """Update admin heartbeat to maintain session lock"""
+    user_uid = request.session.get("user_uid")
+    user_secret_key = request.session.get("secret_key")
+
+    if not user_uid or not user_secret_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Verify this user is the current admin
+    room = await rooms_collection.find_one({"sid": sid})
+    if not room:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if room.get("admin_uid") == user_uid and room.get("secret_key") == user_secret_key:
+        # Update heartbeat
+        await rooms_collection.update_one(
+            {"sid": sid},
+            {
+                "$set": {
+                    "admin_last_heartbeat": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc)
+                }
+            }
+        )
+        return {"status": "ok"}
+
+    raise HTTPException(status_code=403, detail="Not the current admin")
+
+@app.post("/release-admin/{sid}")
+async def release_admin(request: Request, sid: str):
+    """Release admin lock when admin leaves"""
+    user_uid = request.session.get("user_uid")
+    user_secret_key = request.session.get("secret_key")
+
+    if not user_uid or not user_secret_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Verify this user is the current admin
+    room = await rooms_collection.find_one({"sid": sid})
+    if not room:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if room.get("admin_uid") == user_uid and room.get("secret_key") == user_secret_key:
+        # Clear admin lock
+        await rooms_collection.update_one(
+            {"sid": sid},
+            {
+                "$set": {
+                    "secret_key": None,
+                    "admin_uid": None,
+                    "admin_last_heartbeat": None,
+                    "updated_at": datetime.now(timezone.utc)
+                }
+            }
+        )
+        # Clear session
+        request.session.pop("secret_key", None)
+        return {"status": "released"}
+
+    return {"status": "not_admin"}
 
 # Socket.IO Event Handlers
 @sio.event
@@ -405,6 +502,29 @@ async def connect(socket_id, environ, auth):
 async def disconnect(socket_id):
     """Handle client disconnection"""
     print(f"Client disconnected: {socket_id}")
+
+    # Get session data to check if this was an admin
+    session = await sio.get_session(socket_id)
+    user_uid = session.get('user_uid')
+    session_id = session.get('session_id')
+
+    if user_uid and session_id:
+        # Check if this user was the admin for this session
+        room = await rooms_collection.find_one({"sid": session_id})
+        if room and room.get("admin_uid") == user_uid:
+            # Release admin lock immediately on disconnect
+            await rooms_collection.update_one(
+                {"sid": session_id},
+                {
+                    "$set": {
+                        "secret_key": None,
+                        "admin_uid": None,
+                        "admin_last_heartbeat": None,
+                        "updated_at": datetime.now(timezone.utc)
+                    }
+                }
+            )
+            print(f"Admin lock released for session {session_id} on disconnect")
 
 async def _process_transcription_update(session_id, sync_data):
     """Internal helper to process transcription updates (cache, DB, and broadcast)"""
@@ -494,6 +614,7 @@ async def join_session(socket_id, data):
     session_id = data.get('session_id')
     secret_key = data.get('secret_key')
     realtime_token = data.get('realtime_token')
+    user_uid = data.get('user_uid')
 
     session = await sio.get_session(socket_id)
 
@@ -503,8 +624,10 @@ async def join_session(socket_id, data):
         if room:
             session['secret_key'] = secret_key
             session['verified'] = True
+            session['user_uid'] = user_uid or room.get('admin_uid')
+            session['session_id'] = session_id
             await sio.save_session(socket_id, session)
-            print(f"Client verified: {session_id}")
+            print(f"Client verified: {session_id}, user_uid: {session.get('user_uid')}")
 
     if realtime_token:
         session['realtime_token'] = realtime_token
