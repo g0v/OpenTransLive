@@ -357,6 +357,8 @@ async def panel(request: Request, sid: str):
         })
         room = await rooms_collection.find_one({"sid": sid})
 
+    if not room:
+        raise HTTPException(status_code=404, detail="Session not found")
     # Admin timeout: 30 seconds
     ADMIN_TIMEOUT = 30
     now = datetime.now(timezone.utc)
@@ -398,7 +400,9 @@ async def panel(request: Request, sid: str):
                 {"sid": sid},
                 {"$set": {"admin_last_heartbeat": now, "updated_at": now}}
             )
-
+            
+    if not room:
+        raise HTTPException(status_code=404, detail="Session not found")
     # If no admin or admin was cleared, make this user the admin
     if not room.get("admin_uid") or not room.get("secret_key"):
         session_secret_key = str(uuid.uuid4())
