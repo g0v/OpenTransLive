@@ -337,8 +337,6 @@ async def rt(request: Request, id: str):
   
 @app.post("/create-session", response_class=HTMLResponse)
 async def create_session(request: Request, sid: str = Form(...)):
-    session_secret_key = str(uuid.uuid4())
-    
     # Check if room already exists using Motor
     existing_room = await rooms_collection.find_one({"sid": sid})
     if existing_room:
@@ -356,33 +354,90 @@ async def create_session(request: Request, sid: str = Form(...)):
         </body>
         </html>
         """)
-    
-    # Create new room
+
+    # Create new room without secret_key (will be set by first user)
     await rooms_collection.insert_one({
         "sid": sid,
-        "secret_key": session_secret_key,
+        "secret_key": None,
+        "admin_uid": None,
         "created_at": datetime.now(timezone.utc),
         "extra": {}
     })
 
-    request.session["secret_key"] = session_secret_key
     return RedirectResponse(url=f"/panel/{sid}", status_code=303)
 
 @app.get("/panel/{sid}", response_class=HTMLResponse)
 async def panel(request: Request, sid: str):
-    user_secret_key = request.session.get("secret_key")
-    user_realtime_token = request.session.get("realtime_token", "")
-    if not user_secret_key:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    # Ensure user has a UID
+    user_uid = request.session.get("user_uid")
+    if not user_uid:
+        user_uid = str(uuid.uuid4())
+        request.session["user_uid"] = user_uid
 
-    # Verify room exists with matching secret key using Motor
-    room = await rooms_collection.find_one({"sid": sid, "secret_key": user_secret_key})
+    # Find the room
+    room = await rooms_collection.find_one({"sid": sid})
     if not room:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(status_code=404, detail="Session not found")
 
+    # Check if there's already an admin
+    if room.get("admin_uid") and room.get("secret_key"):
+        # Admin exists - check if current user is the admin
+        user_secret_key = request.session.get("secret_key")
+        if user_secret_key != room["secret_key"] or user_uid != room["admin_uid"]:
+            raise HTTPException(status_code=403, detail="Session admin is already connected")
+        # User is the existing admin
+    else:
+        # No admin yet - make this user the admin
+        session_secret_key = str(uuid.uuid4())
+        await rooms_collection.update_one(
+            {"sid": sid},
+            {
+                "$set": {
+                    "secret_key": session_secret_key,
+                    "admin_uid": user_uid,
+                    "updated_at": datetime.now(timezone.utc)
+                }
+            }
+        )
+        request.session["secret_key"] = session_secret_key
+        user_secret_key = session_secret_key
+
+    user_realtime_token = request.session.get("realtime_token", "")
     is_realtime_enabled = await is_realtime_authorized(request.session)
 
-    return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key, "user_realtime_token": user_realtime_token, "is_realtime_enabled": is_realtime_enabled})
+    return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_uid": user_uid, "user_secret_key": user_secret_key, "user_realtime_token": user_realtime_token, "is_realtime_enabled": is_realtime_enabled})
+
+@app.post("/release-admin/{sid}")
+async def release_admin(request: Request, sid: str):
+    """Release admin lock when admin leaves"""
+    user_uid = request.session.get("user_uid")
+    user_secret_key = request.session.get("secret_key")
+
+    if not user_uid or not user_secret_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Verify this user is the current admin
+    room = await rooms_collection.find_one({"sid": sid})
+    if not room:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if room.get("admin_uid") == user_uid and room.get("secret_key") == user_secret_key:
+        # Clear admin lock
+        await rooms_collection.update_one(
+            {"sid": sid},
+            {
+                "$set": {
+                    "secret_key": None,
+                    "admin_uid": None,
+                    "updated_at": datetime.now(timezone.utc)
+                }
+            }
+        )
+        # Clear session
+        request.session.pop("secret_key", None)
+        return {"status": "released"}
+
+    return {"status": "not_admin"}
 
 # Socket.IO Event Handlers
 @sio.event

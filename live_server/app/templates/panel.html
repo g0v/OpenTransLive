@@ -133,8 +133,14 @@
 <script>
   const sid = "{{ sid }}"
   const sessionId = "{{ sid }}"
+  const user_uid = "{{ user_uid }}"
   const user_secret_key = "{{ user_secret_key }}"
   const user_realtime_token = "{{ user_realtime_token }}"
+
+  // Sync user_uid with localStorage for persistence across sessions
+  if (user_uid) {
+    localStorage.setItem('user_uid', user_uid)
+  }
 
   // ── Mic toggle ───────────────────────────────────────────────────────────
 
@@ -168,6 +174,13 @@
       micBtn.title = 'Start microphone'
     }
   }
+
+  // Release admin lock when leaving the page
+  window.addEventListener('beforeunload', function () {
+    if (user_secret_key) {
+      navigator.sendBeacon(`/release-admin/${sid}`, new Blob([JSON.stringify({})], { type: 'application/json' }))
+    }
+  })
 
   document.addEventListener('DOMContentLoaded', function () {
     // ── Set full viewer URL ───────────────────────────────────────────────────
