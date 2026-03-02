@@ -175,8 +175,26 @@
     }
   }
 
-  // Release admin lock when leaving the page
+  // Send heartbeat every 10 seconds to maintain admin lock
+  let heartbeatInterval = null
+  if (user_secret_key) {
+    heartbeatInterval = setInterval(async function () {
+      try {
+        await fetch(`/heartbeat/${sid}`, {
+          method: 'POST',
+          credentials: 'same-origin'
+        })
+      } catch (error) {
+        console.error('Heartbeat failed:', error)
+      }
+    }, 10000)
+  }
+
+  // Release admin lock when leaving the page (best-effort)
   window.addEventListener('beforeunload', function () {
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval)
+    }
     if (user_secret_key) {
       navigator.sendBeacon(`/release-admin/${sid}`, new Blob([JSON.stringify({})], { type: 'application/json' }))
     }

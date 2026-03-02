@@ -360,6 +360,7 @@ async def create_session(request: Request, sid: str = Form(...)):
         "sid": sid,
         "secret_key": None,
         "admin_uid": None,
+        "admin_last_heartbeat": None,
         "created_at": datetime.now(timezone.utc),
         "extra": {}
     })
@@ -379,15 +380,50 @@ async def panel(request: Request, sid: str):
     if not room:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    # Admin timeout: 30 seconds
+    ADMIN_TIMEOUT = 30
+    now = datetime.now(timezone.utc)
+
     # Check if there's already an admin
     if room.get("admin_uid") and room.get("secret_key"):
-        # Admin exists - check if current user is the admin
-        user_secret_key = request.session.get("secret_key")
-        if user_secret_key != room["secret_key"] or user_uid != room["admin_uid"]:
-            raise HTTPException(status_code=403, detail="Session admin is already connected")
-        # User is the existing admin
-    else:
-        # No admin yet - make this user the admin
+        # Check if admin heartbeat is stale
+        last_heartbeat = room.get("admin_last_heartbeat")
+        admin_expired = False
+        if last_heartbeat:
+            elapsed = (now - last_heartbeat).total_seconds()
+            admin_expired = elapsed > ADMIN_TIMEOUT
+        else:
+            # No heartbeat recorded, consider expired
+            admin_expired = True
+
+        if admin_expired:
+            # Admin session expired, clear it
+            await rooms_collection.update_one(
+                {"sid": sid},
+                {
+                    "$set": {
+                        "secret_key": None,
+                        "admin_uid": None,
+                        "admin_last_heartbeat": None,
+                        "updated_at": now
+                    }
+                }
+            )
+            # Re-fetch room to get clean state
+            room = await rooms_collection.find_one({"sid": sid})
+        else:
+            # Admin exists and is active - check if current user is the admin
+            user_secret_key = request.session.get("secret_key")
+            if user_secret_key != room["secret_key"] or user_uid != room["admin_uid"]:
+                raise HTTPException(status_code=403, detail="Session admin is already connected")
+            # User is the existing admin - update heartbeat
+            await rooms_collection.update_one(
+                {"sid": sid},
+                {"$set": {"admin_last_heartbeat": now, "updated_at": now}}
+            )
+
+    # If no admin or admin was cleared, make this user the admin
+    if not room.get("admin_uid") or not room.get("secret_key"):
         session_secret_key = str(uuid.uuid4())
         await rooms_collection.update_one(
             {"sid": sid},
@@ -395,17 +431,49 @@ async def panel(request: Request, sid: str):
                 "$set": {
                     "secret_key": session_secret_key,
                     "admin_uid": user_uid,
-                    "updated_at": datetime.now(timezone.utc)
+                    "admin_last_heartbeat": now,
+                    "updated_at": now
                 }
             }
         )
         request.session["secret_key"] = session_secret_key
         user_secret_key = session_secret_key
+    else:
+        user_secret_key = request.session.get("secret_key")
 
     user_realtime_token = request.session.get("realtime_token", "")
     is_realtime_enabled = await is_realtime_authorized(request.session)
 
     return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_uid": user_uid, "user_secret_key": user_secret_key, "user_realtime_token": user_realtime_token, "is_realtime_enabled": is_realtime_enabled})
+
+@app.post("/heartbeat/{sid}")
+async def heartbeat(request: Request, sid: str):
+    """Update admin heartbeat to maintain session lock"""
+    user_uid = request.session.get("user_uid")
+    user_secret_key = request.session.get("secret_key")
+
+    if not user_uid or not user_secret_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # Verify this user is the current admin
+    room = await rooms_collection.find_one({"sid": sid})
+    if not room:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if room.get("admin_uid") == user_uid and room.get("secret_key") == user_secret_key:
+        # Update heartbeat
+        await rooms_collection.update_one(
+            {"sid": sid},
+            {
+                "$set": {
+                    "admin_last_heartbeat": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc)
+                }
+            }
+        )
+        return {"status": "ok"}
+
+    raise HTTPException(status_code=403, detail="Not the current admin")
 
 @app.post("/release-admin/{sid}")
 async def release_admin(request: Request, sid: str):
@@ -429,6 +497,7 @@ async def release_admin(request: Request, sid: str):
                 "$set": {
                     "secret_key": None,
                     "admin_uid": None,
+                    "admin_last_heartbeat": None,
                     "updated_at": datetime.now(timezone.utc)
                 }
             }
