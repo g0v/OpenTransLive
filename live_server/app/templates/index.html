@@ -78,7 +78,13 @@
                                 ID</label>
                             <input type="text" id="session-id" name="sid"
                                 class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-200 outline-none"
-                                placeholder="e.g., my-meeting-01" required>
+                                placeholder="e.g., my-meeting-01" required
+                                pattern="[a-zA-Z0-9_-]{4,64}"
+                                title="Use only letters, numbers, hyphens, and underscores (4-64 characters)">
+                            <p class="mt-2 text-xs text-gray-500">
+                                Valid format: letters, numbers, hyphens (-), and underscores (_) only. Length: 4-64 characters.
+                            </p>
+                            <p id="session-id-error" class="mt-1 text-xs text-red-600 hidden"></p>
                         </div>
                         <div class="space-y-3">
                             <button type="submit"
@@ -104,12 +110,70 @@
 
 {% block scripts %}
 <script>
+  const sessionIdInput = document.getElementById('session-id')
+  const errorDisplay = document.getElementById('session-id-error')
+
+  function validateSessionId(sid) {
+    // Clear previous error
+    errorDisplay.textContent = ''
+    errorDisplay.classList.add('hidden')
+    sessionIdInput.classList.remove('border-red-500')
+
+    // Trim the input
+    sid = sid.trim()
+
+    // Check if empty
+    if (!sid) {
+      return { valid: false, error: 'Session ID is required' }
+    }
+
+    // Check length
+    if (sid.length < 4) {
+      return { valid: false, error: 'Session ID must be at least 4 characters' }
+    }
+    if (sid.length > 64) {
+      return { valid: false, error: 'Session ID must be 64 characters or less' }
+    }
+
+    // Check format - only alphanumeric, hyphens, and underscores
+    const validPattern = /^[a-zA-Z0-9_-]+$/
+    if (!validPattern.test(sid)) {
+      return { valid: false, error: 'Session ID can only contain letters, numbers, hyphens (-), and underscores (_)' }
+    }
+
+    return { valid: true }
+  }
+
+  // Real-time validation feedback
+  sessionIdInput.addEventListener('input', function() {
+    const sid = this.value.trim()
+    if (sid) {
+      const result = validateSessionId(sid)
+      if (!result.valid) {
+        errorDisplay.textContent = result.error
+        errorDisplay.classList.remove('hidden')
+        sessionIdInput.classList.add('border-red-500')
+      } else {
+        errorDisplay.classList.add('hidden')
+        sessionIdInput.classList.remove('border-red-500')
+      }
+    }
+  })
+
   document.getElementById('create-form').addEventListener('submit', function(e) {
     e.preventDefault()
-    const sid = document.getElementById('session-id').value.trim()
-    if (sid) {
-      window.location.href = `/panel/${encodeURIComponent(sid)}`
+    const sid = sessionIdInput.value.trim()
+    const result = validateSessionId(sid)
+
+    if (!result.valid) {
+      errorDisplay.textContent = result.error
+      errorDisplay.classList.remove('hidden')
+      sessionIdInput.classList.add('border-red-500')
+      sessionIdInput.focus()
+      return
     }
+
+    window.location.href = `/panel/${encodeURIComponent(sid)}`
   })
 </script>
 {% endblock %}
