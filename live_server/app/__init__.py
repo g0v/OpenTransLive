@@ -233,6 +233,39 @@ async def is_realtime_authorized(session: dict, data: dict | None = None) -> boo
     return doc is not None
 
 
+async def verify_socket_auth(socket_id: str, session_id: str, secret_key: str) -> bool:
+    """
+    Verify WebSocket authentication against database.
+
+    Ensures consistent authentication flow across all WebSocket event handlers.
+    Only returns True if the secret_key matches the room's secret_key in the database.
+
+    Args:
+        socket_id: The socket ID for error reporting
+        session_id: The session/room ID to verify
+        secret_key: The secret key to verify against
+
+    Returns:
+        bool: True if authenticated, False otherwise
+    """
+    if not session_id or not secret_key:
+        return False
+
+    # Validate session_id to prevent NoSQL injection
+    is_valid, _ = validate_query_param(session_id, "session_id")
+    if not is_valid:
+        return False
+
+    # Validate secret_key to prevent NoSQL injection
+    is_valid, _ = validate_query_param(secret_key, "secret_key")
+    if not is_valid:
+        return False
+
+    # Verify against database
+    room = await rooms_collection.find_one({"sid": session_id, "secret_key": secret_key})
+    return room is not None
+
+
 def _verify_admin(request: Request):
     """Verify admin via Authorization: Bearer {SECRET_KEY} header."""
     auth_header = request.headers.get("authorization", "")
@@ -733,11 +766,6 @@ async def sync(socket_id, data):
     """Handle WebSocket sync events"""
     session = await sio.get_session(socket_id)
 
-    if not session.get('verified'):
-        if not session.get('secret_key') or session.get('secret_key') != data.get('secret_key'):
-            await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
-            return
-
     session_id = data.get('id')
     if not session_id:
         await sio.emit('error', {'message': 'Session ID is required'}, to=socket_id)
@@ -748,11 +776,27 @@ async def sync(socket_id, data):
     if not is_valid:
         await sio.emit('error', {'message': error_msg}, to=socket_id)
         return
-    
+
+    if not session.get('verified'):
+        secret_key = session.get('secret_key') or data.get('secret_key')
+        if not secret_key:
+            await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+            return
+
+        # Use helper function for consistent authentication verification
+        if not await verify_socket_auth(socket_id, session_id, secret_key):
+            await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+            return
+
+        # Only set verified=True after database verification
+        session['verified'] = True
+        session['secret_key'] = secret_key
+        await sio.save_session(socket_id, session)
+
     # Remove id from the data before processing
     sync_data = data.copy()
     sync_data.pop("id", None)
-    
+
     await _process_transcription_update(session_id, sync_data)
 
 @sio.event
@@ -763,32 +807,23 @@ async def join_session(socket_id, data):
     realtime_token = data.get('realtime_token')
     user_uid = data.get('user_uid')
 
-    # Validate session_id to prevent NoSQL injection
-    if session_id:
-        is_valid, error_msg = validate_query_param(session_id, "session_id")
-        if not is_valid:
-            await sio.emit('error', {'message': error_msg}, to=socket_id)
-            return
-
-    # Validate secret_key to prevent NoSQL injection
-    if secret_key:
-        is_valid, error_msg = validate_query_param(secret_key, "secret_key")
-        if not is_valid:
-            await sio.emit('error', {'message': error_msg}, to=socket_id)
-            return
-
     session = await sio.get_session(socket_id)
 
-    if secret_key:
-        # Verify room exists with matching secret key using Motor
-        room = await rooms_collection.find_one({"sid": session_id, "secret_key": secret_key})
-        if room:
-            session['secret_key'] = secret_key
-            session['verified'] = True
-            session['user_uid'] = user_uid or room.get('admin_uid')
-            session['session_id'] = session_id
-            await sio.save_session(socket_id, session)
-            print(f"Client verified: {session_id}, user_uid: {session.get('user_uid')}")
+    if secret_key and session_id:
+        # Use helper function for consistent authentication verification
+        if await verify_socket_auth(socket_id, session_id, secret_key):
+            # Fetch room data to get admin_uid
+            room = await rooms_collection.find_one({"sid": session_id, "secret_key": secret_key})
+            if room:
+                session['secret_key'] = secret_key
+                session['verified'] = True
+                session['user_uid'] = user_uid or room.get('admin_uid')
+                session['session_id'] = session_id
+                await sio.save_session(socket_id, session)
+                print(f"Client verified: {session_id}, user_uid: {session.get('user_uid')}")
+        else:
+            # Authentication failed - do not set verified flag
+            print(f"Client authentication failed: {session_id}")
 
     if realtime_token:
         session['realtime_token'] = realtime_token
@@ -860,10 +895,28 @@ async def audio_buffer_append(socket_id, data):
     session = await sio.get_session(socket_id)
 
     if not session.get('verified'):
-        if not session.get('secret_key') or session.get('secret_key') != data.get('secret_key'):
+        secret_key = session.get('secret_key') or data.get('secret_key')
+        if not secret_key:
             await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
             return
-    session['verified'] = True
+
+        # Get session_id from rooms to verify against database
+        rooms = sio.rooms(socket_id)
+        session_id = next((r for r in rooms if r != socket_id), None)
+
+        if not session_id:
+            await sio.emit('error', {'message': 'Unauthorized: not in a session room'}, to=socket_id)
+            return
+
+        # Use helper function for consistent authentication verification
+        if not await verify_socket_auth(socket_id, session_id, secret_key):
+            await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+            return
+
+        # Only set verified=True after database verification
+        session['verified'] = True
+        session['secret_key'] = secret_key
+        await sio.save_session(socket_id, session)
 
     if not await is_realtime_authorized(session, data):
         await sio.emit('error', {'message': 'Unauthorized: realtime token required'}, to=socket_id)
