@@ -30,6 +30,7 @@ import os
 import hmac
 import logging
 import re
+import base64
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -933,7 +934,28 @@ async def audio_buffer_append(socket_id, data):
     if not base64_audio:
         print("No audio data found in request", flush=True)
         return
-    
+
+    # Validate audio data type
+    if not isinstance(base64_audio, str):
+        await sio.emit('error', {'message': 'Invalid audio data format: must be string'}, to=socket_id)
+        return
+
+    # Validate size limit (max 1MB per chunk)
+    # Base64 encoding increases size by ~33%, so 1MB limit = ~750KB of actual data
+    MAX_AUDIO_CHUNK_SIZE = 1 * 1024 * 1024  # 1MB in bytes
+    if len(base64_audio) > MAX_AUDIO_CHUNK_SIZE:
+        await sio.emit('error', {'message': f'Audio chunk too large: maximum {MAX_AUDIO_CHUNK_SIZE} bytes allowed'}, to=socket_id)
+        return
+
+    # Validate base64 format
+    try:
+        # Attempt to decode to verify it's valid base64
+        base64.b64decode(base64_audio, validate=True)
+    except Exception as e:
+        await sio.emit('error', {'message': 'Invalid base64 audio data'}, to=socket_id)
+        logger.warning(f"Invalid base64 audio data from socket {socket_id}: {str(e)}")
+        return
+
     manager = active_scribe_managers.get(session_id)
     if not manager or not manager.is_running:
         manager = ScribeSessionManager(session_id, on_scribe_transcription)
