@@ -203,26 +203,21 @@ async def is_realtime_authorized(session: dict, data: dict | None = None) -> boo
     Returns True if:
     1. The socket is an admin connection (global SECRET_KEY), OR
     2. No tokens exist in DB (no restrictions configured), OR
-    3. A valid realtime_token is found in data or session
+    3. A valid user_uid is found in data or session that matches a token
     """
     if session.get('admin'):
         return True
-
-    # Check if session has a secret_key that matches global SECRET_KEY
-    user_secret_key = session.get('secret_key')
-    if user_secret_key and hmac.compare_digest(user_secret_key, SETTINGS["SECRET_KEY"]):
-        return True
-
+        
     token = None
     if data and isinstance(data, dict):
-        token = data.get('realtime_token')
+        token = data.get('user_uid')
     if not token:
-        token = session.get('realtime_token')
+        token = session.get('user_uid')
     if not token:
         return False
 
     # Validate token to prevent NoSQL injection
-    is_valid, _ = validate_query_param(token, "realtime_token")
+    is_valid, _ = validate_query_param(token, "user_uid")
     if not is_valid:
         return False
 
@@ -587,10 +582,9 @@ async def panel(request: Request, sid: str):
     else:
         user_secret_key = request.session.get("secret_key")
 
-    user_realtime_token = request.session.get("realtime_token", "")
     is_realtime_enabled = await is_realtime_authorized(request.session)
 
-    return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_uid": user_uid, "user_secret_key": user_secret_key, "user_realtime_token": user_realtime_token, "is_realtime_enabled": is_realtime_enabled})
+    return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_uid": user_uid, "user_secret_key": user_secret_key, "is_realtime_enabled": is_realtime_enabled})
 
 @app.post("/heartbeat/{sid}")
 async def heartbeat(request: Request, sid: str):
@@ -805,7 +799,6 @@ async def join_session(socket_id, data):
     """Handle client joining a session room"""
     session_id = data.get('session_id')
     secret_key = data.get('secret_key')
-    realtime_token = data.get('realtime_token')
     user_uid = data.get('user_uid')
 
     session = await sio.get_session(socket_id)
@@ -825,10 +818,6 @@ async def join_session(socket_id, data):
         else:
             # Authentication failed - do not set verified flag
             print(f"Client authentication failed: {session_id}")
-
-    if realtime_token:
-        session['realtime_token'] = realtime_token
-        await sio.save_session(socket_id, session)
 
     if session_id:
         await sio.enter_room(socket_id, session_id)

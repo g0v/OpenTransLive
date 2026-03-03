@@ -5,22 +5,13 @@
 <div class="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
   <!-- Top Bar -->
   <header class="flex items-center px-6 py-3 bg-gray-800 border-b border-gray-700 shadow-md gap-4">
-    <div class="flex items-center gap-4">
-      <h1 class="text-xl font-bold tracking-wider text-red-500 uppercase">
-        <span class="inline-block w-3 h-3 mr-2 bg-red-500 rounded-full animate-pulse"></span>
-        Live Studio
-      </h1>
-      <div class="px-3 py-1 text-xs font-mono bg-gray-900 rounded border border-gray-700 text-gray-400">
-        SID: {{ sid }}
-      </div>
-    </div>
-    <span class="flex items-center gap-1">
+    <span class="flex items-center gap-1 text-xs">
       <span id="status-indicator" class="inline-block w-3 h-3 rounded-full bg-gray-400"></span>
       <span id="status-text">Connecting...</span>
     </span>
     <!-- Mic Toggle Button -->
     {% if is_realtime_enabled %}
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-2 mx-auto">
       <button id="mic-toggle-btn" title="Toggle microphone" class="mic-btn mic-off" aria-pressed="false">
         <!-- Mic ON icon -->
         <iconify-icon id="mic-icon-on" icon="mdi:microphone" width="20" height="20" style="display:none"></iconify-icon>
@@ -28,18 +19,30 @@
         <iconify-icon id="mic-icon-off" icon="mdi:microphone-off" width="20" height="20"></iconify-icon>
         <span id="mic-label">MIC OFF</span>
       </button>
-      <select id="mic-device-selector" class="bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-2 rounded focus:ring-1 focus:ring-blue-500 outline-none" style="display:none;">
+      <select id="mic-device-selector"
+        class="w-full max-w-64 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-2 rounded focus:ring-1 focus:ring-blue-500 outline-none"
+        style="display:none;">
         <option value="">Select Microphone</option>
       </select>
     </div>
     {% endif %}
 
     <div class="flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700 ms-auto">
-      <span class="pl-2 text-xs text-gray-500 uppercase font-bold">SECRET_KEY</span>
+      <span class="pl-2 text-xs text-gray-500 uppercase font-bold">USER ID</span>
+      <div class="relative group">
+        <input id="user-uid-display" type="text" value="{{ user_uid }}"
+          class="copyable-input w-full max-w-32 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
+          readonly title="{{ user_uid }}">
+        <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+          <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
+        </div>
+      </div>
+      <div class="w-px h-4 bg-gray-700 mx-1"></div>
+      <span class="text-xs text-gray-500 uppercase font-bold">KEY</span>
       <div class="relative group">
         <input id="user-secret-key" type="text" value="{{ user_secret_key }}"
-          class="copyable-input w-24 bg-gray-800 border-none text-sm text-blue-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
-          readonly>
+          class="copyable-input w-full max-w-32 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
+          readonly title="{{ user_secret_key }}">
         <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
           <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
         </div>
@@ -49,7 +52,7 @@
       <span class="pl-2 text-xs text-gray-500 uppercase font-bold">Viewer Link</span>
       <div class="relative group">
         <input id="viewer-url" type="text" value=""
-          class="copyable-input w-max bg-gray-800 border-none text-sm text-blue-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly"
+          class="copyable-input w-full max-w-64 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly"
           readonly>
         <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
           <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
@@ -140,7 +143,6 @@
   const sessionId = "{{ sid }}"
   const user_uid = "{{ user_uid }}"
   const user_secret_key = "{{ user_secret_key }}"
-  const user_realtime_token = "{{ user_realtime_token }}"
 
   // Sync user_uid with localStorage for persistence across sessions
   if (user_uid) {

@@ -10,7 +10,7 @@ socket.on('connect', function () {
   console.log('WebSocket connection opened');
 
   // Join the session room
-  socket.emit('join_session', { session_id: sessionId, secret_key: user_secret_key, realtime_token: user_realtime_token, user_uid: user_uid });
+  socket.emit('join_session', { session_id: sessionId, secret_key: user_secret_key, user_uid: user_uid });
 });
 
 socket.on('disconnect', function () {
@@ -77,7 +77,7 @@ async function startSession() {
 
       socket.emit('audio_buffer_append', {
         secret_key: user_secret_key,
-        realtime_token: user_realtime_token,
+        user_uid: user_uid,
         audio: base64Audio
       });
 
@@ -167,7 +167,7 @@ async function handleDeviceChange() {
 }
 
 // Initialize device selector on load
-document.addEventListener('DOMContentLoaded', async function() {
+document.addEventListener('DOMContentLoaded', async function () {
   micDeviceSelector = document.getElementById('mic-device-selector');
 
   if (micDeviceSelector) {
