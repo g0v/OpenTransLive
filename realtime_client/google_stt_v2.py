@@ -2,6 +2,7 @@ import queue
 import asyncio
 import dotenv
 import os
+import logging
 from typing import Generator, Iterator
 from google.cloud.speech_v2 import SpeechClient
 from google.cloud.speech_v2.types import cloud_speech as cloud_speech_types
@@ -11,6 +12,8 @@ from datetime import datetime, timezone
 
 import pyaudio
 dotenv.load_dotenv()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Audio recording parameters
 RATE = 16000
@@ -140,7 +143,7 @@ class GoogleSTTV2:
                 except KeyboardInterrupt:
                     return
                 except Exception as e:
-                    print(f"Error generating audio request: {str(e)}")
+                    logger.error(f"Error generating audio request: {type(e).__name__}", exc_info=True)
                     break
         return request_iterator()
 
@@ -176,12 +179,10 @@ class GoogleSTTV2:
                     self.last_partial_time = datetime.now(timezone.utc)
                     if self.callback:
                         await self.callback(transcription, partial=True)
-                        
-                    
+
+
         except Exception as e:
-            print(f"Error processing response: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
+            logger.error(f"Error processing response: {type(e).__name__}", exc_info=True)
             
     async def run(self) -> None: 
         with MicrophoneStream(RATE, CHUNK) as stream:
@@ -204,8 +205,6 @@ class GoogleSTTV2:
                     await asyncio.sleep(0.1)
                     
             except KeyboardInterrupt:
-                print("Stopping transcription.")
+                logger.info("Stopping transcription.")
             except Exception as e:
-                print(f"Error during transcription: {str(e)}")
-                import traceback
-                print(traceback.format_exc())
+                logger.error(f"Error during transcription: {type(e).__name__}", exc_info=True)

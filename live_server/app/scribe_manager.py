@@ -8,8 +8,9 @@ from websockets.asyncio.client import connect as ws_connect
 from datetime import datetime, timezone
 from .config import REALTIME_SETTINGS
 from .translator import get_async_client
+from .logger_config import setup_logger, log_exception
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 class ScribeSessionManager:
     def __init__(self, session_id, callback):
@@ -44,7 +45,7 @@ class ScribeSessionManager:
             data = response.json()
             return data.get("token")
         except Exception as e:
-            logger.error(f"Error getting token: {e}")
+            log_exception(logger, e, "Error getting Scribe API token")
             return None
 
     async def push_audio(self, base64_audio: str):
@@ -68,7 +69,7 @@ class ScribeSessionManager:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Error in send_audio_loop: {e}")
+            log_exception(logger, e, "Error in send_audio_loop")
 
     async def receive_messages_loop(self):
         try:
@@ -90,7 +91,7 @@ class ScribeSessionManager:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Error in receive_messages_loop: {e}")
+            log_exception(logger, e, "Error in receive_messages_loop")
 
     async def handle_transcript(self, data):
         try:
@@ -128,9 +129,9 @@ class ScribeSessionManager:
             else:
                 self.seg_start_time = None
                 asyncio.create_task(self.callback(self.session_id, transcription))
-                
+
         except Exception as e:
-            logger.error(f"Error handling transcript: {e}")
+            log_exception(logger, e, "Error handling transcript")
 
     async def start(self):
         self.is_running = True
@@ -166,7 +167,7 @@ class ScribeSessionManager:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Scribe connection error for {self.session_id}: {e}")
+            log_exception(logger, e, f"Scribe connection error for {self.session_id}")
         finally:
             self.is_running = False
             self.ws = None

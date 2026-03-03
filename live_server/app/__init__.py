@@ -25,8 +25,13 @@ dotenv.load_dotenv(override=True)
 from .database import rooms_collection, transcription_store_collection, realtime_tokens_collection
 from .config import SETTINGS, REDIS_URL
 from .scribe_manager import ScribeSessionManager
+from .logger_config import setup_logger, log_exception, get_generic_error_dict
 import os
 import hmac
+import logging
+
+# Setup logger
+logger = setup_logger(__name__)
 
 active_scribe_managers = {}
 active_translation_managers = {}
@@ -268,9 +273,9 @@ async def get_youtube_start_time(video_id: str) -> float | None:
                 youtube_data_cache[video_id] = data
             else:
                 youtube_data_cache[video_id] = None # negative cache
-                
+
         except Exception as e:
-            print(f"Error fetching YouTube data: {e}")
+            log_exception(logger, e, "Error fetching YouTube data")
             return None
     
     if data and 'liveStreamingDetails' in data:
@@ -328,7 +333,7 @@ async def get_cached_transcription(id) -> Any:
             
         return data
     except Exception as e:
-        print(f"Redis/DB error in get_cached_transcription: {e}")
+        log_exception(logger, e, "Redis/DB error in get_cached_transcription")
         return {"transcriptions": []}
 
 async def migrate_to_zset(id, data):
@@ -353,7 +358,7 @@ async def migrate_to_zset(id, data):
         pipe.delete(f"transcription:{id}")
         await pipe.execute()
     except Exception as e:
-        print(f"Migration error for {id}: {e}")
+        log_exception(logger, e, f"Migration error for {id}")
 
 
 async def save_segment_background(sid, segment, stream_start_time):
@@ -371,7 +376,7 @@ async def save_segment_background(sid, segment, stream_start_time):
             upsert=True
         )
     except Exception as e:
-        print(f"Error saving to MongoDB: {e}")
+        log_exception(logger, e, "Error saving to MongoDB")
 
 
 # FastAPI Routes

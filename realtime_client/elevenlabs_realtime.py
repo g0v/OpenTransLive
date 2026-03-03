@@ -113,7 +113,7 @@ class ScribeRealtime:
                 data = response.json()
                 return data.get("token")
         except Exception as e:
-            logger.error(f"Error getting token: {e}")
+            logger.error(f"Error getting token: {type(e).__name__}", exc_info=True)
             return None
     # WebSocket message handlers
     def on_session_started(self, data):
@@ -151,12 +151,10 @@ class ScribeRealtime:
                     self.last_partial_time = datetime.now(timezone.utc)
                     if self.callback:
                         asyncio.create_task(self.callback(transcription, partial=True))
-                        
-                    
+
+
         except Exception as e:
-            print(f"Error processing response: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
+            logger.error(f"Error processing transcript: {type(e).__name__}", exc_info=True)
       
     def on_error(self, error):
         logger.error(f"Error: {error}")
@@ -184,7 +182,7 @@ class ScribeRealtime:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Error sending audio: {e}")
+            logger.error(f"Error sending audio: {type(e).__name__}", exc_info=True)
             self.is_running = False
     
     async def receive_messages(self):
@@ -206,7 +204,7 @@ class ScribeRealtime:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.error(f"Error receiving messages: {e}")
+            logger.error(f"Error receiving messages: {type(e).__name__}", exc_info=True)
             self.is_running = False
     
     async def run(self):
@@ -237,7 +235,7 @@ class ScribeRealtime:
         except KeyboardInterrupt:
             logger.info("Interrupted by user")
         except Exception as e:
-            logger.error(f"Error: {e}")
+            logger.error(f"Error in run: {type(e).__name__}", exc_info=True)
         finally:
             if self.audio_stream:
                 self.audio_stream.close()
