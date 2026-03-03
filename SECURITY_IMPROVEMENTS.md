@@ -1,12 +1,17 @@
-# MongoDB Query Input Sanitization
+# MongoDB Query Input Sanitization and Session ID Validation
 
 ## Summary
-Added comprehensive input validation to prevent NoSQL injection attacks across all MongoDB queries in the application.
+Added comprehensive input validation to prevent NoSQL injection attacks and session enumeration across all MongoDB queries in the application. Enhanced with strict session ID validation using regex patterns and length limits.
 
 ## Problem
 User input was being used directly in MongoDB queries without sanitization, creating potential NoSQL injection vulnerabilities at multiple locations:
 - URL path parameters (sid, id, token)
 - WebSocket event data (session_id, secret_key, realtime_token)
+
+Additional security risks identified:
+- No format validation for session IDs (allowed special characters)
+- No length limits on session IDs
+- Potential for session enumeration and session fixation attacks
 
 ## Solution
 Implemented two sanitization functions that validate all user inputs before using them in MongoDB queries:
@@ -14,13 +19,18 @@ Implemented two sanitization functions that validate all user inputs before usin
 ### 1. `sanitize_query_param(value: str, param_name: str) -> str`
 - Used in HTTP endpoints (raises HTTPException on invalid input)
 - Validates input is a string
-- Rejects inputs containing MongoDB operator characters: `$` and `.`
 - Rejects empty or whitespace-only strings
+- **For session IDs**: Enforces strict validation:
+  - Alphanumeric characters, hyphens, and underscores only (regex: `^[a-zA-Z0-9_-]+$`)
+  - Length between 4 and 64 characters
+  - Prevents MongoDB operators and special characters
+- **For other parameters**: Rejects MongoDB operator characters (`$` and `.`)
 
 ### 2. `validate_query_param(value: str, param_name: str) -> tuple[bool, str]`
 - Used in WebSocket events (returns validation status)
 - Same validation logic as sanitize_query_param
 - Returns tuple: (is_valid, error_message)
+- **Enhanced with session ID-specific validation** (same rules as above)
 
 ## Protected Endpoints
 
@@ -52,12 +62,33 @@ These changes prevent attackers from:
 - Using dot notation to access nested fields
 - Bypassing authentication or authorization checks
 - Accessing or modifying unauthorized data
+- **Enumerating session IDs** through malformed input
+- **Session fixation attacks** using specially crafted session IDs
+- **Special character injection** that could bypass sanitization
+
+## Implementation Details
+
+### Session ID Detection
+The enhanced validation automatically detects session ID parameters by checking if:
+- The parameter name contains "session" (case-insensitive), OR
+- The parameter name equals "sid" (case-insensitive)
+
+This ensures all session-related parameters receive strict validation without requiring code changes at every call site.
+
+### Validation Rules for Session IDs
+1. **Type check**: Must be a string
+2. **Non-empty check**: Cannot be empty or whitespace-only
+3. **Length validation**: 4-64 characters (prevents both too-short guessable IDs and excessively long inputs)
+4. **Format validation**: Only alphanumeric characters (a-z, A-Z, 0-9), hyphens (-), and underscores (_)
+5. **Special character prevention**: Rejects all other characters including MongoDB operators
 
 ## Files Modified
-- `live_server/app/__init__.py` - Added sanitization functions and applied them to all vulnerable locations
+- `live_server/app/__init__.py` - Enhanced sanitization functions with strict session ID validation and applied them to all vulnerable locations
 
 ## Backward Compatibility
-These changes maintain full backward compatibility:
-- Valid session IDs, tokens, and other parameters continue to work
-- Only malicious inputs containing `$` or `.` are rejected
-- Error messages are clear and informative
+These changes maintain backward compatibility for valid session IDs:
+- Session IDs using alphanumeric characters, hyphens, and underscores continue to work
+- YouTube video IDs (alphanumeric with hyphens/underscores) remain compatible
+- UUIDs with hyphens are supported
+- Only malicious or malformed inputs are rejected
+- Error messages are clear and informative, specifying exact validation requirements

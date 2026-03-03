@@ -29,6 +29,7 @@ from .logger_config import setup_logger, log_exception, get_generic_error_dict
 import os
 import hmac
 import logging
+import re
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -95,8 +96,14 @@ redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
 def sanitize_query_param(value: str, param_name: str = "parameter") -> str:
     """
-    Sanitize user input to prevent NoSQL injection.
-    Rejects inputs containing MongoDB special characters like $ and .
+    Sanitize user input to prevent NoSQL injection and enumeration attacks.
+
+    For session IDs specifically, enforces:
+    - Alphanumeric characters, hyphens, and underscores only
+    - Length between 4 and 64 characters
+    - No MongoDB special characters ($ and .)
+
+    For other parameters, applies basic sanitization.
 
     Args:
         value: The input string to sanitize
@@ -106,19 +113,12 @@ def sanitize_query_param(value: str, param_name: str = "parameter") -> str:
         The sanitized string if valid
 
     Raises:
-        HTTPException: If input contains potentially dangerous characters
+        HTTPException: If input contains potentially dangerous characters or invalid format
     """
     if not isinstance(value, str):
         raise HTTPException(
             status_code=400,
             detail=f"Invalid {param_name}: must be a string"
-        )
-
-    # Check for MongoDB operator characters
-    if '$' in value or '.' in value:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid {param_name}: contains prohibited characters"
         )
 
     # Additional validation: ensure it's not empty after stripping
@@ -128,12 +128,43 @@ def sanitize_query_param(value: str, param_name: str = "parameter") -> str:
             detail=f"Invalid {param_name}: cannot be empty"
         )
 
+    # Strict validation for session IDs
+    if "session" in param_name.lower() or param_name.lower() == "sid":
+        # Enforce length limits (4-64 characters)
+        if len(value) < 4 or len(value) > 64:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid {param_name}: must be between 4 and 64 characters"
+            )
+
+        # Enforce alphanumeric format with hyphens and underscores only
+        # This prevents special characters, MongoDB operators, and enumeration attempts
+        if not re.match(r'^[a-zA-Z0-9_-]+$', value):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid {param_name}: must contain only alphanumeric characters, hyphens, and underscores"
+            )
+    else:
+        # For non-session parameters, check for MongoDB operator characters
+        if '$' in value or '.' in value:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid {param_name}: contains prohibited characters"
+            )
+
     return value
 
 def validate_query_param(value: str, param_name: str = "parameter") -> tuple[bool, str]:
     """
-    Validate user input to prevent NoSQL injection.
+    Validate user input to prevent NoSQL injection and enumeration attacks.
     Returns validation status and error message if invalid.
+
+    For session IDs specifically, enforces:
+    - Alphanumeric characters, hyphens, and underscores only
+    - Length between 4 and 64 characters
+    - No MongoDB special characters ($ and .)
+
+    For other parameters, applies basic validation.
 
     Args:
         value: The input string to validate
@@ -145,13 +176,23 @@ def validate_query_param(value: str, param_name: str = "parameter") -> tuple[boo
     if not isinstance(value, str):
         return False, f"Invalid {param_name}: must be a string"
 
-    # Check for MongoDB operator characters
-    if '$' in value or '.' in value:
-        return False, f"Invalid {param_name}: contains prohibited characters"
-
     # Additional validation: ensure it's not empty after stripping
     if not value.strip():
         return False, f"Invalid {param_name}: cannot be empty"
+
+    # Strict validation for session IDs
+    if "session" in param_name.lower() or param_name.lower() == "sid":
+        # Enforce length limits (4-64 characters)
+        if len(value) < 4 or len(value) > 64:
+            return False, f"Invalid {param_name}: must be between 4 and 64 characters"
+
+        # Enforce alphanumeric format with hyphens and underscores only
+        if not re.match(r'^[a-zA-Z0-9_-]+$', value):
+            return False, f"Invalid {param_name}: must contain only alphanumeric characters, hyphens, and underscores"
+    else:
+        # For non-session parameters, check for MongoDB operator characters
+        if '$' in value or '.' in value:
+            return False, f"Invalid {param_name}: contains prohibited characters"
 
     return True, ""
 
