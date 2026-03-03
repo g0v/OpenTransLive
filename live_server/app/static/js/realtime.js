@@ -1,6 +1,8 @@
 const socket = io();
 const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
+let selectedDeviceId = null;
+let micDeviceSelector = null;
 
 socket.on('connect', function () {
   statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-green-500';
@@ -38,7 +40,16 @@ async function startSession() {
     audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
     await audioContext.audioWorklet.addModule('/static/js/audio-processor.js');
 
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: 16000 } });
+    const audioConstraints = {
+      channelCount: 1,
+      sampleRate: 16000
+    };
+
+    if (selectedDeviceId) {
+      audioConstraints.deviceId = { exact: selectedDeviceId };
+    }
+
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
     if (!socket.connected) {
       mediaStream.getTracks().forEach(track => track.stop());
       mediaStream = null;
@@ -95,3 +106,87 @@ async function stopSession() {
 }
 
 // startSession / stopSession are called by the mic toggle in panel.html
+
+// Enumerate and populate microphone devices
+async function enumerateDevices() {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audioInputs = devices.filter(device => device.kind === 'audioinput');
+
+    if (!micDeviceSelector || audioInputs.length === 0) {
+      return;
+    }
+
+    // Clear existing options except the first one
+    micDeviceSelector.innerHTML = '<option value="">Default Microphone</option>';
+
+    // Add all audio input devices
+    audioInputs.forEach(device => {
+      const option = document.createElement('option');
+      option.value = device.deviceId;
+      option.textContent = device.label || `Microphone ${micDeviceSelector.options.length}`;
+      micDeviceSelector.appendChild(option);
+    });
+
+    // Show the selector if there are devices available
+    if (audioInputs.length > 0) {
+      micDeviceSelector.style.display = '';
+    }
+
+    // Restore previously selected device
+    const savedDeviceId = localStorage.getItem('selectedMicDeviceId');
+    if (savedDeviceId) {
+      micDeviceSelector.value = savedDeviceId;
+      selectedDeviceId = savedDeviceId;
+    }
+  } catch (error) {
+    console.error('Error enumerating devices:', error);
+  }
+}
+
+// Handle device change
+async function handleDeviceChange() {
+  const wasRecording = recording;
+
+  if (wasRecording) {
+    // Stop current session
+    setMicState('busy');
+    await stopSession();
+  }
+
+  // Update selected device
+  selectedDeviceId = micDeviceSelector.value || null;
+  localStorage.setItem('selectedMicDeviceId', selectedDeviceId || '');
+
+  if (wasRecording) {
+    // Restart session with new device
+    await startSession();
+    recording = true;
+    setMicState('on');
+  }
+}
+
+// Initialize device selector on load
+document.addEventListener('DOMContentLoaded', async function() {
+  micDeviceSelector = document.getElementById('mic-device-selector');
+
+  if (micDeviceSelector) {
+    // Check if microphone is available
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      // Request initial permission to get device labels
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach(track => track.stop());
+        await enumerateDevices();
+      } catch (error) {
+        console.warn('Microphone permission not granted:', error);
+      }
+
+      // Listen for device changes
+      micDeviceSelector.addEventListener('change', handleDeviceChange);
+
+      // Update device list when devices are added/removed
+      navigator.mediaDevices.addEventListener('devicechange', enumerateDevices);
+    }
+  }
+});

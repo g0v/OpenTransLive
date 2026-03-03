@@ -20,13 +20,18 @@
     </span>
     <!-- Mic Toggle Button -->
     {% if is_realtime_enabled %}
-    <button id="mic-toggle-btn" title="Toggle microphone" class="mic-btn mic-off mx-auto" aria-pressed="false">
-      <!-- Mic ON icon -->
-      <iconify-icon id="mic-icon-on" icon="mdi:microphone" width="20" height="20" style="display:none"></iconify-icon>
-      <!-- Mic OFF icon -->
-      <iconify-icon id="mic-icon-off" icon="mdi:microphone-off" width="20" height="20"></iconify-icon>
-      <span id="mic-label">MIC OFF</span>
-    </button>
+    <div class="flex items-center gap-2">
+      <button id="mic-toggle-btn" title="Toggle microphone" class="mic-btn mic-off" aria-pressed="false">
+        <!-- Mic ON icon -->
+        <iconify-icon id="mic-icon-on" icon="mdi:microphone" width="20" height="20" style="display:none"></iconify-icon>
+        <!-- Mic OFF icon -->
+        <iconify-icon id="mic-icon-off" icon="mdi:microphone-off" width="20" height="20"></iconify-icon>
+        <span id="mic-label">MIC OFF</span>
+      </button>
+      <select id="mic-device-selector" class="bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-2 rounded focus:ring-1 focus:ring-blue-500 outline-none" style="display:none;">
+        <option value="">Select Microphone</option>
+      </select>
+    </div>
     {% endif %}
 
     <div class="flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700 ms-auto">
