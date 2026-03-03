@@ -92,7 +92,7 @@ def send_transcription_via_websocket(transcription_data):
             websocket_data['id'] = args.target_sid
             sio.emit('sync', websocket_data)
         except Exception as e:
-            logger.error(f"Error sending via WebSocket: {e}")
+            logger.error(f"Error sending via WebSocket: {type(e).__name__}", exc_info=True)
     elif api_endpoint:
         # Fallback to HTTP POST if WebSocket is not available
         try:
@@ -106,7 +106,7 @@ def send_transcription_via_websocket(transcription_data):
                     timeout=None
                 )
         except Exception as e:
-            logger.error(f"Error sending via HTTP: {e}")
+            logger.error(f"Error sending via HTTP: {type(e).__name__}", exc_info=True)
 
 async def async_chat_completion(json_body):
     async with httpx.AsyncClient() as client:
@@ -231,7 +231,7 @@ async def translate_text(data: dict):
         # Send transcription via WebSocket
         send_transcription_via_websocket(transcription_data["transcriptions"][data["id"]])
     except Exception as e:
-        logger.error(f"Error translating text: {str(e)}")
+        logger.error(f"Error translating text: {type(e).__name__}", exc_info=True)
         raise e
 
 async def transcribe_audio():
@@ -422,13 +422,13 @@ async def transcribe_audio():
                 else:
                     raise ValueError(f"Invalid transcriber: {transcriber}")
             except Exception as e:
-                logger.error(f"Error transcribing audio: {e}")
+                logger.error(f"Error transcribing audio: {type(e).__name__}", exc_info=True)
     
     except KeyboardInterrupt:
         logger.info("Stopping transcription...")
         running = False
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error in transcribe_audio: {type(e).__name__}", exc_info=True)
     finally:
         transcription_data["status"] = "stopped"
         with open(file_path, 'w', encoding='utf-8') as f:
@@ -442,7 +442,7 @@ if __name__ == "__main__":
             sio.connect(f"{server_url}", auth={'secret_key': os.getenv('SECRET_KEY')})
             logger.info(f"Connected to WebSocket server at {server_url}")
         except Exception as e:
-            logger.error(f"Failed to connect to WebSocket server: {e}\nFalling back to HTTP POST mode")
+            logger.error(f"Failed to connect to WebSocket server: {type(e).__name__}\nFalling back to HTTP POST mode", exc_info=True)
     
     try:
         asyncio.run(transcribe_audio())

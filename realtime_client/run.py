@@ -63,7 +63,7 @@ async def send_transcription_via_websocket(transcription_data):
             websocket_data['id'] = args.target_sid
             sio.emit('sync', websocket_data)
         except Exception as e:
-            logger.error(f"Error sending via WebSocket: {e}")
+            logger.error(f"Error sending via WebSocket: {type(e).__name__}", exc_info=True)
 
 async def async_chat_completion(json_body):
     async with httpx.AsyncClient() as client:
@@ -226,7 +226,7 @@ async def handle_trascribed_text(data: dict, need_correct=True):
     except asyncio.CancelledError:
         pass
     except Exception as e:
-        logger.error(f"Error translating text: {str(e)}")
+        logger.error(f"Error translating text: {type(e).__name__}", exc_info=True)
         raise e
             
 async def main():
@@ -239,7 +239,7 @@ async def main():
             except asyncio.QueueFull:
                 logger.warning("Tasks queue is full!! Translate is slower than transcribe, drop.")
             except Exception as e:
-                logger.error(f"error: {e}")
+                logger.error(f"Task creation error: {type(e).__name__}", exc_info=True)
                 
         else:
             while not partial_tasks.empty():
@@ -268,7 +268,7 @@ async def main():
             except KeyboardInterrupt:
                 break
             except Exception as e:
-                logger.error(f"error: {e}")
+                logger.error(f"Queue processing error: {type(e).__name__}", exc_info=True)
             if next:
                 result = await next
                 
@@ -285,7 +285,7 @@ async def main():
             sio.connect(f"{SERVER_URL}", auth={'secret_key': os.getenv('SECRET_KEY')})
             logger.info(f"Connected to WebSocket server at {SERVER_URL}")
         except Exception as e:
-            logger.error(f"Failed to connect to WebSocket server: {e}")
+            logger.error(f"Failed to connect to WebSocket server: {type(e).__name__}", exc_info=True)
     
     try:
         if TRANSCRIBE_SERVICE == "elevenlabs":

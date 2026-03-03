@@ -5,8 +5,9 @@ import asyncio
 import httpx
 from datetime import datetime
 from .config import REALTIME_SETTINGS
+from .logger_config import setup_logger, log_exception
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 _client: httpx.AsyncClient | None = None
@@ -40,7 +41,7 @@ async def async_chat_completion(json_body):
         )
         return response
     except Exception as e:
-        logger.error(f"HTTP request error: {e}")
+        log_exception(logger, e, "HTTP request error in async_chat_completion")
         return None
 
 async def get_current_keywords(redis_client, session_id):
@@ -49,8 +50,8 @@ async def get_current_keywords(redis_client, session_id):
         if keywords:
             return json.loads(keywords)
     except Exception as e:
-        logger.error(f"Redis get keywords error: {e}")
-    
+        log_exception(logger, e, "Redis get keywords error")
+
     common_prompt = REALTIME_SETTINGS.get('COMMON_PROMPT', '')
     default_keywords = [k.strip() for k in common_prompt.split(',') if k.strip()]
     return default_keywords
@@ -59,7 +60,7 @@ async def save_current_keywords(redis_client, session_id, keywords):
     try:
         await redis_client.set(f"keywords:{session_id}", json.dumps(keywords), ex=86400)
     except Exception as e:
-        logger.error(f"Redis set keywords error: {e}")
+        log_exception(logger, e, "Redis set keywords error")
 
 async def translate_transcription(session_id, data: dict, cached_data: dict, redis_client, skip_correction=False):
     """
@@ -124,7 +125,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         else:
             result["corrected"] = text
     except Exception as e:
-        logger.error(f"Correction error: {e}")
+        log_exception(logger, e, "Correction error")
 
     # 2. Parallel: Translation + Keyword Extraction
     translated = {}
@@ -151,7 +152,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
             else:
                 translated[language] = result['corrected']
         except Exception as e:
-            logger.error(f"Translation error for {language}: {e}")
+            log_exception(logger, e, f"Translation error for {language}")
             translated[language] = result['corrected']
 
     async def _keyword_worker():
@@ -170,7 +171,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
             if response and response.status_code == 200:
                 result["special_keywords"] = json.loads(response.json()["choices"][0]["message"]["content"]).get("special_keywords", [])
         except Exception as e:
-            logger.error(f"Keywords extraction error: {e}")
+            log_exception(logger, e, "Keywords extraction error")
 
     atasks = [_translation_worker(lang) for lang in languages]
     if not partial:
@@ -233,7 +234,7 @@ class TranslationQueueManager:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Queue loop error: {e}")
+                log_exception(logger, e, "Queue loop error")
             await asyncio.sleep(0.01)
 
     async def _process(self, session_id, sync_data, cached_data, redis_client):
@@ -243,4 +244,4 @@ class TranslationQueueManager:
         except asyncio.CancelledError:
             logger.debug(f"Translation task cancelled for session {session_id}")
         except Exception as e:
-            logger.error(f"Process translation error: {e}", exc_info=True)
+            log_exception(logger, e, f"Process translation error for session {session_id}")

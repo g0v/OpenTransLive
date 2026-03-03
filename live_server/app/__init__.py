@@ -25,8 +25,14 @@ dotenv.load_dotenv(override=True)
 from .database import rooms_collection, transcription_store_collection, realtime_tokens_collection
 from .config import SETTINGS, REDIS_URL
 from .scribe_manager import ScribeSessionManager
+from .logger_config import setup_logger, log_exception, get_generic_error_dict
 import os
 import hmac
+import logging
+import re
+
+# Setup logger
+logger = setup_logger(__name__)
 
 active_scribe_managers = {}
 active_translation_managers = {}
@@ -88,6 +94,108 @@ youtube_data_cache = {}
 import redis.asyncio as redis
 redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
+def sanitize_query_param(value: str, param_name: str = "parameter") -> str:
+    """
+    Sanitize user input to prevent NoSQL injection and enumeration attacks.
+
+    For session IDs specifically, enforces:
+    - Alphanumeric characters, hyphens, and underscores only
+    - Length between 4 and 64 characters
+    - No MongoDB special characters ($ and .)
+
+    For other parameters, applies basic sanitization.
+
+    Args:
+        value: The input string to sanitize
+        param_name: Name of the parameter for error messages
+
+    Returns:
+        The sanitized string if valid
+
+    Raises:
+        HTTPException: If input contains potentially dangerous characters or invalid format
+    """
+    if not isinstance(value, str):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {param_name}: must be a string"
+        )
+
+    # Additional validation: ensure it's not empty after stripping
+    if not value.strip():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {param_name}: cannot be empty"
+        )
+
+    # Strict validation for session IDs
+    if "session" in param_name.lower() or param_name.lower() == "sid":
+        # Enforce length limits (4-64 characters)
+        if len(value) < 4 or len(value) > 64:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid {param_name}: must be between 4 and 64 characters"
+            )
+
+        # Enforce alphanumeric format with hyphens and underscores only
+        # This prevents special characters, MongoDB operators, and enumeration attempts
+        if not re.match(r'^[a-zA-Z0-9_-]+$', value):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid {param_name}: must contain only alphanumeric characters, hyphens, and underscores"
+            )
+    else:
+        # For non-session parameters, check for MongoDB operator characters
+        if '$' in value or '.' in value:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid {param_name}: contains prohibited characters"
+            )
+
+    return value
+
+def validate_query_param(value: str, param_name: str = "parameter") -> tuple[bool, str]:
+    """
+    Validate user input to prevent NoSQL injection and enumeration attacks.
+    Returns validation status and error message if invalid.
+
+    For session IDs specifically, enforces:
+    - Alphanumeric characters, hyphens, and underscores only
+    - Length between 4 and 64 characters
+    - No MongoDB special characters ($ and .)
+
+    For other parameters, applies basic validation.
+
+    Args:
+        value: The input string to validate
+        param_name: Name of the parameter for error messages
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if not isinstance(value, str):
+        return False, f"Invalid {param_name}: must be a string"
+
+    # Additional validation: ensure it's not empty after stripping
+    if not value.strip():
+        return False, f"Invalid {param_name}: cannot be empty"
+
+    # Strict validation for session IDs
+    if "session" in param_name.lower() or param_name.lower() == "sid":
+        # Enforce length limits (4-64 characters)
+        if len(value) < 4 or len(value) > 64:
+            return False, f"Invalid {param_name}: must be between 4 and 64 characters"
+
+        # Enforce alphanumeric format with hyphens and underscores only
+        if not re.match(r'^[a-zA-Z0-9_-]+$', value):
+            return False, f"Invalid {param_name}: must contain only alphanumeric characters, hyphens, and underscores"
+    else:
+        # For non-session parameters, check for MongoDB operator characters
+        if '$' in value or '.' in value:
+            return False, f"Invalid {param_name}: contains prohibited characters"
+
+    return True, ""
+
 async def is_realtime_authorized(session: dict, data: dict | None = None) -> bool:
     """Check if the socket is authorized to use server-side realtime features.
 
@@ -110,6 +218,11 @@ async def is_realtime_authorized(session: dict, data: dict | None = None) -> boo
     if not token:
         token = session.get('realtime_token')
     if not token:
+        return False
+
+    # Validate token to prevent NoSQL injection
+    is_valid, _ = validate_query_param(token, "realtime_token")
+    if not is_valid:
         return False
 
     # If no tokens in DB, allow everyone with a token (backward compat)
@@ -157,6 +270,10 @@ async def create_token(request: Request):
 async def delete_token(request: Request, token: str):
     """Revoke a realtime token (admin only)."""
     _verify_admin(request)
+
+    # Sanitize token parameter to prevent NoSQL injection
+    token = sanitize_query_param(token, "token")
+
     result = await realtime_tokens_collection.delete_one({"token": token})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Token not found")
@@ -197,9 +314,9 @@ async def get_youtube_start_time(video_id: str) -> float | None:
                 youtube_data_cache[video_id] = data
             else:
                 youtube_data_cache[video_id] = None # negative cache
-                
+
         except Exception as e:
-            print(f"Error fetching YouTube data: {e}")
+            log_exception(logger, e, "Error fetching YouTube data")
             return None
     
     if data and 'liveStreamingDetails' in data:
@@ -257,7 +374,7 @@ async def get_cached_transcription(id) -> Any:
             
         return data
     except Exception as e:
-        print(f"Redis/DB error in get_cached_transcription: {e}")
+        log_exception(logger, e, "Redis/DB error in get_cached_transcription")
         return {"transcriptions": []}
 
 async def migrate_to_zset(id, data):
@@ -282,7 +399,7 @@ async def migrate_to_zset(id, data):
         pipe.delete(f"transcription:{id}")
         await pipe.execute()
     except Exception as e:
-        print(f"Migration error for {id}: {e}")
+        log_exception(logger, e, f"Migration error for {id}")
 
 
 async def save_segment_background(sid, segment, stream_start_time):
@@ -300,7 +417,7 @@ async def save_segment_background(sid, segment, stream_start_time):
             upsert=True
         )
     except Exception as e:
-        print(f"Error saving to MongoDB: {e}")
+        log_exception(logger, e, "Error saving to MongoDB")
 
 
 # FastAPI Routes
@@ -310,6 +427,9 @@ async def hello_world(request: Request):
 
 @app.get("/download/{id}")
 async def download(id: str):
+    # Sanitize id parameter to prevent NoSQL injection
+    id = sanitize_query_param(id, "session ID")
+
     data = await get_cached_transcription(id)
     if not data or not data.get("transcriptions"):
         # If cache (Redis) returned empty, we might want to ensure DB is checked.
@@ -323,6 +443,9 @@ async def download(id: str):
 
 @app.get("/yt/{id}", response_class=HTMLResponse)
 async def yt(request: Request, id: str):
+    # Sanitize id parameter to prevent NoSQL injection
+    id = sanitize_query_param(id, "session ID")
+
     data = await get_cached_transcription(id)
     # Note: This might overwrite stream_start_time in the display data, but not cache
     data["stream_start_time"] = await get_youtube_start_time(id) 
@@ -330,6 +453,9 @@ async def yt(request: Request, id: str):
 
 @app.get("/rt/{id}", response_class=HTMLResponse)
 async def rt(request: Request, id: str):
+    # Sanitize id parameter to prevent NoSQL injection
+    id = sanitize_query_param(id, "session ID")
+
     data = await get_cached_transcription(id)
     sliced_data = data.copy()
     sliced_data["transcriptions"] = sliced_data["transcriptions"][-50:]
@@ -337,6 +463,9 @@ async def rt(request: Request, id: str):
   
 @app.get("/panel/{sid}", response_class=HTMLResponse)
 async def panel(request: Request, sid: str):
+    # Sanitize sid parameter to prevent NoSQL injection
+    sid = sanitize_query_param(sid, "session ID")
+
     # Ensure user has a UID
     user_uid = request.session.get("user_uid")
     if not user_uid:
@@ -432,6 +561,9 @@ async def panel(request: Request, sid: str):
 @app.post("/heartbeat/{sid}")
 async def heartbeat(request: Request, sid: str):
     """Update admin heartbeat to maintain session lock"""
+    # Sanitize sid parameter to prevent NoSQL injection
+    sid = sanitize_query_param(sid, "session ID")
+
     user_uid = request.session.get("user_uid")
     user_secret_key = request.session.get("secret_key")
 
@@ -461,6 +593,9 @@ async def heartbeat(request: Request, sid: str):
 @app.post("/release-admin/{sid}")
 async def release_admin(request: Request, sid: str):
     """Release admin lock when admin leaves"""
+    # Sanitize sid parameter to prevent NoSQL injection
+    sid = sanitize_query_param(sid, "session ID")
+
     user_uid = request.session.get("user_uid")
     user_secret_key = request.session.get("secret_key")
 
@@ -597,15 +732,21 @@ async def _process_transcription_update(session_id, sync_data):
 async def sync(socket_id, data):
     """Handle WebSocket sync events"""
     session = await sio.get_session(socket_id)
-    
+
     if not session.get('verified'):
         if not session.get('secret_key') or session.get('secret_key') != data.get('secret_key'):
             await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
             return
-    
+
     session_id = data.get('id')
     if not session_id:
         await sio.emit('error', {'message': 'Session ID is required'}, to=socket_id)
+        return
+
+    # Validate session_id to prevent NoSQL injection
+    is_valid, error_msg = validate_query_param(session_id, "session ID")
+    if not is_valid:
+        await sio.emit('error', {'message': error_msg}, to=socket_id)
         return
     
     # Remove id from the data before processing
@@ -621,6 +762,20 @@ async def join_session(socket_id, data):
     secret_key = data.get('secret_key')
     realtime_token = data.get('realtime_token')
     user_uid = data.get('user_uid')
+
+    # Validate session_id to prevent NoSQL injection
+    if session_id:
+        is_valid, error_msg = validate_query_param(session_id, "session_id")
+        if not is_valid:
+            await sio.emit('error', {'message': error_msg}, to=socket_id)
+            return
+
+    # Validate secret_key to prevent NoSQL injection
+    if secret_key:
+        is_valid, error_msg = validate_query_param(secret_key, "secret_key")
+        if not is_valid:
+            await sio.emit('error', {'message': error_msg}, to=socket_id)
+            return
 
     session = await sio.get_session(socket_id)
 
