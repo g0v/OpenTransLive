@@ -25,14 +25,14 @@ async def close_async_client():
         _client = None
 
 async def async_chat_completion(json_body):
-    api_key = REALTIME_SETTINGS.get('OPENAI_API_KEY')
+    api_key = REALTIME_SETTINGS.get('GEMINI_API_KEY')
     if not api_key:
         return None
-    
+
     client = get_async_client()
     try:
         response = await client.post(
-            "https://api.openai.com/v1/chat/completions",
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
             json=json_body,
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -67,7 +67,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     data: the new transcription segment, e.g. {"partial": True, "result": {"corrected": "..."}}
     cached_data: the history `{"transcriptions": [...]}`
     """
-    api_key = REALTIME_SETTINGS.get('OPENAI_API_KEY')
+    api_key = REALTIME_SETTINGS.get('GEMINI_API_KEY')
     languages_env = REALTIME_SETTINGS.get('TRANSLATE_LANGUAGES', '')
     if not api_key or not languages_env:
         return data
@@ -81,7 +81,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     if not text:
         return data
 
-    AI_MODEL = REALTIME_SETTINGS.get("AI_MODEL", "gpt-4.1-mini")
+    AI_MODEL = REALTIME_SETTINGS.get("AI_MODEL", "gemini-3.1-flash-lite-preview")
     current_keywords = await get_current_keywords(redis_client, session_id)
     
     context = {

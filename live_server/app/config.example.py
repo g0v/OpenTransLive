@@ -13,6 +13,6 @@ REDIS_URL = "redis://redis:6379"
 
 REALTIME_SETTINGS = {
   'ELEVENLABS_API_KEY': "",
-  'OPENAI_API_KEY': "",
+  'GEMINI_API_KEY': "",
   'PARTIAL_INTERVAL': 2
 }

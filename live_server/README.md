@@ -77,9 +77,9 @@ live_server/
    # YouTube API (for live stream time detection)
    YOUTUBE_API_KEY=your-youtube-api-key
 
-   # OpenAI Configuration (for translation)
-   OPENAI_API_KEY=your-openai-api-key
-   AI_MODEL=gpt-4.1-nano
+   # Gemini Configuration (for translation)
+   GEMINI_API_KEY=your-gemini-api-key
+   AI_MODEL=gemini-3.1-flash-lite-preview
 
    # Translation Settings
    TRANSLATE_LANGUAGES=zh-Hant,ja,ko,en
@@ -129,8 +129,8 @@ live_server/
 | `MONGODB_DB_NAME` | Database name | `opentranslive` | Yes |
 | `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` | Yes |
 | `YOUTUBE_API_KEY` | YouTube Data API key | - | For YouTube features |
-| `OPENAI_API_KEY` | OpenAI API key | - | For translation |
-| `AI_MODEL` | OpenAI model for translation | `gpt-4.1-nano` | No |
+| `GEMINI_API_KEY` | Gemini API key | - | For translation |
+| `AI_MODEL` | Gemini model for translation | `gemini-3.1-flash-lite-preview` | No |
 | `TRANSLATE_LANGUAGES` | Comma-separated language codes | `zh-Hant,ja,ko,en` | No |
 | `COMMON_PROMPT` | Context prompt for transcription | - | No |
 | `ELEVENLABS_API_KEY` | ElevenLabs API key | - | For ElevenLabs Scribe |
@@ -356,8 +356,8 @@ The server includes an advanced translation system with the following features:
 
 Translation configuration in `.env`:
 ```bash
-OPENAI_API_KEY=your_key
-AI_MODEL=gpt-4.1-nano
+GEMINI_API_KEY=your_key
+AI_MODEL=gemini-3.1-flash-lite-preview
 TRANSLATE_LANGUAGES=zh-Hant,ja,ko,en
 COMMON_PROMPT="Context about the conversation"
 ```
@@ -472,7 +472,7 @@ socket.on('transcription_update', (data) => {
    - Check client-side Socket.IO version compatibility
 
 4. **Translation not working**
-   - Verify `OPENAI_API_KEY` is set correctly
+   - Verify `GEMINI_API_KEY` is set correctly
    - Check API quota and rate limits
    - Review logs for API errors
 
@@ -491,7 +491,6 @@ Core dependencies (see `pyproject.toml` for full list):
 - `aioredis` - Async Redis client
 - `motor` - Async MongoDB driver
 - `pymongo` - MongoDB driver
-- `openai` - OpenAI API client
 - `elevenlabs` - ElevenLabs SDK
 - `jinja2` - Template engine
 - `qrcode` - QR code generation
