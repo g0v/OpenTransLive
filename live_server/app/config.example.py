@@ -22,9 +22,9 @@ REALTIME_SETTINGS = {
   'AI_MODEL': "gemini-3.1-flash-lite-preview",  # or e.g. "gpt-4.1-mini" for openai
 
   # Translation settings
-  'TRANSLATE_LANGUAGES': "zh-Hant,ja,ko,en",
+  'TRANSLATE_LANGUAGES': "zh-Hant-TW,en-US",
   'COMMON_PROMPT': "",
 
   # Partial transcription flush interval in seconds
-  'PARTIAL_INTERVAL': 2,
+  'PARTIAL_INTERVAL': 3,
 }
