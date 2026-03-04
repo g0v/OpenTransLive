@@ -8,6 +8,7 @@ dependencies = [
     "aioredis>=2.0.1",
     "dotenv>=0.9.9",
     "fastapi[standard]>=0.126.0",
+    "httpx>=0.28.1",
     "itsdangerous>=2.2.0",
     "pymongo>=4.15.5",
     "python-socketio>=5.15.1",

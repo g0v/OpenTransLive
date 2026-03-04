@@ -24,15 +24,33 @@ async def close_async_client():
         await _client.aclose()
         _client = None
 
+_PROVIDER_CONFIG = {
+    "gemini": {
+        "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        "api_key_setting": "GEMINI_API_KEY",
+        "default_model": "gemini-3.1-flash-lite-preview",
+    },
+    "openai": {
+        "endpoint": "https://api.openai.com/v1/chat/completions",
+        "api_key_setting": "OPENAI_API_KEY",
+        "default_model": "gpt-4.1-mini",
+    },
+}
+
+def get_provider_config():
+    provider = REALTIME_SETTINGS.get("AI_PROVIDER", "gemini").lower()
+    return _PROVIDER_CONFIG.get(provider, _PROVIDER_CONFIG["gemini"])
+
 async def async_chat_completion(json_body):
-    api_key = REALTIME_SETTINGS.get('OPENAI_API_KEY')
+    provider_cfg = get_provider_config()
+    api_key = REALTIME_SETTINGS.get(provider_cfg["api_key_setting"])
     if not api_key:
         return None
-    
+
     client = get_async_client()
     try:
         response = await client.post(
-            "https://api.openai.com/v1/chat/completions",
+            provider_cfg["endpoint"],
             json=json_body,
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -67,7 +85,8 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     data: the new transcription segment, e.g. {"partial": True, "result": {"corrected": "..."}}
     cached_data: the history `{"transcriptions": [...]}`
     """
-    api_key = REALTIME_SETTINGS.get('OPENAI_API_KEY')
+    provider_cfg = get_provider_config()
+    api_key = REALTIME_SETTINGS.get(provider_cfg["api_key_setting"])
     languages_env = REALTIME_SETTINGS.get('TRANSLATE_LANGUAGES', '')
     if not api_key or not languages_env:
         return data
@@ -81,7 +100,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     if not text:
         return data
 
-    AI_MODEL = REALTIME_SETTINGS.get("AI_MODEL", "gpt-4.1-mini")
+    AI_MODEL = REALTIME_SETTINGS.get("AI_MODEL", provider_cfg["default_model"])
     current_keywords = await get_current_keywords(redis_client, session_id)
     
     context = {
