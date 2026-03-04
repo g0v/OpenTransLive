@@ -77,9 +77,11 @@ live_server/
    # YouTube API (for live stream time detection)
    YOUTUBE_API_KEY=your-youtube-api-key
 
-   # Gemini Configuration (for translation)
+   # AI translation provider: "gemini" or "openai"
+   AI_PROVIDER=gemini
    GEMINI_API_KEY=your-gemini-api-key
-   AI_MODEL=gemini-3.1-flash-lite-preview
+   # OPENAI_API_KEY=your-openai-api-key  # set this instead when AI_PROVIDER=openai
+   AI_MODEL=gemini-3.1-flash-lite-preview  # or gpt-4.1-mini for openai
 
    # Translation Settings
    TRANSLATE_LANGUAGES=zh-Hant,ja,ko,en
@@ -129,8 +131,10 @@ live_server/
 | `MONGODB_DB_NAME` | Database name | `opentranslive` | Yes |
 | `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` | Yes |
 | `YOUTUBE_API_KEY` | YouTube Data API key | - | For YouTube features |
-| `GEMINI_API_KEY` | Gemini API key | - | For translation |
-| `AI_MODEL` | Gemini model for translation | `gemini-3.1-flash-lite-preview` | No |
+| `AI_PROVIDER` | Translation AI provider (`gemini` or `openai`) | `gemini` | No |
+| `GEMINI_API_KEY` | Gemini API key | - | When `AI_PROVIDER=gemini` |
+| `OPENAI_API_KEY` | OpenAI API key | - | When `AI_PROVIDER=openai` |
+| `AI_MODEL` | Model name for translation | `gemini-3.1-flash-lite-preview` | No |
 | `TRANSLATE_LANGUAGES` | Comma-separated language codes | `zh-Hant,ja,ko,en` | No |
 | `COMMON_PROMPT` | Context prompt for transcription | - | No |
 | `ELEVENLABS_API_KEY` | ElevenLabs API key | - | For ElevenLabs Scribe |
@@ -355,9 +359,21 @@ The server includes an advanced translation system with the following features:
 - **Error handling**: Graceful fallback and retry mechanisms
 
 Translation configuration in `.env`:
+
+Using Gemini (default):
 ```bash
-GEMINI_API_KEY=your_key
+AI_PROVIDER=gemini
+GEMINI_API_KEY=your-gemini-api-key
 AI_MODEL=gemini-3.1-flash-lite-preview
+TRANSLATE_LANGUAGES=zh-Hant,ja,ko,en
+COMMON_PROMPT="Context about the conversation"
+```
+
+Using OpenAI:
+```bash
+AI_PROVIDER=openai
+OPENAI_API_KEY=your-openai-api-key
+AI_MODEL=gpt-4.1-mini
 TRANSLATE_LANGUAGES=zh-Hant,ja,ko,en
 COMMON_PROMPT="Context about the conversation"
 ```
