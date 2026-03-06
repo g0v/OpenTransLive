@@ -57,6 +57,31 @@
       </div>
       {% endif %}
 
+      <!-- Keywords panel -->
+      <div class="relative flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
+        <span class="pl-2 text-xs text-gray-500 uppercase font-bold whitespace-nowrap">Keywords</span>
+        <button id="kw-dropdown-btn" type="button"
+          class="flex items-center gap-1 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none min-w-20 max-w-40 truncate text-left">
+          <span id="kw-dropdown-label" class="truncate flex-1">Loading...</span>
+          <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
+        </button>
+        <span id="keyword-status" class="text-xs text-gray-500 min-w-12">Saved</span>
+        <!-- Keywords dropdown panel -->
+        <div id="kw-dropdown-panel"
+          class="hidden absolute left-0 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2 min-w-72"
+          style="top: calc(100% + 4px);">
+          <div id="kw-list" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
+          <div class="border-t border-gray-700 mt-2 pt-2 flex gap-1">
+            <input id="kw-custom-input" type="text" placeholder="Add keyword"
+              class="flex-1 bg-gray-900 border border-gray-600 text-xs text-gray-300 px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500">
+            <button id="kw-custom-add-btn" type="button"
+              class="px-2 py-1 text-xs font-bold rounded bg-gray-700 text-gray-300 hover:bg-blue-700 hover:text-white transition-colors whitespace-nowrap">
+              Add
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- Language multi-select dropdown -->
       <div class="relative flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
         <span class="pl-2 text-xs text-gray-500 uppercase font-bold whitespace-nowrap">Languages</span>
@@ -334,8 +359,112 @@
     }
   }
 
+  // ── Keywords panel ────────────────────────────────────────────────────────
+  let currentKeywords = []
+
+  function updateKeywordLabel() {
+    const label = document.getElementById('kw-dropdown-label')
+    label.textContent = currentKeywords.length ? currentKeywords.length + ' keyword' + (currentKeywords.length === 1 ? '' : 's') : 'None'
+  }
+
+  function renderKeywordList() {
+    const list = document.getElementById('kw-list')
+    list.innerHTML = ''
+    if (!currentKeywords.length) {
+      const empty = document.createElement('div')
+      empty.className = 'text-xs text-gray-500 px-2 py-1'
+      empty.textContent = 'No keywords set.'
+      list.appendChild(empty)
+      return
+    }
+    currentKeywords.forEach(function (kw) {
+      const row = document.createElement('div')
+      row.className = 'flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300 group'
+      row.innerHTML = `
+        <span class="flex-1 font-mono text-xs text-gray-300 truncate">${kw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</span>
+        <button class="kw-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove keyword" data-kw="${kw.replace(/"/g,'&quot;')}">
+          <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
+        </button>
+      `
+      row.querySelector('.kw-remove-btn').addEventListener('click', function () {
+        currentKeywords = currentKeywords.filter(function (k) { return k !== kw })
+        updateKeywordLabel()
+        renderKeywordList()
+        saveKeywords()
+      })
+      list.appendChild(row)
+    })
+  }
+
+  async function loadKeywords() {
+    try {
+      const res = await fetch(`/api/session/${sid}/keywords`, { credentials: 'same-origin' })
+      if (res.ok) {
+        const data = await res.json()
+        currentKeywords = data.keywords
+        updateKeywordLabel()
+        renderKeywordList()
+      }
+    } catch (e) {
+      console.error('Failed to load keywords:', e)
+    }
+  }
+
+  async function saveKeywords() {
+    const statusEl = document.getElementById('keyword-status')
+    statusEl.textContent = 'Saving'
+    try {
+      const res = await fetch(`/api/session/${sid}/keywords`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keywords: currentKeywords })
+      })
+      if (res.ok) {
+        statusEl.textContent = 'Saved'
+      } else {
+        const err = await res.json()
+        statusEl.textContent = err.detail || 'Error'
+      }
+    } catch (e) {
+      statusEl.textContent = 'Error'
+      console.error('Failed to save keywords:', e)
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     loadLanguages()
+    loadKeywords()
+
+    // Keywords dropdown toggle
+    const kwDropdownBtn = document.getElementById('kw-dropdown-btn')
+    const kwDropdownPanel = document.getElementById('kw-dropdown-panel')
+    kwDropdownBtn.addEventListener('click', function (e) {
+      e.stopPropagation()
+      kwDropdownPanel.classList.toggle('hidden')
+    })
+    document.addEventListener('click', function (e) {
+      if (!kwDropdownPanel.contains(e.target) && e.target !== kwDropdownBtn) {
+        kwDropdownPanel.classList.add('hidden')
+      }
+    })
+
+    // Add custom keyword
+    document.getElementById('kw-custom-add-btn').addEventListener('click', function () {
+      const input = document.getElementById('kw-custom-input')
+      const kw = input.value.trim()
+      if (!kw) return
+      if (!currentKeywords.includes(kw)) {
+        currentKeywords.push(kw)
+        updateKeywordLabel()
+        renderKeywordList()
+        saveKeywords()
+      }
+      input.value = ''
+    })
+    document.getElementById('kw-custom-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') document.getElementById('kw-custom-add-btn').click()
+    })
 
     // Toggle dropdown open/close
     const dropdownBtn = document.getElementById('lang-dropdown-btn')

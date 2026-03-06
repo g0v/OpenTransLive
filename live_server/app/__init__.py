@@ -363,6 +363,59 @@ async def update_session_languages_endpoint(request: Request, sid: str):
     return {"languages": languages}
 
 
+@app.get("/api/session/{sid}/keywords")
+async def get_session_keywords_endpoint(request: Request, sid: str):
+    """Get the current keywords for a session."""
+    sid = sanitize_query_param(sid, "session ID")
+
+    user_uid = request.session.get("user_uid")
+    user_secret_key = request.session.get("secret_key")
+    if not user_uid or not user_secret_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    room = await rooms_collection.find_one({"sid": sid})
+    if not room:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if room.get("admin_uid") != user_uid or room.get("secret_key") != user_secret_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    from .translator import get_current_keywords
+    keywords = await get_current_keywords(redis_client, sid)
+    return {"keywords": keywords}
+
+
+@app.post("/api/session/{sid}/keywords")
+async def update_session_keywords_endpoint(request: Request, sid: str):
+    """Update the keywords for a session."""
+    sid = sanitize_query_param(sid, "session ID")
+
+    user_uid = request.session.get("user_uid")
+    user_secret_key = request.session.get("secret_key")
+    if not user_uid or not user_secret_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    room = await rooms_collection.find_one({"sid": sid})
+    if not room:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if room.get("admin_uid") != user_uid or room.get("secret_key") != user_secret_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    body = await request.json()
+    keywords = body.get("keywords")
+    if not isinstance(keywords, list):
+        raise HTTPException(status_code=400, detail="keywords must be a list")
+    for kw in keywords:
+        if not isinstance(kw, str) or not kw.strip():
+            raise HTTPException(status_code=400, detail="Each keyword must be a non-empty string")
+        if '$' in kw or len(kw) > 128:
+            raise HTTPException(status_code=400, detail=f"Invalid keyword value: {kw}")
+    keywords = [kw.strip() for kw in keywords]
+
+    from .translator import save_current_keywords
+    await save_current_keywords(redis_client, sid, keywords)
+    return {"keywords": keywords}
+
+
 async def get_youtube_start_time(video_id: str) -> float | None:
     """
     Get the actual stream start time for a YouTube video using YouTube Data API v3.
