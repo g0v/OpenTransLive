@@ -252,11 +252,15 @@
     }, 10000)
   }
 
+  // Poll for new server-side keywords every 5 seconds
+  let keywordSyncInterval = setInterval(syncKeywords, 5000)
+
   // Release admin lock when leaving the page (best-effort)
   window.addEventListener('beforeunload', function () {
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval)
     }
+    clearInterval(keywordSyncInterval)
     if (user_secret_key) {
       navigator.sendBeacon(`/release-admin/${sid}`, new Blob([JSON.stringify({})], { type: 'application/json' }))
     }
@@ -407,6 +411,30 @@
       }
     } catch (e) {
       console.error('Failed to load keywords:', e)
+    }
+  }
+
+  // Merge server keywords into the local list without overwriting user edits.
+  // New keywords added server-side (by auto-extraction) are appended locally.
+  async function syncKeywords() {
+    try {
+      const res = await fetch(`/api/session/${sid}/keywords`, { credentials: 'same-origin' })
+      if (!res.ok) return
+      const data = await res.json()
+      const serverKeywords = data.keywords
+      let changed = false
+      for (const kw of serverKeywords) {
+        if (!currentKeywords.includes(kw)) {
+          currentKeywords.push(kw)
+          changed = true
+        }
+      }
+      if (changed) {
+        updateKeywordLabel()
+        renderKeywordList()
+      }
+    } catch (e) {
+      // Silently ignore sync errors to avoid spamming console during normal operation
     }
   }
 
