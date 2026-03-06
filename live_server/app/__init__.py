@@ -711,13 +711,19 @@ async def _process_transcription_update(session_id, sync_data):
     if last_committed_json:
         last_committed = json.loads(last_committed_json[0])
     
-    if sync_data.get("partial", False):
+    if sync_data.get("partial", False) == True:
         # Skip if partial data is older than the last committed one
         if last_committed and sync_data["start_time"] < last_committed["start_time"]:
             print(f"skip older partial: {sync_data['start_time']} < {last_committed['start_time']}", flush=True)
             return
 
         # Update Redis Partial Only - Atomically
+        if sync_data.get("flow_only"):
+            last_partial = await redis_client.get(f"transcription:{session_id}:partial")
+            if last_partial:
+                last_partial = json.loads(last_partial)
+                sync_data["result"]["translated"] = last_partial["result"]["translated"]
+                
         await redis_client.setex(f"transcription:{session_id}:partial", 3600, json.dumps(sync_data))
     else:
         # Atomic ZSET update

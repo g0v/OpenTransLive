@@ -82,7 +82,7 @@ async def save_current_keywords(redis_client, session_id, keywords):
 
 async def translate_transcription(session_id, data: dict, cached_data: dict, redis_client, skip_correction=False):
     """
-    data: the new transcription segment, e.g. {"partial": True, "result": {"corrected": "..."}}
+    data: the new transcription segment, e.g. {"partial": True, "text": "..."}
     cached_data: the history `{"transcriptions": [...]}`
     """
     provider_cfg = get_provider_config()
@@ -96,7 +96,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         return data
 
     partial = data.get("partial") is True
-    text = data.get("result", {}).get("corrected", "")
+    text = data.get("text", None)
     if not text:
         return data
 
@@ -236,11 +236,17 @@ class TranslationQueueManager:
 
     async def put(self, session_id, sync_data, cached_data, redis_client):
         item = (session_id, sync_data, cached_data, redis_client)
-        if self.partial_task and not self.partial_task.done():
-            print(f"{session_id} partial update too fast, cancel previous", flush=True)
-            self.partial_task.cancel()
         if sync_data.get("partial") is True:
-            self.partial_task = asyncio.create_task(self._process(*item))
+            await self.commit_queue.join()
+            if self.partial_task and not self.partial_task.done():
+                print(f"{session_id} partial update too fast, send flow only.", flush=True)
+                sync_data["flow_only"] = True
+                sync_data["result"] = {
+                    "corrected": sync_data["text"]
+                }
+                self.callback(session_id, sync_data)
+            else:
+                self.partial_task = asyncio.create_task(self._process(*item))
         else:
             await self.commit_queue.put(item)
 

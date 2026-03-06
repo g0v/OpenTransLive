@@ -116,10 +116,10 @@ class ScribeSessionManager:
 
             # Match the format expected by sync() event in __init__.py
             transcription = {
+                "text": transcript,
                 "partial": partial,
                 "start_time": self.seg_start_time.timestamp() - 0.3, # approximate adjust
-                "end_time": now.timestamp(),
-                "result": {"corrected": transcript}
+                "end_time": now.timestamp()
             }
             
             if partial:
