@@ -31,12 +31,25 @@
 {% endblock %} {% block head %}
 <style>
   @keyframes new-text-highlight {
-    0%   { color: #2563eb; }
-    60%  { color: #2563eb; }
-    100% { color: inherit; }
+    0% {
+      background-color: rgba(85, 0, 255, 0.5);
+    }
+
+    20% {
+      background-color: rgba(85, 0, 255, 0.5);
+    }
+
+    80% {
+      background-color: transparent;
+    }
+
+    100% {
+      background-color: inherit;
+    }
   }
+
   .new-text {
-    animation: new-text-highlight 2.4s ease-out forwards;
+    animation: new-text-highlight 2s ease-out forwards;
   }
 </style>
 {% endblock %} {% block scripts %}
@@ -77,11 +90,6 @@
         option.textContent = `${language}`;
         combinedSelect.appendChild(option);
       });
-
-      const flowOption = document.createElement('option');
-      flowOption.value = 'single-flow';
-      flowOption.textContent = 'flow';
-      combinedSelect.appendChild(flowOption);
 
       combinedSelect.value = currentSelect;
       combinedSelect.dispatchEvent(new Event('change'));
@@ -138,14 +146,11 @@
       const dataContent = document.getElementById('data-content');
       const selectedValue = document.getElementById('combined-select').value;
 
-      const isFlow = selectedValue === 'single-flow';
       let selectedLanguage;
-      if (!isFlow) {
-        if (selectedValue.startsWith('single-')) {
-          selectedLanguage = selectedValue.replace('single-', '');
-        } else {
-          selectedLanguage = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {})[0];
-        }
+      if (selectedValue.startsWith('single-')) {
+        selectedLanguage = selectedValue.replace('single-', '');
+      } else {
+        selectedLanguage = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {})[0];
       }
 
       // Ensure wrapper exists
@@ -155,15 +160,10 @@
       const wrapper = dataContent.children[0];
 
       let committedText, partialText;
-      if (isFlow) {
-        committedText = transcriptionsData.transcriptions.map(s => s.result.corrected || '').join('\n');
-        partialText = transcriptionsData.partial ? '\n' + (transcriptionsData.partial.result.corrected || '') : '';
-      } else {
-        committedText = transcriptionsData.transcriptions.map(s => s.result.translated[selectedLanguage]).join('\n');
-        partialText = transcriptionsData.partial ? '\n' + transcriptionsData.partial.result.translated[selectedLanguage] : '';
-      }
+      committedText = transcriptionsData.transcriptions.map(s => s.result.translated[selectedLanguage]).join('\n');
+      partialText = transcriptionsData.partial ? '\n' + transcriptionsData.partial.result.translated[selectedLanguage] : '';
 
-      const key = 'single:' + (selectedLanguage || 'flow');
+      const key = 'single:' + selectedLanguage;
       updateContent(wrapper, key, committedText, partialText, dataContent);
     }
   }

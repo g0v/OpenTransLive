@@ -27,6 +27,31 @@
     </div>
     {% endif %}
 
+    <!-- Language multi-select dropdown -->
+    <div class="relative flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
+      <span class="pl-2 text-xs text-gray-500 uppercase font-bold whitespace-nowrap">Languages</span>
+      <button id="lang-dropdown-btn" type="button"
+        class="flex items-center gap-1 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none min-w-32 max-w-48 truncate text-left">
+        <span id="lang-dropdown-label" class="truncate flex-1">Loading...</span>
+        <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
+      </button>
+      <span id="language-status" class="text-xs text-gray-500 min-w-12"></span>
+      <!-- Dropdown panel -->
+      <div id="lang-dropdown-panel"
+        class="hidden absolute left-0 top-full mt-1 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2 min-w-56"
+        style="top: calc(100% + 4px);">
+        <div id="lang-checkbox-list" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
+        <div class="border-t border-gray-700 mt-2 pt-2 flex gap-1">
+          <input id="lang-custom-input" type="text" placeholder="Custom (e.g. ja-JP)"
+            class="flex-1 bg-gray-900 border border-gray-600 text-xs text-gray-300 px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500 font-mono">
+          <button id="lang-custom-add-btn" type="button"
+            class="px-2 py-1 text-xs font-bold rounded bg-gray-700 text-gray-300 hover:bg-blue-700 hover:text-white transition-colors whitespace-nowrap">
+            Add
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div class="flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700 ms-auto">
       <span class="pl-2 text-xs text-gray-500 uppercase font-bold">USER ID</span>
       <div class="relative group">
@@ -207,7 +232,138 @@
     }
   })
 
+  // ── Language multi-select dropdown ───────────────────────────────────────
+  const PRESET_LANGUAGES = [
+    { code: 'zh-Hant-TW', label: 'Chinese Traditional (Taiwan)' },
+    { code: 'zh-Hans-CN', label: 'Chinese Simplified (China)' },
+    { code: 'en-US',      label: 'English (US)' },
+    { code: 'en-GB',      label: 'English (UK)' },
+    { code: 'ja-JP',      label: 'Japanese' },
+    { code: 'ko-KR',      label: 'Korean' },
+    { code: 'es-ES',      label: 'Spanish' },
+    { code: 'fr-FR',      label: 'French' },
+    { code: 'de-DE',      label: 'German' },
+    { code: 'pt-BR',      label: 'Portuguese (Brazil)' },
+    { code: 'ar-SA',      label: 'Arabic' },
+    { code: 'th-TH',      label: 'Thai' },
+    { code: 'vi-VN',      label: 'Vietnamese' },
+    { code: 'id-ID',      label: 'Indonesian' },
+  ]
+
+  let selectedLanguages = []
+
+  function updateDropdownLabel() {
+    const label = document.getElementById('lang-dropdown-label')
+    label.textContent = selectedLanguages.length ? selectedLanguages.join(', ') : 'None'
+  }
+
+  function renderCheckboxList() {
+    const list = document.getElementById('lang-checkbox-list')
+    // Collect all codes: presets + any selected custom ones not in presets
+    const presetCodes = PRESET_LANGUAGES.map(l => l.code)
+    const customCodes = selectedLanguages.filter(c => !presetCodes.includes(c))
+    const allEntries = [
+      ...PRESET_LANGUAGES,
+      ...customCodes.map(c => ({ code: c, label: c }))
+    ]
+
+    list.innerHTML = ''
+    allEntries.forEach(({ code, label }) => {
+      const checked = selectedLanguages.includes(code)
+      const row = document.createElement('label')
+      row.className = 'flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-gray-700 text-sm text-gray-300 select-none'
+      row.innerHTML = `
+        <input type="checkbox" value="${code}" ${checked ? 'checked' : ''}
+          class="accent-blue-500 w-4 h-4 flex-shrink-0">
+        <span class="truncate"><span class="font-mono text-xs text-gray-400">${code}</span> <span class="text-gray-400">${label !== code ? '— ' + label : ''}</span></span>
+      `
+      row.querySelector('input').addEventListener('change', function () {
+        if (this.checked) {
+          if (!selectedLanguages.includes(code)) selectedLanguages.push(code)
+        } else {
+          selectedLanguages = selectedLanguages.filter(c => c !== code)
+        }
+        updateDropdownLabel()
+        saveLanguages()
+      })
+      list.appendChild(row)
+    })
+  }
+
+  async function loadLanguages() {
+    try {
+      const res = await fetch(`/api/session/${sid}/languages`, { credentials: 'same-origin' })
+      if (res.ok) {
+        const data = await res.json()
+        selectedLanguages = data.languages
+        updateDropdownLabel()
+        renderCheckboxList()
+      }
+    } catch (e) {
+      console.error('Failed to load languages:', e)
+    }
+  }
+
+  async function saveLanguages() {
+    const statusEl = document.getElementById('language-status')
+    if (!selectedLanguages.length) {
+      statusEl.textContent = 'Empty'
+      return
+    }
+    try {
+      const res = await fetch(`/api/session/${sid}/languages`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ languages: selectedLanguages })
+      })
+      if (res.ok) {
+        statusEl.textContent = 'Saved'
+        setTimeout(() => { statusEl.textContent = '' }, 2000)
+      } else {
+        const err = await res.json()
+        statusEl.textContent = err.detail || 'Error'
+      }
+    } catch (e) {
+      statusEl.textContent = 'Error'
+      console.error('Failed to save languages:', e)
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
+    loadLanguages()
+
+    // Toggle dropdown open/close
+    const dropdownBtn = document.getElementById('lang-dropdown-btn')
+    const dropdownPanel = document.getElementById('lang-dropdown-panel')
+    dropdownBtn.addEventListener('click', function (e) {
+      e.stopPropagation()
+      dropdownPanel.classList.toggle('hidden')
+    })
+    // Close when clicking outside
+    document.addEventListener('click', function (e) {
+      if (!dropdownPanel.contains(e.target) && e.target !== dropdownBtn) {
+        dropdownPanel.classList.add('hidden')
+      }
+    })
+
+    // Add custom language
+    document.getElementById('lang-custom-add-btn').addEventListener('click', function () {
+      const input = document.getElementById('lang-custom-input')
+      const code = input.value.trim()
+      if (!code) return
+      if (!selectedLanguages.includes(code)) {
+        selectedLanguages.push(code)
+        updateDropdownLabel()
+        renderCheckboxList()
+        saveLanguages()
+      }
+      input.value = ''
+    })
+    document.getElementById('lang-custom-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') document.getElementById('lang-custom-add-btn').click()
+    })
+
     // ── Set full viewer URL ───────────────────────────────────────────────────
     document.getElementById('viewer-url').value = window.location.origin + '/rt/' + sid
 

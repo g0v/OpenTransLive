@@ -62,6 +62,27 @@ async def async_chat_completion(json_body):
         log_exception(logger, e, "HTTP request error in async_chat_completion")
         return None
 
+async def get_session_languages(redis_client, session_id) -> list[str]:
+    """Return translate languages for a session, falling back to config."""
+    try:
+        raw = await redis_client.get(f"languages:{session_id}")
+        if raw:
+            return json.loads(raw)
+    except Exception as e:
+        log_exception(logger, e, "Redis get languages error")
+
+    languages_env = REALTIME_SETTINGS.get('TRANSLATE_LANGUAGES', '')
+    return [lang.strip() for lang in languages_env.split(',') if lang.strip()]
+
+
+async def save_session_languages(redis_client, session_id, languages: list[str]):
+    """Persist translate languages for a session in Redis."""
+    try:
+        await redis_client.set(f"languages:{session_id}", json.dumps(languages), ex=86400)
+    except Exception as e:
+        log_exception(logger, e, "Redis set languages error")
+
+
 async def get_current_keywords(redis_client, session_id):
     try:
         keywords = await redis_client.get(f"keywords:{session_id}")
@@ -87,11 +108,10 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     """
     provider_cfg = get_provider_config()
     api_key = REALTIME_SETTINGS.get(provider_cfg["api_key_setting"])
-    languages_env = REALTIME_SETTINGS.get('TRANSLATE_LANGUAGES', '')
-    if not api_key or not languages_env:
+    if not api_key:
         return data
 
-    languages = [language.strip() for language in languages_env.split(',') if language.strip()]
+    languages = await get_session_languages(redis_client, session_id)
     if not languages:
         return data
 

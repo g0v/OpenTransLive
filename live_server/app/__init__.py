@@ -309,6 +309,60 @@ async def delete_token(request: Request, token: str):
     return {"deleted": token}
 
 
+@app.get("/api/session/{sid}/languages")
+async def get_session_languages_endpoint(request: Request, sid: str):
+    """Get the current translate languages for a session."""
+    sid = sanitize_query_param(sid, "session ID")
+
+    user_uid = request.session.get("user_uid")
+    user_secret_key = request.session.get("secret_key")
+    if not user_uid or not user_secret_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    room = await rooms_collection.find_one({"sid": sid})
+    if not room:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if room.get("admin_uid") != user_uid or room.get("secret_key") != user_secret_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    from .translator import get_session_languages
+    languages = await get_session_languages(redis_client, sid)
+    return {"languages": languages}
+
+
+@app.post("/api/session/{sid}/languages")
+async def update_session_languages_endpoint(request: Request, sid: str):
+    """Update the translate languages for a session."""
+    sid = sanitize_query_param(sid, "session ID")
+
+    user_uid = request.session.get("user_uid")
+    user_secret_key = request.session.get("secret_key")
+    if not user_uid or not user_secret_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    room = await rooms_collection.find_one({"sid": sid})
+    if not room:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if room.get("admin_uid") != user_uid or room.get("secret_key") != user_secret_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    body = await request.json()
+    languages = body.get("languages")
+    if not isinstance(languages, list) or not languages:
+        raise HTTPException(status_code=400, detail="languages must be a non-empty list")
+    # Basic validation: each entry must be a non-empty string without injection chars
+    for lang in languages:
+        if not isinstance(lang, str) or not lang.strip():
+            raise HTTPException(status_code=400, detail="Each language must be a non-empty string")
+        if '$' in lang or len(lang) > 32:
+            raise HTTPException(status_code=400, detail=f"Invalid language value: {lang}")
+    languages = [lang.strip() for lang in languages]
+
+    from .translator import save_session_languages
+    await save_session_languages(redis_client, sid, languages)
+    return {"languages": languages}
+
+
 async def get_youtube_start_time(video_id: str) -> float | None:
     """
     Get the actual stream start time for a YouTube video using YouTube Data API v3.
