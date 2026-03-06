@@ -32,11 +32,11 @@
 <style>
   @keyframes new-text-highlight {
     0% {
-      background-color: rgba(85, 0, 255, 0.5);
+      background-color: rgba(149, 0, 255, 0.3);
     }
 
     20% {
-      background-color: rgba(85, 0, 255, 0.5);
+      background-color: rgba(149, 0, 255, 0.3);
     }
 
     80% {
@@ -64,36 +64,41 @@
   const statusText = document.getElementById('status-text');
 
   function populateCombinedSelect() {
-    if (transcriptionsData.transcriptions) {
-      const languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
-      const combinedSelect = document.getElementById('combined-select');
-      if (currentLanguages.length >= 0 && languages.every(language => currentLanguages.includes(language))) {
-        return;
-      }
-      let currentSelect = combinedSelect.value;
-      if (!currentSelect) {
-        currentSelect = 'grid';
-      }
-      currentLanguages = languages;
-      // Clear existing options
-      combinedSelect.innerHTML = '';
-
-      const gridOption = document.createElement('option');
-      gridOption.value = 'grid';
-      gridOption.textContent = 'All';
-      combinedSelect.appendChild(gridOption);
-
-      // Add language-specific options
-      languages.forEach(language => {
-        const option = document.createElement('option');
-        option.value = `single-${language}`;
-        option.textContent = `${language}`;
-        combinedSelect.appendChild(option);
-      });
-
-      combinedSelect.value = currentSelect;
-      combinedSelect.dispatchEvent(new Event('change'));
+    let languages = null;
+    if (transcriptionsData?.partial) {
+      languages = Object.keys(transcriptionsData.partial.result.translated || {});
+    } else if (transcriptionsData?.transcriptions) {
+      languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
     }
+    if (!languages) {
+      return;
+    }
+    const combinedSelect = document.getElementById('combined-select');
+    if (currentLanguages.length >= 0 && languages.every(language => currentLanguages.includes(language)) && languages.length === currentLanguages.length) {
+      return;
+    }
+    let currentSelect = combinedSelect.value;
+    if (!currentSelect) {
+      currentSelect = 'grid';
+    }
+    currentLanguages = languages;
+    // Clear existing options
+    combinedSelect.innerHTML = '';
+
+    const gridOption = document.createElement('option');
+    gridOption.value = 'grid';
+    gridOption.textContent = 'All';
+    combinedSelect.appendChild(gridOption);
+
+    // Add language-specific options
+    languages.forEach(language => {
+      const option = document.createElement('option');
+      option.value = `single-${language}`;
+      option.textContent = `${language}`;
+      combinedSelect.appendChild(option);
+    });
+    combinedSelect.value = currentSelect;
+    combinedSelect.dispatchEvent(new Event('change'));
   }
 
   function refreshView() {
@@ -238,7 +243,9 @@
 
           let committedText = '';
           recentTranscriptions.forEach(subtitle => {
-            committedText += subtitle.result.translated[language] + '\n';
+            if (subtitle.result.translated[language]) {
+              committedText += subtitle.result.translated[language] + '\n';
+            }
           });
           const partialText = transcriptionsData.partial
             ? transcriptionsData.partial.result.translated[language] + '\n'

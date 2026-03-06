@@ -4,86 +4,116 @@
 {% block content %}
 <div class="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
   <!-- Top Bar -->
-  <header class="flex items-center px-6 py-3 bg-gray-800 border-b border-gray-700 shadow-md gap-4">
-    <span class="flex items-center gap-1 text-xs">
-      <span id="status-indicator" class="inline-block w-3 h-3 rounded-full bg-gray-400"></span>
-      <span id="status-text">Connecting...</span>
-    </span>
-    <!-- Mic Toggle Button -->
-    {% if is_realtime_enabled %}
-    <div class="flex items-center gap-2 mx-auto">
-      <button id="mic-toggle-btn" title="Toggle microphone" class="mic-btn mic-off" aria-pressed="false">
-        <!-- Mic ON icon -->
-        <iconify-icon id="mic-icon-on" icon="mdi:microphone" width="20" height="20" style="display:none"></iconify-icon>
-        <!-- Mic OFF icon -->
-        <iconify-icon id="mic-icon-off" icon="mdi:microphone-off" width="20" height="20"></iconify-icon>
-        <span id="mic-label">MIC OFF</span>
-      </button>
-      <select id="mic-device-selector"
-        class="w-full max-w-64 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-2 rounded focus:ring-1 focus:ring-blue-500 outline-none"
-        style="display:none;">
-        <option value="">Select Microphone</option>
-      </select>
-    </div>
-    {% endif %}
+  <header>
+    <div class="px-6 py-3 bg-gray-800 flex items-center flex-wrap gap-4">
+      <div class="flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
+        <span class="pl-2 text-xs text-gray-500 uppercase font-bold">Viewer Link</span>
+        <div class="relative group">
+          <input id="viewer-url" type="text" value=""
+            class="copyable-input w-full max-w-64 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly"
+            readonly>
+          <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+            <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
+        <span class="pl-2 text-xs text-gray-500 uppercase font-bold">USER ID</span>
+        <div class="relative group">
+          <input id="user-uid-display" type="text" value="{{ user_uid }}"
+            class="copyable-input w-full max-w-32 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
+            readonly title="{{ user_uid }}">
+          <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+            <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
+          </div>
+        </div>
+        <div class="w-px h-4 bg-gray-700 mx-1"></div>
+        <span class="text-xs text-gray-500 uppercase font-bold">KEY</span>
+        <div class="relative group">
+          <input id="user-secret-key" type="text" value="{{ user_secret_key }}"
+            class="copyable-input w-full max-w-32 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
+            readonly title="{{ user_secret_key }}">
+          <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+            <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
+          </div>
+        </div>
+      </div>
+      <!-- Mic Toggle Button -->
+      {% if is_realtime_enabled %}
+      <div class="relative flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
+        <button id="mic-toggle-btn" title="Toggle microphone" class="mic-btn mic-off" aria-pressed="false">
+          <!-- Mic ON icon -->
+          <iconify-icon id="mic-icon-on" icon="mdi:microphone" width="20" height="20"
+            style="display:none"></iconify-icon>
+          <!-- Mic OFF icon -->
+          <iconify-icon id="mic-icon-off" icon="mdi:microphone-off" width="20" height="20"></iconify-icon>
+          <span id="mic-label">MIC OFF</span>
+        </button>
+        <select id="mic-device-selector"
+          class="w-full max-w-64 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-2 py-1 text-sm rounded focus:ring-1 focus:ring-blue-500 outline-none"
+          style="display:none;">
+          <option value="">Select Microphone</option>
+        </select>
+      </div>
+      {% endif %}
 
-    <!-- Language multi-select dropdown -->
-    <div class="relative flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
-      <span class="pl-2 text-xs text-gray-500 uppercase font-bold whitespace-nowrap">Languages</span>
-      <button id="lang-dropdown-btn" type="button"
-        class="flex items-center gap-1 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none min-w-32 max-w-48 truncate text-left">
-        <span id="lang-dropdown-label" class="truncate flex-1">Loading...</span>
-        <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
-      </button>
-      <span id="language-status" class="text-xs text-gray-500 min-w-12"></span>
-      <!-- Dropdown panel -->
-      <div id="lang-dropdown-panel"
-        class="hidden absolute left-0 top-full mt-1 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2 min-w-56"
-        style="top: calc(100% + 4px);">
-        <div id="lang-checkbox-list" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
-        <div class="border-t border-gray-700 mt-2 pt-2 flex gap-1">
-          <input id="lang-custom-input" type="text" placeholder="Custom (e.g. ja-JP)"
-            class="flex-1 bg-gray-900 border border-gray-600 text-xs text-gray-300 px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500 font-mono">
-          <button id="lang-custom-add-btn" type="button"
-            class="px-2 py-1 text-xs font-bold rounded bg-gray-700 text-gray-300 hover:bg-blue-700 hover:text-white transition-colors whitespace-nowrap">
-            Add
-          </button>
+      <!-- Keywords panel -->
+      <div class="relative flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
+        <span class="pl-2 text-xs text-gray-500 uppercase font-bold whitespace-nowrap">Keywords</span>
+        <button id="kw-dropdown-btn" type="button"
+          class="flex items-center gap-1 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none min-w-20 max-w-40 truncate text-left">
+          <span id="kw-dropdown-label" class="truncate flex-1">Loading...</span>
+          <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
+        </button>
+        <span id="keyword-status" class="text-xs text-gray-500 min-w-12">Saved</span>
+        <!-- Keywords dropdown panel -->
+        <div id="kw-dropdown-panel"
+          class="hidden absolute left-0 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2 min-w-72"
+          style="top: calc(100% + 4px);">
+          <div id="kw-list" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
+          <div class="border-t border-gray-700 mt-2 pt-2 flex gap-1">
+            <input id="kw-custom-input" type="text" placeholder="Add keyword"
+              class="flex-1 bg-gray-900 border border-gray-600 text-xs text-gray-300 px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500">
+            <button id="kw-custom-add-btn" type="button"
+              class="px-2 py-1 text-xs font-bold rounded bg-gray-700 text-gray-300 hover:bg-blue-700 hover:text-white transition-colors whitespace-nowrap">
+              Add
+            </button>
+          </div>
         </div>
       </div>
+
+      <!-- Language multi-select dropdown -->
+      <div class="relative flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
+        <span class="pl-2 text-xs text-gray-500 uppercase font-bold whitespace-nowrap">Languages</span>
+        <button id="lang-dropdown-btn" type="button"
+          class="flex items-center gap-1 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none min-w-32 max-w-48 truncate text-left">
+          <span id="lang-dropdown-label" class="truncate flex-1">Loading...</span>
+          <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
+        </button>
+        <span id="language-status" class="text-xs text-gray-500 min-w-12">Saved</span>
+        <!-- Dropdown panel -->
+        <div id="lang-dropdown-panel"
+          class="hidden absolute left-0 top-full mt-1 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2 min-w-56"
+          style="top: calc(100% + 4px);">
+          <div id="lang-checkbox-list" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
+          <div class="border-t border-gray-700 mt-2 pt-2 flex gap-1">
+            <input id="lang-custom-input" type="text" placeholder="Custom (e.g. ja-JP)"
+              class="flex-1 bg-gray-900 border border-gray-600 text-xs text-gray-300 px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500 font-mono">
+            <button id="lang-custom-add-btn" type="button"
+              class="px-2 py-1 text-xs font-bold rounded bg-gray-700 text-gray-300 hover:bg-blue-700 hover:text-white transition-colors whitespace-nowrap">
+              Add
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="px-6">
+      <span class="flex items-center gap-1 text-xs">
+        <span id="status-indicator" class="inline-block w-3 h-3 rounded-full bg-gray-400"></span>
+        <span id="status-text">Connecting...</span>
+      </span>
     </div>
 
-    <div class="flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700 ms-auto">
-      <span class="pl-2 text-xs text-gray-500 uppercase font-bold">USER ID</span>
-      <div class="relative group">
-        <input id="user-uid-display" type="text" value="{{ user_uid }}"
-          class="copyable-input w-full max-w-32 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
-          readonly title="{{ user_uid }}">
-        <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-          <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
-        </div>
-      </div>
-      <div class="w-px h-4 bg-gray-700 mx-1"></div>
-      <span class="text-xs text-gray-500 uppercase font-bold">KEY</span>
-      <div class="relative group">
-        <input id="user-secret-key" type="text" value="{{ user_secret_key }}"
-          class="copyable-input w-full max-w-32 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
-          readonly title="{{ user_secret_key }}">
-        <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-          <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
-        </div>
-      </div>
-    </div>
-    <div class="flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
-      <span class="pl-2 text-xs text-gray-500 uppercase font-bold">Viewer Link</span>
-      <div class="relative group">
-        <input id="viewer-url" type="text" value=""
-          class="copyable-input w-full max-w-64 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly"
-          readonly>
-        <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-          <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
-        </div>
-      </div>
-    </div>
   </header>
 
   <div class="flex-1 relative w-full h-full bg-white">
@@ -98,10 +128,10 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 14px;
+    padding: 3px 6px;
     border-radius: 9999px;
     border: 2px solid transparent;
-    font-size: 0.7rem;
+    font-size: 0.6rem;
     font-weight: 700;
     letter-spacing: 0.08em;
     cursor: pointer;
@@ -222,11 +252,15 @@
     }, 10000)
   }
 
+  // Poll for new server-side keywords every 5 seconds
+  let keywordSyncInterval = setInterval(syncKeywords, 5000)
+
   // Release admin lock when leaving the page (best-effort)
   window.addEventListener('beforeunload', function () {
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval)
     }
+    clearInterval(keywordSyncInterval)
     if (user_secret_key) {
       navigator.sendBeacon(`/release-admin/${sid}`, new Blob([JSON.stringify({})], { type: 'application/json' }))
     }
@@ -236,18 +270,18 @@
   const PRESET_LANGUAGES = [
     { code: 'zh-Hant-TW', label: 'Chinese Traditional (Taiwan)' },
     { code: 'zh-Hans-CN', label: 'Chinese Simplified (China)' },
-    { code: 'en-US',      label: 'English (US)' },
-    { code: 'en-GB',      label: 'English (UK)' },
-    { code: 'ja-JP',      label: 'Japanese' },
-    { code: 'ko-KR',      label: 'Korean' },
-    { code: 'es-ES',      label: 'Spanish' },
-    { code: 'fr-FR',      label: 'French' },
-    { code: 'de-DE',      label: 'German' },
-    { code: 'pt-BR',      label: 'Portuguese (Brazil)' },
-    { code: 'ar-SA',      label: 'Arabic' },
-    { code: 'th-TH',      label: 'Thai' },
-    { code: 'vi-VN',      label: 'Vietnamese' },
-    { code: 'id-ID',      label: 'Indonesian' },
+    { code: 'en-US', label: 'English (US)' },
+    { code: 'en-GB', label: 'English (UK)' },
+    { code: 'ja-JP', label: 'Japanese' },
+    { code: 'ko-KR', label: 'Korean' },
+    { code: 'es-ES', label: 'Spanish' },
+    { code: 'fr-FR', label: 'French' },
+    { code: 'de-DE', label: 'German' },
+    { code: 'pt-BR', label: 'Portuguese (Brazil)' },
+    { code: 'ar-SA', label: 'Arabic' },
+    { code: 'th-TH', label: 'Thai' },
+    { code: 'vi-VN', label: 'Vietnamese' },
+    { code: 'id-ID', label: 'Indonesian' },
   ]
 
   let selectedLanguages = []
@@ -307,7 +341,7 @@
   async function saveLanguages() {
     const statusEl = document.getElementById('language-status')
     if (!selectedLanguages.length) {
-      statusEl.textContent = 'Empty'
+      statusEl.textContent = 'Saving'
       return
     }
     try {
@@ -319,7 +353,6 @@
       })
       if (res.ok) {
         statusEl.textContent = 'Saved'
-        setTimeout(() => { statusEl.textContent = '' }, 2000)
       } else {
         const err = await res.json()
         statusEl.textContent = err.detail || 'Error'
@@ -330,8 +363,136 @@
     }
   }
 
+  // ── Keywords panel ────────────────────────────────────────────────────────
+  let currentKeywords = []
+
+  function updateKeywordLabel() {
+    const label = document.getElementById('kw-dropdown-label')
+    label.textContent = currentKeywords.length ? currentKeywords.length + ' keyword' + (currentKeywords.length === 1 ? '' : 's') : 'None'
+  }
+
+  function renderKeywordList() {
+    const list = document.getElementById('kw-list')
+    list.innerHTML = ''
+    if (!currentKeywords.length) {
+      const empty = document.createElement('div')
+      empty.className = 'text-xs text-gray-500 px-2 py-1'
+      empty.textContent = 'No keywords set.'
+      list.appendChild(empty)
+      return
+    }
+    currentKeywords.forEach(function (kw) {
+      const row = document.createElement('div')
+      row.className = 'flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300 group'
+      row.innerHTML = `
+        <span class="flex-1 font-mono text-xs text-gray-300 truncate">${kw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</span>
+        <button class="kw-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove keyword" data-kw="${kw.replace(/"/g,'&quot;')}">
+          <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
+        </button>
+      `
+      row.querySelector('.kw-remove-btn').addEventListener('click', function () {
+        currentKeywords = currentKeywords.filter(function (k) { return k !== kw })
+        updateKeywordLabel()
+        renderKeywordList()
+        saveKeywords()
+      })
+      list.appendChild(row)
+    })
+  }
+
+  async function loadKeywords() {
+    try {
+      const res = await fetch(`/api/session/${sid}/keywords`, { credentials: 'same-origin' })
+      if (res.ok) {
+        const data = await res.json()
+        currentKeywords = data.keywords
+        updateKeywordLabel()
+        renderKeywordList()
+      }
+    } catch (e) {
+      console.error('Failed to load keywords:', e)
+    }
+  }
+
+  // Merge server keywords into the local list without overwriting user edits.
+  // New keywords added server-side (by auto-extraction) are appended locally.
+  async function syncKeywords() {
+    try {
+      const res = await fetch(`/api/session/${sid}/keywords`, { credentials: 'same-origin' })
+      if (!res.ok) return
+      const data = await res.json()
+      const serverKeywords = data.keywords
+      let changed = false
+      for (const kw of serverKeywords) {
+        if (!currentKeywords.includes(kw)) {
+          currentKeywords.push(kw)
+          changed = true
+        }
+      }
+      if (changed) {
+        updateKeywordLabel()
+        renderKeywordList()
+      }
+    } catch (e) {
+      // Silently ignore sync errors to avoid spamming console during normal operation
+    }
+  }
+
+  async function saveKeywords() {
+    const statusEl = document.getElementById('keyword-status')
+    statusEl.textContent = 'Saving'
+    try {
+      const res = await fetch(`/api/session/${sid}/keywords`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keywords: currentKeywords })
+      })
+      if (res.ok) {
+        statusEl.textContent = 'Saved'
+      } else {
+        const err = await res.json()
+        statusEl.textContent = err.detail || 'Error'
+      }
+    } catch (e) {
+      statusEl.textContent = 'Error'
+      console.error('Failed to save keywords:', e)
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     loadLanguages()
+    loadKeywords()
+
+    // Keywords dropdown toggle
+    const kwDropdownBtn = document.getElementById('kw-dropdown-btn')
+    const kwDropdownPanel = document.getElementById('kw-dropdown-panel')
+    kwDropdownBtn.addEventListener('click', function (e) {
+      e.stopPropagation()
+      kwDropdownPanel.classList.toggle('hidden')
+    })
+    document.addEventListener('click', function (e) {
+      if (!kwDropdownPanel.contains(e.target) && e.target !== kwDropdownBtn) {
+        kwDropdownPanel.classList.add('hidden')
+      }
+    })
+
+    // Add custom keyword
+    document.getElementById('kw-custom-add-btn').addEventListener('click', function () {
+      const input = document.getElementById('kw-custom-input')
+      const kw = input.value.trim()
+      if (!kw) return
+      if (!currentKeywords.includes(kw)) {
+        currentKeywords.push(kw)
+        updateKeywordLabel()
+        renderKeywordList()
+        saveKeywords()
+      }
+      input.value = ''
+    })
+    document.getElementById('kw-custom-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') document.getElementById('kw-custom-add-btn').click()
+    })
 
     // Toggle dropdown open/close
     const dropdownBtn = document.getElementById('lang-dropdown-btn')
