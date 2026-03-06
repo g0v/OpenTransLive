@@ -65,6 +65,11 @@
         combinedSelect.appendChild(option);
       });
 
+      const flowOption = document.createElement('option');
+      flowOption.value = 'single-flow';
+      flowOption.textContent = 'flow';
+      combinedSelect.appendChild(flowOption);
+
       combinedSelect.value = currentSelect;
       combinedSelect.dispatchEvent(new Event('change'));
     }
@@ -83,21 +88,34 @@
       const dataContent = document.getElementById('data-content');
       const selectedValue = document.getElementById('combined-select').value;
 
+      const isFlow = selectedValue === 'single-flow';
       let selectedLanguage;
-      if (selectedValue.startsWith('single-')) {
-        selectedLanguage = selectedValue.replace('single-', '');
-      } else {
-        // Default to first available language for 'single' option
-        selectedLanguage = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {})[0];
+      if (!isFlow) {
+        if (selectedValue.startsWith('single-')) {
+          selectedLanguage = selectedValue.replace('single-', '');
+        } else {
+          // Default to first available language for 'single' option
+          selectedLanguage = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {})[0];
+        }
       }
 
       // Only update if language changed or we have new content
       const currentContent = dataContent.textContent;
-      let newContent = transcriptionsData.transcriptions.map(subtitle =>
-        subtitle.result.translated[selectedLanguage]
-      ).join('\n');
-      if (transcriptionsData.partial) {
-        newContent += "\n" + transcriptionsData.partial.result.translated[selectedLanguage];
+      let newContent;
+      if (isFlow) {
+        newContent = transcriptionsData.transcriptions.map(subtitle =>
+          subtitle.result.corrected || ''
+        ).join('\n');
+        if (transcriptionsData.partial) {
+          newContent += "\n" + (transcriptionsData.partial.result.corrected || '');
+        }
+      } else {
+        newContent = transcriptionsData.transcriptions.map(subtitle =>
+          subtitle.result.translated[selectedLanguage]
+        ).join('\n');
+        if (transcriptionsData.partial) {
+          newContent += "\n" + transcriptionsData.partial.result.translated[selectedLanguage];
+        }
       }
 
       if (currentContent !== newContent) {
