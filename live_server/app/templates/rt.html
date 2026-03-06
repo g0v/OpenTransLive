@@ -28,12 +28,25 @@
     </div>
   </div>
 </div>
+{% endblock %} {% block head %}
+<style>
+  @keyframes new-text-highlight {
+    0%   { color: #2563eb; }
+    60%  { color: #2563eb; }
+    100% { color: inherit; }
+  }
+  .new-text {
+    animation: new-text-highlight 2.4s ease-out forwards;
+  }
+</style>
 {% endblock %} {% block scripts %}
 <script>
   let transcriptionsData = {{ data | tojson(indent = 2) }};
   let lastSubtitle = null;
   let currentLayout = 'grid'; // 'single' or 'grid'
   let currentLanguages = [];
+  // Track already-rendered text per language key to enable incremental append
+  const renderedText = new Map();
   const statusIndicator = document.getElementById('status-indicator');
   const statusText = document.getElementById('status-text');
 
@@ -83,6 +96,33 @@
     }
   }
 
+  function appendNewText(container, key, newContent, scrollParent) {
+    const prev = renderedText.get(key) || '';
+    if (prev === newContent) return;
+
+    if (!newContent.startsWith(prev)) {
+      // Content changed in a non-additive way (e.g. layout switch): rebuild
+      container.innerHTML = '';
+      renderedText.set(key, '');
+    }
+
+    const addition = newContent.slice(renderedText.get(key)?.length || 0);
+    if (addition) {
+      const span = document.createElement('span');
+      span.className = 'new-text';
+      span.textContent = addition;
+      // Re-trigger animation if span already exists with same class
+      span.addEventListener('animationend', () => {
+        span.classList.remove('new-text');
+      });
+      container.appendChild(span);
+      renderedText.set(key, newContent);
+      setTimeout(() => {
+        (scrollParent || container).scrollTop = (scrollParent || container).scrollHeight;
+      }, 10);
+    }
+  }
+
   function refreshSingleView() {
     if (transcriptionsData.transcriptions?.length > 0) {
       const dataContent = document.getElementById('data-content');
@@ -94,13 +134,10 @@
         if (selectedValue.startsWith('single-')) {
           selectedLanguage = selectedValue.replace('single-', '');
         } else {
-          // Default to first available language for 'single' option
           selectedLanguage = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {})[0];
         }
       }
 
-      // Only update if language changed or we have new content
-      const currentContent = dataContent.textContent;
       let newContent;
       if (isFlow) {
         newContent = transcriptionsData.transcriptions.map(subtitle =>
@@ -118,13 +155,8 @@
         }
       }
 
-      if (currentContent !== newContent) {
-        dataContent.textContent = newContent;
-        // Ensure auto-scroll to bottom
-        setTimeout(() => {
-          dataContent.scrollTop = dataContent.scrollHeight;
-        }, 10);
-      }
+      const key = 'single:' + (selectedLanguage || 'flow');
+      appendNewText(dataContent, key, newContent, dataContent);
     }
   }
 
@@ -172,6 +204,8 @@
 
       if (needsRebuild) {
         gridContent.innerHTML = '';
+        // Clear cached rendered text so all content re-animates after rebuild
+        languages.forEach(lang => renderedText.delete('grid:' + lang));
 
         languages.forEach(language => {
           const languageBox = document.createElement('div');
@@ -190,7 +224,6 @@
       languages.forEach(language => {
         const languageBox = gridContent.querySelector(`[data-language="${language}"]`);
         if (languageBox) {
-          const languageContent = languageBox.querySelector('div > div');
           const languageCard = languageBox.querySelector('div');
 
           let content = '';
@@ -201,13 +234,8 @@
             content += transcriptionsData.partial.result.translated[language] + '\n';
           }
 
-          // Only update if content changed
-          if (languageContent.textContent !== content) {
-            languageContent.textContent = content;
-            setTimeout(() => {
-              languageCard.scrollTop = languageCard.scrollHeight;
-            }, 10);
-          }
+          const key = 'grid:' + language;
+          appendNewText(languageCard, key, content, languageCard);
         }
       });
     }
@@ -226,6 +254,12 @@
       const gridView = document.getElementById('grid-view');
       singleView.classList.remove('hidden');
       gridView.classList.add('hidden');
+      // Clear single-view container and cache so switching languages re-animates
+      const dataContent = document.getElementById('data-content');
+      dataContent.innerHTML = '';
+      for (const k of renderedText.keys()) {
+        if (k.startsWith('single:')) renderedText.delete(k);
+      }
     }
 
     refreshView();
