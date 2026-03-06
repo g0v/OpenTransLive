@@ -96,31 +96,41 @@
     }
   }
 
-  function appendNewText(container, key, newContent, scrollParent) {
-    const prev = renderedText.get(key) || '';
-    if (prev === newContent) return;
+  // Update committed text (plain, no animation) and partial text (animated).
+  // container must have two child elements: [0] for committed, [1] for partial.
+  function updateContent(container, key, committedText, partialText, scrollParent) {
+    const committedEl = container.children[0];
+    const partialEl = container.children[1];
 
-    if (!newContent.startsWith(prev)) {
-      // Content changed in a non-additive way (e.g. layout switch): rebuild
-      container.innerHTML = '';
-      renderedText.set(key, '');
+    if (committedEl.textContent !== committedText) {
+      committedEl.textContent = committedText;
     }
 
-    const addition = newContent.slice(renderedText.get(key)?.length || 0);
-    if (addition) {
-      const span = document.createElement('span');
-      span.className = 'new-text';
-      span.textContent = addition;
-      // Re-trigger animation if span already exists with same class
-      span.addEventListener('animationend', () => {
-        span.classList.remove('new-text');
-      });
-      container.appendChild(span);
-      renderedText.set(key, newContent);
+    const prevPartial = renderedText.get(key) || '';
+    if (prevPartial !== partialText) {
+      partialEl.textContent = partialText;
+      partialEl.classList.remove('new-text');
+      // Force reflow to restart animation
+      void partialEl.offsetWidth;
+      if (partialText) {
+        partialEl.classList.add('new-text');
+      }
+      renderedText.set(key, partialText);
       setTimeout(() => {
         (scrollParent || container).scrollTop = (scrollParent || container).scrollHeight;
       }, 10);
     }
+  }
+
+  function makeContentContainer() {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'contents';
+    const committed = document.createElement('span');
+    const partial = document.createElement('span');
+    partial.addEventListener('animationend', () => partial.classList.remove('new-text'));
+    wrapper.appendChild(committed);
+    wrapper.appendChild(partial);
+    return wrapper;
   }
 
   function refreshSingleView() {
@@ -138,25 +148,23 @@
         }
       }
 
-      let newContent;
+      // Ensure wrapper exists
+      if (!dataContent.children.length) {
+        dataContent.appendChild(makeContentContainer());
+      }
+      const wrapper = dataContent.children[0];
+
+      let committedText, partialText;
       if (isFlow) {
-        newContent = transcriptionsData.transcriptions.map(subtitle =>
-          subtitle.result.corrected || ''
-        ).join('\n');
-        if (transcriptionsData.partial) {
-          newContent += "\n" + (transcriptionsData.partial.result.corrected || '');
-        }
+        committedText = transcriptionsData.transcriptions.map(s => s.result.corrected || '').join('\n');
+        partialText = transcriptionsData.partial ? '\n' + (transcriptionsData.partial.result.corrected || '') : '';
       } else {
-        newContent = transcriptionsData.transcriptions.map(subtitle =>
-          subtitle.result.translated[selectedLanguage]
-        ).join('\n');
-        if (transcriptionsData.partial) {
-          newContent += "\n" + transcriptionsData.partial.result.translated[selectedLanguage];
-        }
+        committedText = transcriptionsData.transcriptions.map(s => s.result.translated[selectedLanguage]).join('\n');
+        partialText = transcriptionsData.partial ? '\n' + transcriptionsData.partial.result.translated[selectedLanguage] : '';
       }
 
       const key = 'single:' + (selectedLanguage || 'flow');
-      appendNewText(dataContent, key, newContent, dataContent);
+      updateContent(wrapper, key, committedText, partialText, dataContent);
     }
   }
 
@@ -215,6 +223,7 @@
           const languageCard = document.createElement('div');
           languageCard.className = `px-1 h-full overflow-auto break-all whitespace-pre-wrap leading-relaxed`;
 
+          languageCard.appendChild(makeContentContainer());
           languageBox.appendChild(languageCard);
           gridContent.appendChild(languageBox);
         });
@@ -225,17 +234,18 @@
         const languageBox = gridContent.querySelector(`[data-language="${language}"]`);
         if (languageBox) {
           const languageCard = languageBox.querySelector('div');
+          const wrapper = languageCard.children[0];
 
-          let content = '';
+          let committedText = '';
           recentTranscriptions.forEach(subtitle => {
-            content += subtitle.result.translated[language] + '\n';
+            committedText += subtitle.result.translated[language] + '\n';
           });
-          if (transcriptionsData.partial) {
-            content += transcriptionsData.partial.result.translated[language] + '\n';
-          }
+          const partialText = transcriptionsData.partial
+            ? transcriptionsData.partial.result.translated[language] + '\n'
+            : '';
 
           const key = 'grid:' + language;
-          appendNewText(languageCard, key, content, languageCard);
+          updateContent(wrapper, key, committedText, partialText, languageCard);
         }
       });
     }
