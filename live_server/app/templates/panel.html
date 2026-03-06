@@ -27,6 +27,18 @@
     </div>
     {% endif %}
 
+    <div class="flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
+      <span class="pl-2 text-xs text-gray-500 uppercase font-bold">Languages</span>
+      <input id="language-input" type="text" placeholder="e.g. zh-Hant-TW,en-US"
+        class="w-full max-w-48 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none font-mono"
+        title="Comma-separated language codes">
+      <button id="language-save-btn"
+        class="px-3 py-1 text-xs font-bold rounded bg-gray-700 text-gray-300 hover:bg-blue-700 hover:text-white transition-colors">
+        Save
+      </button>
+      <span id="language-status" class="text-xs text-gray-500 min-w-12"></span>
+    </div>
+
     <div class="flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700 ms-auto">
       <span class="pl-2 text-xs text-gray-500 uppercase font-bold">USER ID</span>
       <div class="relative group">
@@ -207,7 +219,51 @@
     }
   })
 
+  // ── Language selector ─────────────────────────────────────────────────────
+  async function loadLanguages() {
+    try {
+      const res = await fetch(`/api/session/${sid}/languages`, { credentials: 'same-origin' })
+      if (res.ok) {
+        const data = await res.json()
+        document.getElementById('language-input').value = data.languages.join(',')
+      }
+    } catch (e) {
+      console.error('Failed to load languages:', e)
+    }
+  }
+
+  async function saveLanguages() {
+    const statusEl = document.getElementById('language-status')
+    const raw = document.getElementById('language-input').value
+    const languages = raw.split(',').map(s => s.trim()).filter(Boolean)
+    if (!languages.length) {
+      statusEl.textContent = 'Empty'
+      return
+    }
+    try {
+      const res = await fetch(`/api/session/${sid}/languages`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ languages })
+      })
+      if (res.ok) {
+        statusEl.textContent = 'Saved'
+        setTimeout(() => { statusEl.textContent = '' }, 2000)
+      } else {
+        const err = await res.json()
+        statusEl.textContent = err.detail || 'Error'
+      }
+    } catch (e) {
+      statusEl.textContent = 'Error'
+      console.error('Failed to save languages:', e)
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
+    loadLanguages()
+    document.getElementById('language-save-btn').addEventListener('click', saveLanguages)
+
     // ── Set full viewer URL ───────────────────────────────────────────────────
     document.getElementById('viewer-url').value = window.location.origin + '/rt/' + sid
 
