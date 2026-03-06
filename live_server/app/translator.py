@@ -259,12 +259,8 @@ class TranslationQueueManager:
         if sync_data.get("partial") is True:
             await self.commit_queue.join()
             if self.partial_task and not self.partial_task.done():
-                print(f"{session_id} partial update too fast, send flow only.", flush=True)
-                sync_data["flow_only"] = True
-                sync_data["result"] = {
-                    "corrected": sync_data["text"]
-                }
-                self.callback(session_id, sync_data)
+                print(f"{session_id} partial update too fast, skip it.", flush=True)
+                return
             else:
                 self.partial_task = asyncio.create_task(self._process(*item))
         else:
