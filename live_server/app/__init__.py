@@ -3,11 +3,13 @@
 # Licensed under the GNU AGPL v3.0
 # See LICENSE for details.
 
-from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi import FastAPI, Request, Form, HTTPException, Depends
 from fastapi.responses import HTMLResponse, Response, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
+from fastapi_limiter import FastAPILimiter
+from fastapi_limiter.depends import RateLimiter
 import socketio
 from contextlib import asynccontextmanager
 from typing import Any
@@ -41,17 +43,21 @@ active_translation_managers = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    import redis.asyncio as _redis
+    _limiter_redis = _redis.from_url(REDIS_URL, decode_responses=True)
+    await FastAPILimiter.init(_limiter_redis)
     yield
     # Shutdown
     print("Shutting down resources...")
+    await FastAPILimiter.close()
     # Close shared translator client
     from .translator import close_async_client
     await close_async_client()
-    
+
     # Stop all active scribe managers
     for manager in active_scribe_managers.values():
         await manager.stop()
-    
+
     # Stop all active translation managers
     for manager in active_translation_managers.values():
         await manager.stop()
@@ -272,7 +278,7 @@ def _verify_admin(request: Request):
         raise HTTPException(status_code=403, detail="Invalid SECRET_KEY")
 
 
-@app.get("/api/tokens")
+@app.get("/api/tokens", dependencies=[Depends(RateLimiter(times=20, seconds=60))])
 async def list_tokens(request: Request):
     """List all realtime tokens (admin only)."""
     _verify_admin(request)
@@ -280,7 +286,7 @@ async def list_tokens(request: Request):
     return docs
 
 
-@app.post("/api/tokens")
+@app.post("/api/tokens", dependencies=[Depends(RateLimiter(times=20, seconds=60))])
 async def create_token(request: Request):
     """Create a new realtime token (admin only)."""
     _verify_admin(request)
@@ -295,7 +301,7 @@ async def create_token(request: Request):
     return {"token": token, "label": doc["label"], "created_at": doc["created_at"].isoformat()}
 
 
-@app.delete("/api/tokens/{token}")
+@app.delete("/api/tokens/{token}", dependencies=[Depends(RateLimiter(times=20, seconds=60))])
 async def delete_token(request: Request, token: str):
     """Revoke a realtime token (admin only)."""
     _verify_admin(request)
@@ -309,7 +315,7 @@ async def delete_token(request: Request, token: str):
     return {"deleted": token}
 
 
-@app.get("/api/session/{sid}/languages")
+@app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
 async def get_session_languages_endpoint(request: Request, sid: str):
     """Get the current translate languages for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -330,7 +336,7 @@ async def get_session_languages_endpoint(request: Request, sid: str):
     return {"languages": languages}
 
 
-@app.post("/api/session/{sid}/languages")
+@app.post("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
 async def update_session_languages_endpoint(request: Request, sid: str):
     """Update the translate languages for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -363,7 +369,7 @@ async def update_session_languages_endpoint(request: Request, sid: str):
     return {"languages": languages}
 
 
-@app.get("/api/session/{sid}/keywords")
+@app.get("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
 async def get_session_keywords_endpoint(request: Request, sid: str):
     """Get the current keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -384,7 +390,7 @@ async def get_session_keywords_endpoint(request: Request, sid: str):
     return {"keywords": keywords}
 
 
-@app.post("/api/session/{sid}/keywords")
+@app.post("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
 async def update_session_keywords_endpoint(request: Request, sid: str):
     """Update the keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -561,7 +567,7 @@ async def save_segment_background(sid, segment, stream_start_time):
 async def hello_world(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-@app.get("/download/{id}")
+@app.get("/download/{id}", dependencies=[Depends(RateLimiter(times=60, seconds=60))])
 async def download(id: str):
     # Sanitize id parameter to prevent NoSQL injection
     id = sanitize_query_param(id, "session ID")
@@ -577,7 +583,7 @@ async def download(id: str):
     content = json.dumps(data, ensure_ascii=False, indent=2)
     return Response(content=content, media_type="application/json")
 
-@app.get("/yt/{id}", response_class=HTMLResponse)
+@app.get("/yt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=60, seconds=60))])
 async def yt(request: Request, id: str):
     # Sanitize id parameter to prevent NoSQL injection
     id = sanitize_query_param(id, "session ID")
@@ -587,7 +593,7 @@ async def yt(request: Request, id: str):
     data["stream_start_time"] = await get_youtube_start_time(id) 
     return templates.TemplateResponse("yt.html", {"request": request, "id": id, "data": data})
 
-@app.get("/rt/{id}", response_class=HTMLResponse)
+@app.get("/rt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=60, seconds=60))])
 async def rt(request: Request, id: str):
     # Sanitize id parameter to prevent NoSQL injection
     id = sanitize_query_param(id, "session ID")
@@ -597,7 +603,7 @@ async def rt(request: Request, id: str):
     sliced_data["transcriptions"] = sliced_data["transcriptions"][-50:]
     return templates.TemplateResponse("rt.html", {"request": request, "id": id, "data": sliced_data})
   
-@app.get("/panel/{sid}", response_class=HTMLResponse)
+@app.get("/panel/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=20, seconds=60))])
 async def panel(request: Request, sid: str):
     # Sanitize sid parameter to prevent NoSQL injection
     sid = sanitize_query_param(sid, "session ID")
@@ -693,7 +699,7 @@ async def panel(request: Request, sid: str):
 
     return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_uid": user_uid, "user_secret_key": user_secret_key, "is_realtime_enabled": is_realtime_enabled})
 
-@app.post("/heartbeat/{sid}")
+@app.post("/heartbeat/{sid}", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
 async def heartbeat(request: Request, sid: str):
     """Update admin heartbeat to maintain session lock"""
     # Sanitize sid parameter to prevent NoSQL injection
@@ -725,7 +731,7 @@ async def heartbeat(request: Request, sid: str):
 
     raise HTTPException(status_code=403, detail="Not the current admin")
 
-@app.post("/release-admin/{sid}")
+@app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=20, seconds=60))])
 async def release_admin(request: Request, sid: str):
     """Release admin lock when admin leaves"""
     # Sanitize sid parameter to prevent NoSQL injection
