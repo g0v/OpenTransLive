@@ -51,6 +51,11 @@
   .new-text {
     animation: new-text-highlight 2s ease-out forwards;
   }
+
+  .prediction-text {
+    opacity: 0.4;
+    font-style: italic;
+  }
 </style>
 {% endblock %} {% block scripts %}
 <script>
@@ -58,6 +63,8 @@
   let lastSubtitle = null;
   let currentLayout = 'grid'; // 'single' or 'grid'
   let currentLanguages = [];
+  // prediction: the latest speculative continuation, cleared when a real update arrives
+  // shape mirrors transcriptionsData.partial but with is_prediction=true
   // Track already-rendered text per language key to enable incremental append
   const renderedText = new Map();
   const statusIndicator = document.getElementById('status-indicator');
@@ -110,10 +117,11 @@
   }
 
   // Update committed text (plain, no animation) and partial text (animated).
-  // container must have two child elements: [0] for committed, [1] for partial.
-  function updateContent(container, key, committedText, partialText, scrollParent) {
+  // container must have three child elements: [0] committed, [1] partial, [2] prediction.
+  function updateContent(container, key, committedText, partialText, scrollParent, predictionText) {
     const committedEl = container.children[0];
     const partialEl = container.children[1];
+    const predictionEl = container.children[2];
 
     if (committedEl.textContent !== committedText) {
       committedEl.textContent = committedText;
@@ -133,6 +141,12 @@
         (scrollParent || container).scrollTop = (scrollParent || container).scrollHeight;
       }, 10);
     }
+
+    // Prediction text: shown only when there is a partial and a prediction extends it
+    const resolvedPrediction = predictionText || '';
+    if (predictionEl.textContent !== resolvedPrediction) {
+      predictionEl.textContent = resolvedPrediction;
+    }
   }
 
   function makeContentContainer() {
@@ -141,8 +155,11 @@
     const committed = document.createElement('span');
     const partial = document.createElement('span');
     partial.addEventListener('animationend', () => partial.classList.remove('new-text'));
+    const prediction = document.createElement('span');
+    prediction.className = 'prediction-text';
     wrapper.appendChild(committed);
     wrapper.appendChild(partial);
+    wrapper.appendChild(prediction);
     return wrapper;
   }
 
@@ -164,12 +181,20 @@
       }
       const wrapper = dataContent.children[0];
 
-      let committedText, partialText;
+      let committedText, partialText, predictionText;
       committedText = transcriptionsData.transcriptions.map(s => s.result.translated[selectedLanguage]).join('\n');
       partialText = transcriptionsData.partial ? '\n' + transcriptionsData.partial.result.translated[selectedLanguage] : '';
 
+      // Prediction: show only the extra words beyond the current partial
+      predictionText = '';
+      if (transcriptionsData.prediction && transcriptionsData.partial) {
+        const predFull = transcriptionsData.prediction.result.translated[selectedLanguage] || '';
+        const partFull = transcriptionsData.partial.result.translated[selectedLanguage] || '';
+        predictionText = predFull.startsWith(partFull) ? predFull.slice(partFull.length) : '';
+      }
+
       const key = 'single:' + selectedLanguage;
-      updateContent(wrapper, key, committedText, partialText, dataContent);
+      updateContent(wrapper, key, committedText, partialText, dataContent, predictionText);
     }
   }
 
@@ -251,8 +276,18 @@
             ? transcriptionsData.partial.result.translated[language] + '\n'
             : '';
 
+          // Prediction: show only the extra words beyond the current partial
+          let predictionText = '';
+          if (transcriptionsData.prediction && transcriptionsData.partial) {
+            const predFull = transcriptionsData.prediction.result.translated[language] || '';
+            const partFull = (transcriptionsData.partial.result.translated[language] || '') + '\n';
+            predictionText = predFull.startsWith(partFull.trimEnd())
+              ? predFull.slice(partFull.trimEnd().length)
+              : '';
+          }
+
           const key = 'grid:' + language;
-          updateContent(wrapper, key, committedText, partialText, languageCard);
+          updateContent(wrapper, key, committedText, partialText, languageCard, predictionText);
         }
       });
     }
@@ -321,6 +356,19 @@
 
     socket.on('transcription_update', function (data) {
       console.log('Transcription update received:', data);
+
+      // Prediction update: only refresh the speculative text, do not touch real data
+      if (data.is_prediction) {
+        // Only show prediction if there is a current partial to extend
+        if (transcriptionsData["partial"]) {
+          transcriptionsData["prediction"] = data;
+          refreshView();
+        }
+        return;
+      }
+
+      // Any real update clears the prediction
+      transcriptionsData["prediction"] = null;
 
       // Check if last_committed is missing from our local list
       if (data.last_committed) {

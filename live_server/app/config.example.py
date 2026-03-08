@@ -27,4 +27,9 @@ REALTIME_SETTINGS = {
 
   # Partial transcription flush interval in seconds
   'PARTIAL_INTERVAL': 3,
+
+  # Speculative prediction: predict next few words after each partial translation.
+  # Shows predicted continuation in a distinct style until the real text arrives.
+  # Uses extra LLM calls; uses the same AI_MODEL as translation.
+  'ENABLE_PREDICTION': False,
 }
