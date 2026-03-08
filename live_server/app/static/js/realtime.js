@@ -5,8 +5,9 @@ let selectedDeviceId = null;
 let micDeviceSelector = null;
 
 socket.on('connect', function () {
-  statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-green-500';
-  statusText.textContent = 'Connected';
+  // Show pending state — auth is not yet confirmed by the server
+  statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-yellow-400';
+  statusText.textContent = 'Authenticating…';
   console.log('WebSocket connection opened');
 
   // Join the session room
@@ -25,8 +26,15 @@ socket.on('connected', function (data) {
 
 socket.on('joined_session', function (data) {
   console.log('Joined session:', data);
-  statusText.textContent = 'Connected to session: ' + data.session_id;
-  socket.emit('realtime_connect', { session_id: sessionId });
+  if (data.authorized) {
+    statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-green-500';
+    statusText.textContent = 'Connected to session: ' + data.session_id;
+    socket.emit('realtime_connect', { session_id: sessionId });
+  } else {
+    statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-orange-500';
+    statusText.textContent = 'Unauthorized';
+    console.warn('join_session: not authorized for session', data.session_id);
+  }
 });
 
 socket.on('error', function (data) {

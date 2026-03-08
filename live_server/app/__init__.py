@@ -784,29 +784,11 @@ async def connect(socket_id, environ, auth):
 async def disconnect(socket_id):
     """Handle client disconnection"""
     print(f"Client disconnected: {socket_id}")
-
-    # Get session data to check if this was an admin
-    session = await sio.get_session(socket_id)
-    user_uid = session.get('user_uid')
-    session_id = session.get('session_id')
-
-    if user_uid and session_id:
-        # Check if this user was the admin for this session
-        room = await rooms_collection.find_one({"sid": session_id})
-        if room and room.get("admin_uid") == user_uid:
-            # Release admin lock immediately on disconnect
-            await rooms_collection.update_one(
-                {"sid": session_id},
-                {
-                    "$set": {
-                        "secret_key": None,
-                        "admin_uid": None,
-                        "admin_last_heartbeat": None,
-                        "updated_at": datetime.now(timezone.utc)
-                    }
-                }
-            )
-            print(f"Admin lock released for session {session_id} on disconnect")
+    # Admin lock is NOT cleared here: socket disconnect fires on page refresh
+    # and transient network blips, not only on true tab-close.
+    # Cleanup is handled by:
+    #   1. The /release-admin HTTP beacon sent on true navigation-away (beforeunload, non-reload)
+    #   2. The 30-second heartbeat timeout checked on every /panel/{sid} request
 
 async def _process_transcription_update(session_id, sync_data):
     """Internal helper to process transcription updates (cache, DB, and broadcast)"""
@@ -940,7 +922,8 @@ async def join_session(socket_id, data):
 
     if session_id:
         await sio.enter_room(socket_id, session_id)
-        await sio.emit('joined_session', {'session_id': session_id}, to=socket_id)
+        authorized = session.get('verified', False)
+        await sio.emit('joined_session', {'session_id': session_id, 'authorized': authorized}, to=socket_id)
 
 @sio.event
 async def leave_session(socket_id, data):

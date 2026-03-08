@@ -256,13 +256,33 @@
   let keywordSyncInterval = setInterval(syncKeywords, 5000)
 
   // Release admin lock when leaving the page (best-effort)
+  // Use sessionStorage to detect refresh vs. true navigation-away:
+  // On reload, the browser keeps the same sessionStorage, so we mark the
+  // session as "refreshing" here and clear it on the next DOMContentLoaded.
+  // If the flag is still set at beforeunload time it means the PREVIOUS
+  // unload was a refresh (rare edge-case), but more importantly we use
+  // performance.getEntriesByType to skip the beacon when the current
+  // navigation is a reload.
+  sessionStorage.removeItem('panel_refreshing')
+
   window.addEventListener('beforeunload', function () {
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval)
     }
     clearInterval(keywordSyncInterval)
     if (user_secret_key) {
-      navigator.sendBeacon(`/release-admin/${sid}`, new Blob([JSON.stringify({})], { type: 'application/json' }))
+      // Detect page refresh: performance.navigation.type 1 = reload
+      // Also covers bfcache restores. We set a flag so the reload can
+      // reclaim admin without being blocked.
+      const navEntries = performance.getEntriesByType('navigation')
+      const isReload = navEntries.length > 0 && navEntries[0].type === 'reload'
+      if (!isReload) {
+        navigator.sendBeacon(`/release-admin/${sid}`, new Blob([JSON.stringify({})], { type: 'application/json' }))
+      } else {
+        // Mark sessionStorage so the server-side panel route knows
+        // this user is refreshing and should reclaim admin immediately.
+        sessionStorage.setItem('panel_refreshing', '1')
+      }
     }
   })
 
@@ -386,8 +406,8 @@
       const row = document.createElement('div')
       row.className = 'flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300 group'
       row.innerHTML = `
-        <span class="flex-1 font-mono text-xs text-gray-300 truncate">${kw.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</span>
-        <button class="kw-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove keyword" data-kw="${kw.replace(/"/g,'&quot;')}">
+        <span class="flex-1 font-mono text-xs text-gray-300 truncate">${kw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span>
+        <button class="kw-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove keyword" data-kw="${kw.replace(/"/g, '&quot;')}">
           <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
         </button>
       `
@@ -477,11 +497,6 @@
     kwDropdownBtn.addEventListener('click', function (e) {
       e.stopPropagation()
       kwDropdownPanel.classList.toggle('hidden')
-    })
-    document.addEventListener('click', function (e) {
-      if (!kwDropdownPanel.contains(e.target) && e.target !== kwDropdownBtn) {
-        kwDropdownPanel.classList.add('hidden')
-      }
     })
 
     // Add custom keyword
