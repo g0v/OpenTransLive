@@ -1,41 +1,182 @@
 {% extends "base.html" %} {% block content %}
-<div id="app-root" class="flex flex-col h-svh">
-  <!-- Status Bar -->
-  <div class="flex items-center p-2 h-[5vh] gap-2 text-xs status-bar">
-    <span>View:</span>
-    <select id="combined-select" class="inline-block border-1 border-gray-400 rounded-md p-1 me-auto"></select>
-    <div id="qr-area" class="cursor-pointer px-2 py-1 rounded-md action-btn">
-      show qrcode
-      <img class="w-25vw h-25vw fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 hidden" src="" />
+<div id="app-root" class="flex flex-col h-svh font-sans">
+
+  <!-- Top Bar -->
+  <div id="top-bar" class="flex items-center gap-2 px-3 h-11 shrink-0 border-b top-bar">
+
+    <!-- View select -->
+    <div class="flex items-center gap-1.5 shrink-0">
+      <span class="text-xs font-medium opacity-60 hidden sm:inline">View</span>
+      <select id="combined-select"
+        class="text-xs border rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 select-ctrl">
+      </select>
     </div>
-    <a href="/download/{{ id }}" target="_blank"
-      class="text-xs cursor-pointer px-2 py-1 rounded-md action-btn">JSON</a>
-    <div>
-      <span id="status-indicator" class="inline-block w-3 h-3 rounded-full bg-gray-400"></span>
-      <span id="status-text" class="ms-1">Connecting...</span>
+
+    <div class="flex-1"></div>
+
+    <!-- Font size controls -->
+    <div class="flex items-center gap-1 shrink-0" title="Font size">
+      <button id="font-decrease" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold" aria-label="Decrease font size">A-</button>
+      <button id="font-reset" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold" aria-label="Reset font size">A</button>
+      <button id="font-increase" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold" aria-label="Increase font size">A+</button>
     </div>
+
+    <!-- Theme buttons -->
+    <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
+      <button id="theme-light" class="icon-btn theme-btn w-7 h-7 flex items-center justify-center rounded-md text-xs" aria-label="Light theme" title="Light theme">
+        <iconify-icon icon="ph:sun" width="15" height="15"></iconify-icon>
+      </button>
+      <button id="theme-dark" class="icon-btn theme-btn w-7 h-7 flex items-center justify-center rounded-md text-xs" aria-label="Dark theme" title="Dark theme">
+        <iconify-icon icon="ph:moon" width="15" height="15"></iconify-icon>
+      </button>
+      <button id="theme-hc" class="icon-btn theme-btn w-7 h-7 flex items-center justify-center rounded-md text-xs" aria-label="High contrast theme" title="High contrast theme">
+        <iconify-icon icon="ph:circle-half" width="15" height="15"></iconify-icon>
+      </button>
+    </div>
+
+    <!-- Action buttons -->
+    <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
+      <!-- QR code button -->
+      <div id="qr-area" class="relative">
+        <button id="qr-btn" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md" aria-label="Show QR code" title="Show QR code">
+          <iconify-icon icon="ph:qr-code" width="15" height="15"></iconify-icon>
+        </button>
+        <!-- QR popup -->
+        <div id="qr-popup"
+          class="hidden absolute right-0 top-9 z-50 p-3 rounded-xl shadow-xl border qr-popup-bg min-w-max">
+          <div class="text-xs font-semibold mb-2 opacity-70">Scan to open</div>
+          <img id="qr-img" class="w-40 h-40 rounded-lg" src="" alt="QR code" />
+          <div class="text-xs mt-2 opacity-50 text-center max-w-40 truncate" id="qr-url-text"></div>
+        </div>
+      </div>
+
+      <!-- JSON download -->
+      <a href="/download/{{ id }}" target="_blank"
+        class="icon-btn w-7 h-7 flex items-center justify-center rounded-md" aria-label="Download JSON" title="Download JSON">
+        <iconify-icon icon="ph:download-simple" width="15" height="15"></iconify-icon>
+      </a>
+
+      <!-- Info / help button -->
+      <button id="info-btn" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md" aria-label="URL parameters help" title="URL parameters">
+        <iconify-icon icon="ph:info" width="15" height="15"></iconify-icon>
+      </button>
+    </div>
+
+    <!-- Connection status -->
+    <div class="flex items-center gap-1.5 shrink-0 border-l pl-2 ml-1 border-divider text-xs">
+      <span id="status-indicator" class="inline-block w-2 h-2 rounded-full bg-gray-400"></span>
+      <span id="status-text" class="hidden sm:inline opacity-70">Connecting...</span>
+    </div>
+
   </div>
 
   <!-- Single Language View -->
-  <div id="single-view" class="flex-grow overflow-auto">
-    <div id="data-content" class="p-2 break-all whitespace-pre-wrap max-h-full overflow-auto rt-text"></div>
+  <div id="single-view" class="flex-1 overflow-auto">
+    <div id="data-content" class="p-4 break-all whitespace-pre-wrap rt-text leading-relaxed"></div>
   </div>
 
   <!-- Grid Layout View -->
-  <div id="grid-view" class="flex-grow overflow-auto p-2 hidden">
-    <div id="grid-content" class="flex flex-wrap max-h-full whitespace-pre-wrap rt-text">
-      <!-- Grid items will be dynamically generated with auto-calculated columns -->
+  <div id="grid-view" class="flex-1 overflow-auto p-2 hidden">
+    <div id="grid-content" class="flex flex-wrap h-full whitespace-pre-wrap rt-text">
     </div>
   </div>
+
+  <!-- Info popup (modal overlay) -->
+  <div id="info-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="info-backdrop"></div>
+    <div class="relative z-10 rounded-2xl shadow-2xl border max-w-lg w-full mx-4 info-modal-bg overflow-hidden">
+      <!-- Header -->
+      <div class="flex items-center justify-between px-5 py-4 border-b border-divider">
+        <div>
+          <h2 class="text-base font-semibold">URL Parameters</h2>
+          <p class="text-xs opacity-50 mt-0.5">Customize the viewer by adding these parameters to the URL</p>
+        </div>
+        <button id="info-close" class="icon-btn w-8 h-8 flex items-center justify-center rounded-lg" aria-label="Close">
+          <iconify-icon icon="ph:x" width="16" height="16"></iconify-icon>
+        </button>
+      </div>
+
+      <!-- Body -->
+      <div class="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+
+        <!-- font-size -->
+        <div>
+          <div class="flex items-center gap-2 mb-1.5">
+            <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">font-size</code>
+            <span class="text-xs opacity-50">default: 1.25rem</span>
+          </div>
+          <p class="text-sm opacity-80 mb-2">Controls the text size of the transcript. Accepts any CSS length value or a bare number (treated as pixels).</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size" data-value="1rem">1rem</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size" data-value="1.25rem">1.25rem</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size" data-value="1.5rem">1.5rem</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size" data-value="2rem">2rem</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size" data-value="3rem">3rem</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size" data-value="24px">24px</button>
+          </div>
+        </div>
+
+        <div class="border-t border-divider"></div>
+
+        <!-- theme -->
+        <div>
+          <div class="flex items-center gap-2 mb-1.5">
+            <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">theme</code>
+            <span class="text-xs opacity-50">default: light</span>
+          </div>
+          <p class="text-sm opacity-80 mb-2">Sets the color scheme of the viewer.</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="theme" data-value="light">light</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="theme" data-value="dark">dark</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="theme" data-value="high-contrast">high-contrast</button>
+          </div>
+        </div>
+
+        <div class="border-t border-divider"></div>
+
+        <!-- layout -->
+        <div>
+          <div class="flex items-center gap-2 mb-1.5">
+            <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">layout</code>
+            <span class="text-xs opacity-50">default: grid</span>
+          </div>
+          <p class="text-sm opacity-80 mb-2">Controls which language is shown. Use <code class="font-mono text-xs">grid</code> to show all languages in a grid, or a language code (e.g. <code class="font-mono text-xs">en</code>, <code class="font-mono text-xs">zh</code>) to show a single language.</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="layout" data-value="grid">grid</button>
+            <span class="text-xs opacity-40 self-center">or a language code:</span>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="layout" data-value="en">en</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="layout" data-value="zh">zh</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="layout" data-value="ja">ja</button>
+          </div>
+        </div>
+
+        <div class="border-t border-divider"></div>
+
+        <!-- current URL preview -->
+        <div>
+          <div class="text-xs font-semibold mb-1.5 opacity-60">Current URL</div>
+          <div class="flex items-center gap-2">
+            <code id="current-url-display" class="text-xs font-mono break-all flex-1 px-2.5 py-2 rounded-lg param-code"></code>
+            <button id="copy-url-btn" class="icon-btn shrink-0 w-8 h-8 flex items-center justify-center rounded-lg" title="Copy URL">
+              <iconify-icon icon="ph:copy" width="15" height="15"></iconify-icon>
+            </button>
+          </div>
+          <div id="copy-feedback" class="hidden text-xs opacity-60 mt-1 text-right">Copied!</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
 </div>
 {% endblock %} {% block head %}
 <style>
   /* ------------------------------------------------------------------ */
-  /* URL parameter: font-size                                            */
-  /* Default value is set via JS; override with --rt-font-size          */
+  /* CSS custom properties — theme tokens                                */
   /* ------------------------------------------------------------------ */
   :root {
-    --rt-font-size: 1.25rem; /* default, overridden by ?font-size= param */
+    --rt-font-size: 1.25rem;
+    color-scheme: light;
   }
 
   .rt-text {
@@ -43,66 +184,178 @@
   }
 
   /* ------------------------------------------------------------------ */
-  /* URL parameter: theme  (light | dark | high-contrast)               */
+  /* Light theme (default)                                               */
   /* ------------------------------------------------------------------ */
-
-  /* light (default) */
   #app-root {
     background-color: #ffffff;
     color: #111827;
   }
-  .status-bar {
+  .top-bar {
+    background-color: #f9fafb;
+    border-color: #e5e7eb;
+  }
+  .border-divider { border-color: #e5e7eb; }
+  .icon-btn {
+    color: #374151;
+    background-color: transparent;
+    transition: background-color 0.15s;
+  }
+  .icon-btn:hover { background-color: #e5e7eb; }
+  .icon-btn.active { background-color: #dbeafe; color: #1d4ed8; }
+  .select-ctrl {
+    background-color: #ffffff;
+    color: #111827;
+    border-color: #d1d5db;
+  }
+  .qr-popup-bg {
+    background-color: #ffffff;
+    border-color: #e5e7eb;
+  }
+  .info-modal-bg {
+    background-color: #ffffff;
+    border-color: #e5e7eb;
+    color: #111827;
+  }
+  .param-code {
     background-color: #f3f4f6;
-    color: #111827;
+    color: #7c3aed;
   }
-  .action-btn {
+  .param-example-btn {
+    background-color: #f3f4f6;
+    color: #374151;
+    border: 1px solid #e5e7eb;
+    transition: background-color 0.12s;
+  }
+  .param-example-btn:hover {
     background-color: #e5e7eb;
-    color: #111827;
+  }
+  .param-example-btn.active-param {
+    background-color: #dbeafe;
+    color: #1d4ed8;
+    border-color: #93c5fd;
+  }
+  .grid-lang-box {
+    border: 1.5px solid #e5e7eb;
+    border-radius: 0.5rem;
+  }
+  .grid-lang-label {
+    background-color: #f3f4f6;
+    color: #6b7280;
+    border-bottom: 1px solid #e5e7eb;
   }
 
-  /* dark theme */
+  /* ------------------------------------------------------------------ */
+  /* Dark theme                                                          */
+  /* ------------------------------------------------------------------ */
   #app-root.theme-dark {
-    background-color: #111827;
-    color: #f9fafb;
+    background-color: #0f172a;
+    color: #e2e8f0;
+    color-scheme: dark;
   }
-  #app-root.theme-dark .status-bar {
-    background-color: #1f2937;
-    color: #f9fafb;
+  #app-root.theme-dark .top-bar {
+    background-color: #1e293b;
+    border-color: #334155;
   }
-  #app-root.theme-dark .action-btn {
-    background-color: #374151;
-    color: #f9fafb;
+  #app-root.theme-dark .border-divider { border-color: #334155; }
+  #app-root.theme-dark .icon-btn { color: #94a3b8; }
+  #app-root.theme-dark .icon-btn:hover { background-color: #334155; }
+  #app-root.theme-dark .icon-btn.active { background-color: #1e3a5f; color: #60a5fa; }
+  #app-root.theme-dark .select-ctrl {
+    background-color: #1e293b;
+    color: #e2e8f0;
+    border-color: #475569;
   }
-  #app-root.theme-dark select {
-    background-color: #374151;
-    color: #f9fafb;
-    border-color: #6b7280;
+  #app-root.theme-dark .qr-popup-bg {
+    background-color: #1e293b;
+    border-color: #334155;
   }
-  #app-root.theme-dark .border-gray-200 {
-    border-color: #374151;
+  #app-root.theme-dark .info-modal-bg {
+    background-color: #1e293b;
+    border-color: #334155;
+    color: #e2e8f0;
+  }
+  #app-root.theme-dark .param-code {
+    background-color: #0f172a;
+    color: #a78bfa;
+  }
+  #app-root.theme-dark .param-example-btn {
+    background-color: #1e293b;
+    color: #94a3b8;
+    border-color: #334155;
+  }
+  #app-root.theme-dark .param-example-btn:hover {
+    background-color: #334155;
+  }
+  #app-root.theme-dark .param-example-btn.active-param {
+    background-color: #1e3a5f;
+    color: #60a5fa;
+    border-color: #3b82f6;
+  }
+  #app-root.theme-dark .grid-lang-box {
+    border-color: #334155;
+  }
+  #app-root.theme-dark .grid-lang-label {
+    background-color: #1e293b;
+    color: #475569;
+    border-color: #334155;
   }
 
-  /* high-contrast theme */
+  /* ------------------------------------------------------------------ */
+  /* High contrast theme                                                 */
+  /* ------------------------------------------------------------------ */
   #app-root.theme-high-contrast {
     background-color: #000000;
     color: #ffffff;
   }
-  #app-root.theme-high-contrast .status-bar {
+  #app-root.theme-high-contrast .top-bar {
     background-color: #000000;
-    color: #ffff00;
-    border-bottom: 2px solid #ffff00;
+    border-color: #ffff00;
+    border-bottom-width: 2px;
   }
-  #app-root.theme-high-contrast .action-btn {
-    background-color: #000000;
-    color: #ffff00;
-    border: 1px solid #ffff00;
-  }
-  #app-root.theme-high-contrast select {
+  #app-root.theme-high-contrast .border-divider { border-color: #444; }
+  #app-root.theme-high-contrast .icon-btn { color: #ffff00; }
+  #app-root.theme-high-contrast .icon-btn:hover { background-color: #222; }
+  #app-root.theme-high-contrast .icon-btn.active { background-color: #333; color: #fff; }
+  #app-root.theme-high-contrast .select-ctrl {
     background-color: #000000;
     color: #ffff00;
     border-color: #ffff00;
   }
-  #app-root.theme-high-contrast .border-gray-200 {
+  #app-root.theme-high-contrast .qr-popup-bg {
+    background-color: #000000;
+    border-color: #ffff00;
+    border-width: 2px;
+  }
+  #app-root.theme-high-contrast .info-modal-bg {
+    background-color: #000000;
+    border-color: #ffff00;
+    border-width: 2px;
+    color: #ffffff;
+  }
+  #app-root.theme-high-contrast .param-code {
+    background-color: #111;
+    color: #ffff00;
+  }
+  #app-root.theme-high-contrast .param-example-btn {
+    background-color: #111;
+    color: #ffffff;
+    border-color: #555;
+  }
+  #app-root.theme-high-contrast .param-example-btn:hover {
+    background-color: #222;
+  }
+  #app-root.theme-high-contrast .param-example-btn.active-param {
+    background-color: #333;
+    color: #ffff00;
+    border-color: #ffff00;
+  }
+  #app-root.theme-high-contrast .grid-lang-box {
+    border-color: #ffff00;
+    border-width: 2px;
+  }
+  #app-root.theme-high-contrast .grid-lang-label {
+    background-color: #111;
+    color: #ffff00;
     border-color: #ffff00;
   }
 
@@ -110,45 +363,160 @@
   /* Highlight animation                                                 */
   /* ------------------------------------------------------------------ */
   @keyframes new-text-highlight {
-    0% {
-      background-color: rgba(149, 0, 255, 0.3);
-    }
-
-    20% {
-      background-color: rgba(149, 0, 255, 0.3);
-    }
-
-    80% {
-      background-color: transparent;
-    }
-
-    100% {
-      background-color: inherit;
-    }
+    0%, 20% { background-color: rgba(139, 92, 246, 0.25); }
+    80%, 100% { background-color: transparent; }
   }
-
-  .new-text {
-    animation: new-text-highlight 2s ease-out forwards;
-  }
-
-  .prediction-text {
-    opacity: 0.4;
-    font-style: italic;
-  }
+  .new-text { animation: new-text-highlight 2s ease-out forwards; }
+  .prediction-text { opacity: 0.35; font-style: italic; }
 </style>
 {% endblock %} {% block scripts %}
 <script>
   let transcriptionsData = {{ data | tojson(indent = 2) }};
   let lastSubtitle = null;
-  let currentLayout = 'grid'; // 'single' or 'grid'
+  let currentLayout = 'grid';
   let currentLanguages = [];
-  // prediction: the latest speculative continuation, cleared when a real update arrives
-  // shape mirrors transcriptionsData.partial but with is_prediction=true
-  // Track already-rendered text per language key to enable incremental append
+  let currentTheme = 'light';
+  let currentFontSizeRem = 1.25;
   const renderedText = new Map();
   const statusIndicator = document.getElementById('status-indicator');
   const statusText = document.getElementById('status-text');
 
+  // ------------------------------------------------------------------ //
+  // Font size controls                                                  //
+  // ------------------------------------------------------------------ //
+  const FONT_STEP = 0.125;
+  const FONT_MIN = 0.5;
+  const FONT_MAX = 5;
+
+  function applyFontSize(rem) {
+    currentFontSizeRem = Math.min(FONT_MAX, Math.max(FONT_MIN, rem));
+    document.documentElement.style.setProperty('--rt-font-size', currentFontSizeRem + 'rem');
+    updateUrlParam('font-size', currentFontSizeRem + 'rem');
+  }
+
+  document.getElementById('font-decrease').addEventListener('click', () => applyFontSize(currentFontSizeRem - FONT_STEP));
+  document.getElementById('font-increase').addEventListener('click', () => applyFontSize(currentFontSizeRem + FONT_STEP));
+  document.getElementById('font-reset').addEventListener('click', () => applyFontSize(1.25));
+
+  // ------------------------------------------------------------------ //
+  // Theme controls                                                      //
+  // ------------------------------------------------------------------ //
+  function applyTheme(theme) {
+    const appRoot = document.getElementById('app-root');
+    appRoot.classList.remove('theme-dark', 'theme-high-contrast');
+    if (theme === 'dark') appRoot.classList.add('theme-dark');
+    if (theme === 'high-contrast') appRoot.classList.add('theme-high-contrast');
+    currentTheme = theme;
+    // Update active state on theme buttons
+    document.querySelectorAll('.theme-btn').forEach(btn => btn.classList.remove('active'));
+    const map = { light: 'theme-light', dark: 'theme-dark', 'high-contrast': 'theme-hc' };
+    const activeBtn = document.getElementById(map[theme]);
+    if (activeBtn) activeBtn.classList.add('active');
+    updateUrlParam('theme', theme === 'light' ? null : theme);
+  }
+
+  document.getElementById('theme-light').addEventListener('click', () => applyTheme('light'));
+  document.getElementById('theme-dark').addEventListener('click', () => applyTheme('dark'));
+  document.getElementById('theme-hc').addEventListener('click', () => applyTheme('high-contrast'));
+
+  // ------------------------------------------------------------------ //
+  // URL param helpers                                                   //
+  // ------------------------------------------------------------------ //
+  function updateUrlParam(key, value) {
+    const url = new URL(window.location);
+    if (value === null || value === undefined) {
+      url.searchParams.delete(key);
+    } else {
+      url.searchParams.set(key, value);
+    }
+    window.history.replaceState({}, '', url);
+    updateCurrentUrlDisplay();
+  }
+
+  function updateCurrentUrlDisplay() {
+    const el = document.getElementById('current-url-display');
+    if (el) el.textContent = window.location.href;
+  }
+
+  // ------------------------------------------------------------------ //
+  // QR code popup                                                       //
+  // ------------------------------------------------------------------ //
+  const qrPopup = document.getElementById('qr-popup');
+  const qrBtn = document.getElementById('qr-btn');
+  let qrInitialized = false;
+
+  qrBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isHidden = qrPopup.classList.contains('hidden');
+    if (isHidden) {
+      if (!qrInitialized) {
+        document.getElementById('qr-img').src = `https://quickchart.io/qr?text=${encodeURIComponent(window.location.href)}`;
+        document.getElementById('qr-url-text').textContent = window.location.href;
+        qrInitialized = true;
+      }
+      qrPopup.classList.remove('hidden');
+    } else {
+      qrPopup.classList.add('hidden');
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!document.getElementById('qr-area').contains(e.target)) {
+      qrPopup.classList.add('hidden');
+    }
+  });
+
+  // ------------------------------------------------------------------ //
+  // Info modal                                                          //
+  // ------------------------------------------------------------------ //
+  const infoModal = document.getElementById('info-modal');
+
+  document.getElementById('info-btn').addEventListener('click', () => {
+    infoModal.classList.remove('hidden');
+    updateCurrentUrlDisplay();
+  });
+  document.getElementById('info-close').addEventListener('click', () => infoModal.classList.add('hidden'));
+  document.getElementById('info-backdrop').addEventListener('click', () => infoModal.classList.add('hidden'));
+
+  // Copy URL button
+  document.getElementById('copy-url-btn').addEventListener('click', () => {
+    navigator.clipboard.writeText(window.location.href).then(() => {
+      const fb = document.getElementById('copy-feedback');
+      fb.classList.remove('hidden');
+      setTimeout(() => fb.classList.add('hidden'), 1800);
+    });
+  });
+
+  // Param example buttons: apply the param and highlight the button
+  document.querySelectorAll('.param-example-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const param = btn.dataset.param;
+      const value = btn.dataset.value;
+      // Apply the param immediately
+      if (param === 'font-size') {
+        const rem = parseFloat(value);
+        if (!isNaN(rem)) applyFontSize(rem); else applyFontSize(1.25);
+        document.querySelectorAll(`[data-param="font-size"]`).forEach(b => b.classList.remove('active-param'));
+        btn.classList.add('active-param');
+      } else if (param === 'theme') {
+        applyTheme(value);
+        document.querySelectorAll(`[data-param="theme"]`).forEach(b => b.classList.remove('active-param'));
+        btn.classList.add('active-param');
+      } else if (param === 'layout') {
+        let layoutVal = value === 'grid' ? 'grid' : 'single-' + value;
+        document.getElementById('combined-select').value = layoutVal;
+        document.getElementById('combined-select').dispatchEvent(new Event('change'));
+        document.querySelectorAll(`[data-param="layout"]`).forEach(b => b.classList.remove('active-param'));
+        btn.classList.add('active-param');
+        updateUrlParam('layout', value);
+      }
+      updateCurrentUrlDisplay();
+    });
+  });
+
+  // ------------------------------------------------------------------ //
+  // View / layout                                                       //
+  // ------------------------------------------------------------------ //
   function populateCombinedSelect() {
     let languages = null;
     if (transcriptionsData?.partial) {
@@ -156,31 +524,20 @@
     } else if (transcriptionsData?.transcriptions) {
       languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
     }
-    if (!languages) {
-      return;
-    }
+    if (!languages) return;
     const combinedSelect = document.getElementById('combined-select');
-    if (currentLanguages.length >= 0 && languages.every(language => currentLanguages.includes(language)) && languages.length === currentLanguages.length) {
-      return;
-    }
-    let currentSelect = combinedSelect.value;
-    if (!currentSelect) {
-      currentSelect = 'grid';
-    }
+    if (currentLanguages.length >= 0 && languages.every(l => currentLanguages.includes(l)) && languages.length === currentLanguages.length) return;
+    let currentSelect = combinedSelect.value || 'grid';
     currentLanguages = languages;
-    // Clear existing options
     combinedSelect.innerHTML = '';
-
     const gridOption = document.createElement('option');
     gridOption.value = 'grid';
-    gridOption.textContent = 'All';
+    gridOption.textContent = 'All languages';
     combinedSelect.appendChild(gridOption);
-
-    // Add language-specific options
     languages.forEach(language => {
       const option = document.createElement('option');
       option.value = `single-${language}`;
-      option.textContent = `${language}`;
+      option.textContent = language;
       combinedSelect.appendChild(option);
     });
     combinedSelect.value = currentSelect;
@@ -188,44 +545,26 @@
   }
 
   function refreshView() {
-    if (currentLayout === 'single') {
-      refreshSingleView();
-    } else {
-      refreshGridView();
-    }
+    if (currentLayout === 'single') refreshSingleView();
+    else refreshGridView();
   }
 
-  // Update committed text (plain, no animation) and partial text (animated).
-  // container must have three child elements: [0] committed, [1] partial, [2] prediction.
   function updateContent(container, key, committedText, partialText, scrollParent, predictionText) {
     const committedEl = container.children[0];
     const partialEl = container.children[1];
     const predictionEl = container.children[2];
-
-    if (committedEl.textContent !== committedText) {
-      committedEl.textContent = committedText;
-    }
-
+    if (committedEl.textContent !== committedText) committedEl.textContent = committedText;
     const prevPartial = renderedText.get(key) || '';
     if (prevPartial !== partialText) {
       partialEl.textContent = partialText;
       partialEl.classList.remove('new-text');
-      // Force reflow to restart animation
       void partialEl.offsetWidth;
-      if (partialText) {
-        partialEl.classList.add('new-text');
-      }
+      if (partialText) partialEl.classList.add('new-text');
       renderedText.set(key, partialText);
-      setTimeout(() => {
-        (scrollParent || container).scrollTop = (scrollParent || container).scrollHeight;
-      }, 10);
+      setTimeout(() => { (scrollParent || container).scrollTop = (scrollParent || container).scrollHeight; }, 10);
     }
-
-    // Prediction text: shown only when there is a partial and a prediction extends it
     const resolvedPrediction = predictionText || '';
-    if (predictionEl.textContent !== resolvedPrediction) {
-      predictionEl.textContent = resolvedPrediction;
-    }
+    if (predictionEl.textContent !== resolvedPrediction) predictionEl.textContent = resolvedPrediction;
   }
 
   function makeContentContainer() {
@@ -246,34 +585,23 @@
     if (transcriptionsData.transcriptions?.length > 0) {
       const dataContent = document.getElementById('data-content');
       const selectedValue = document.getElementById('combined-select').value;
-
       let selectedLanguage;
       if (selectedValue.startsWith('single-')) {
         selectedLanguage = selectedValue.replace('single-', '');
       } else {
         selectedLanguage = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {})[0];
       }
-
-      // Ensure wrapper exists
-      if (!dataContent.children.length) {
-        dataContent.appendChild(makeContentContainer());
-      }
+      if (!dataContent.children.length) dataContent.appendChild(makeContentContainer());
       const wrapper = dataContent.children[0];
-
-      let committedText, partialText, predictionText;
-      committedText = transcriptionsData.transcriptions.map(s => s.result.translated[selectedLanguage]).join('\n');
-      partialText = transcriptionsData.partial ? '\n' + transcriptionsData.partial.result.translated[selectedLanguage] : '';
-
-      // Prediction: show only the extra words beyond the current partial
-      predictionText = '';
+      const committedText = transcriptionsData.transcriptions.map(s => s.result.translated[selectedLanguage]).join('\n');
+      const partialText = transcriptionsData.partial ? '\n' + transcriptionsData.partial.result.translated[selectedLanguage] : '';
+      let predictionText = '';
       if (transcriptionsData.prediction && transcriptionsData.partial) {
         const predFull = transcriptionsData.prediction.result.translated[selectedLanguage] || '';
         const partFull = transcriptionsData.partial.result.translated[selectedLanguage] || '';
         predictionText = predFull.startsWith(partFull) ? predFull.slice(partFull.length) : '';
       }
-
-      const key = 'single:' + selectedLanguage;
-      updateContent(wrapper, key, committedText, partialText, dataContent, predictionText);
+      updateContent(wrapper, 'single:' + selectedLanguage, committedText, partialText, dataContent, predictionText);
     }
   }
 
@@ -281,185 +609,130 @@
     if (transcriptionsData.transcriptions?.length > 0) {
       const gridContent = document.getElementById('grid-content');
       const languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
-      const recentTranscriptions = transcriptionsData.transcriptions;
-
-      // Auto-calculate optimal grid size based on number of languages
       const languageCount = languages.length;
       let gridCols;
-
-      if (languageCount <= 1) {
-        gridCols = 1;
-      } else if (languageCount <= 4) {
-        gridCols = 2; // 2x2 grid
-      } else if (languageCount <= 9) {
-        gridCols = 3; // 3x3 grid
-      } else if (languageCount <= 16) {
-        gridCols = 4; // 4x4 grid
-      } else if (languageCount <= 25) {
-        gridCols = 5; // 5x5 grid
-      } else {
-        gridCols = Math.ceil(Math.sqrt(languageCount)); // Auto-calculate for more languages
-      }
-
-      // Apply the calculated grid columns with responsive behavior
+      if (languageCount <= 1) gridCols = 1;
+      else if (languageCount <= 4) gridCols = 2;
+      else if (languageCount <= 9) gridCols = 3;
+      else if (languageCount <= 16) gridCols = 4;
+      else if (languageCount <= 25) gridCols = 5;
+      else gridCols = Math.ceil(Math.sqrt(languageCount));
       const screenWidth = window.innerWidth;
       let actualCols = gridCols;
-
-      // Adjust for smaller screens
-      if (screenWidth < 768) { // Mobile
-        actualCols = Math.min(gridCols, 1);
-      } else if (screenWidth < 1024) { // Tablet
-        actualCols = Math.min(gridCols, 2);
-      } else if (screenWidth < 1280) { // Small desktop
-        actualCols = Math.min(gridCols, 3);
-      }
-      let actualRows = Math.ceil(languageCount / actualCols);
-
-      // Check if we need to rebuild the grid (language count changed or first time)
-      const existingBoxes = gridContent.children;
-      const needsRebuild = existingBoxes.length !== languages.length;
-
+      if (screenWidth < 768) actualCols = Math.min(gridCols, 1);
+      else if (screenWidth < 1024) actualCols = Math.min(gridCols, 2);
+      else if (screenWidth < 1280) actualCols = Math.min(gridCols, 3);
+      const actualRows = Math.ceil(languageCount / actualCols);
+      const needsRebuild = gridContent.children.length !== languages.length;
       if (needsRebuild) {
         gridContent.innerHTML = '';
-        // Clear cached rendered text so all content re-animates after rebuild
         languages.forEach(lang => renderedText.delete('grid:' + lang));
-
         languages.forEach(language => {
+          const colPct = (99.8 / actualCols).toFixed(2);
+          const rowVh = (92 / actualRows).toFixed(2);
           const languageBox = document.createElement('div');
-          languageBox.className = `border-2 border-gray-200 py-1 w-[${99.9 / actualCols}%] h-[${93 / actualRows}vh]`;
+          languageBox.className = 'grid-lang-box overflow-hidden flex flex-col';
+          languageBox.style.width = colPct + '%';
+          languageBox.style.height = rowVh + 'vh';
+          languageBox.style.margin = '0.1%';
           languageBox.setAttribute('data-language', language);
-
-          const languageCard = document.createElement('div');
-          languageCard.className = `px-1 h-full overflow-auto break-all whitespace-pre-wrap leading-relaxed`;
-
-          languageCard.appendChild(makeContentContainer());
-          languageBox.appendChild(languageCard);
+          const label = document.createElement('div');
+          label.className = 'grid-lang-label text-xs font-semibold px-2 py-0.5 shrink-0 uppercase tracking-widest';
+          label.textContent = language;
+          const card = document.createElement('div');
+          card.className = 'flex-1 overflow-auto px-2 py-1 break-all whitespace-pre-wrap leading-relaxed';
+          card.appendChild(makeContentContainer());
+          languageBox.appendChild(label);
+          languageBox.appendChild(card);
           gridContent.appendChild(languageBox);
         });
       }
-
-      // Update content for each language box
       languages.forEach(language => {
         const languageBox = gridContent.querySelector(`[data-language="${language}"]`);
-        if (languageBox) {
-          const languageCard = languageBox.querySelector('div');
-          const wrapper = languageCard.children[0];
-
-          let committedText = '';
-          recentTranscriptions.forEach(subtitle => {
-            if (subtitle.result.translated[language]) {
-              committedText += subtitle.result.translated[language] + '\n';
-            }
-          });
-          const partialText = transcriptionsData.partial
-            ? transcriptionsData.partial.result.translated[language] + '\n'
-            : '';
-
-          // Prediction: show only the extra words beyond the current partial
-          let predictionText = '';
-          if (transcriptionsData.prediction && transcriptionsData.partial) {
-            const predFull = transcriptionsData.prediction.result.translated[language] || '';
-            const partFull = (transcriptionsData.partial.result.translated[language] || '') + '\n';
-            predictionText = predFull.startsWith(partFull.trimEnd())
-              ? predFull.slice(partFull.trimEnd().length)
-              : '';
-          }
-
-          const key = 'grid:' + language;
-          updateContent(wrapper, key, committedText, partialText, languageCard, predictionText);
+        if (!languageBox) return;
+        const card = languageBox.querySelector('div:last-child');
+        const wrapper = card.children[0];
+        let committedText = '';
+        transcriptionsData.transcriptions.forEach(sub => {
+          if (sub.result.translated[language]) committedText += sub.result.translated[language] + '\n';
+        });
+        const partialText = transcriptionsData.partial ? transcriptionsData.partial.result.translated[language] + '\n' : '';
+        let predictionText = '';
+        if (transcriptionsData.prediction && transcriptionsData.partial) {
+          const predFull = transcriptionsData.prediction.result.translated[language] || '';
+          const partFull = (transcriptionsData.partial.result.translated[language] || '') + '\n';
+          predictionText = predFull.startsWith(partFull.trimEnd()) ? predFull.slice(partFull.trimEnd().length) : '';
         }
+        updateContent(wrapper, 'grid:' + language, committedText, partialText, card, predictionText);
       });
     }
   }
 
   function switchLayout(selectedValue) {
+    const singleView = document.getElementById('single-view');
+    const gridView = document.getElementById('grid-view');
     if (selectedValue === 'grid') {
       currentLayout = 'grid';
-      const singleView = document.getElementById('single-view');
-      const gridView = document.getElementById('grid-view');
       singleView.classList.add('hidden');
       gridView.classList.remove('hidden');
     } else {
       currentLayout = 'single';
-      const singleView = document.getElementById('single-view');
-      const gridView = document.getElementById('grid-view');
       singleView.classList.remove('hidden');
       gridView.classList.add('hidden');
-      // Clear single-view container and cache so switching languages re-animates
       const dataContent = document.getElementById('data-content');
       dataContent.innerHTML = '';
       for (const k of renderedText.keys()) {
         if (k.startsWith('single:')) renderedText.delete(k);
       }
     }
-
     refreshView();
+    // Sync URL
+    const langVal = selectedValue === 'grid' ? 'grid' : selectedValue.replace('single-', '');
+    updateUrlParam('layout', langVal === 'grid' ? null : langVal);
   }
 
-  // Combined select event listener
   document.getElementById('combined-select').addEventListener('change', function () {
     switchLayout(this.value);
   });
 
+  // ------------------------------------------------------------------ //
+  // Init                                                                //
+  // ------------------------------------------------------------------ //
   document.addEventListener('DOMContentLoaded', function () {
-
-    const qrImg = document.getElementById('qr-area').querySelector('img');
-    qrImg.src = `https://quickchart.io/qr?text=${window.location.href}`;
-
-    // Connect to WebSocket
     const socket = io();
 
     socket.on('connect', function () {
-      statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-green-500';
+      statusIndicator.className = 'inline-block w-2 h-2 rounded-full bg-emerald-500';
       statusText.textContent = 'Connected';
-      console.log('WebSocket connection opened');
-
-      // Join the session room
       socket.emit('join_session', { session_id: '{{ id }}' });
     });
 
     socket.on('disconnect', function () {
-      statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-red-500';
+      statusIndicator.className = 'inline-block w-2 h-2 rounded-full bg-red-500';
       statusText.textContent = 'Disconnected';
-      console.log('WebSocket connection closed');
-    });
-
-    socket.on('connected', function (data) {
-      console.log('WebSocket connected:', data);
     });
 
     socket.on('joined_session', function (data) {
-      console.log('Joined session:', data);
-      statusText.textContent = 'Connected to session: ' + data.session_id;
+      statusText.textContent = 'Live';
     });
 
     socket.on('transcription_update', function (data) {
-      console.log('Transcription update received:', data);
-
-      // Prediction update: only refresh the speculative text, do not touch real data
       if (data.is_prediction) {
-        // Only show prediction if there is a current partial to extend
         if (transcriptionsData["partial"]) {
           transcriptionsData["prediction"] = data;
           refreshView();
         }
         return;
       }
-
-      // Any real update clears the prediction
       transcriptionsData["prediction"] = null;
-
-      // Check if last_committed is missing from our local list
       if (data.last_committed) {
         const last_committed = data.last_committed;
         const exists = transcriptionsData["transcriptions"].some(t => t.start_time === last_committed.start_time);
         if (!exists) {
-          console.log('Adding missing last_committed segment:', last_committed.start_time);
           transcriptionsData["transcriptions"].push(last_committed);
           transcriptionsData["transcriptions"].sort((a, b) => a.start_time - b.start_time);
         }
       }
-
       if (data.partial) {
         transcriptionsData["partial"] = data;
       } else {
@@ -475,54 +748,53 @@
     });
 
     socket.on('error', function (data) {
-      console.error('WebSocket error:', data);
-      statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-red-500';
+      statusIndicator.className = 'inline-block w-2 h-2 rounded-full bg-red-500';
       statusText.textContent = 'Error: ' + data.message;
     });
 
-    // Handle window resize to recalculate grid
     window.addEventListener('resize', function () {
-      if (currentLayout === 'grid') {
-        refreshGridView();
-      }
+      if (currentLayout === 'grid') refreshGridView();
     });
 
     window.addEventListener('load', function () {
       populateCombinedSelect();
       const params = new URLSearchParams(window.location.search);
 
-      // --- font-size param ---
-      // Accepts any valid CSS length (e.g. "2rem", "24px", "1.5em") or a bare
-      // number which is treated as pixels (e.g. "24" -> "24px").
+      // font-size
       const fontSizeParam = params.get('font-size');
       if (fontSizeParam) {
-        const normalized = /^\d+(\.\d+)?$/.test(fontSizeParam)
-          ? fontSizeParam + 'px'
-          : fontSizeParam;
+        const isBarePx = /^\d+(\.\d+)?$/.test(fontSizeParam);
+        const normalized = isBarePx ? fontSizeParam + 'px' : fontSizeParam;
+        // Try to parse as rem for our step counter
+        const remMatch = normalized.match(/^([\d.]+)rem$/);
+        const pxMatch = normalized.match(/^([\d.]+)px$/);
+        if (remMatch) currentFontSizeRem = parseFloat(remMatch[1]);
+        else if (pxMatch) currentFontSizeRem = parseFloat(pxMatch[1]) / 16;
         document.documentElement.style.setProperty('--rt-font-size', normalized);
+        // Highlight matching param example button if any
+        document.querySelectorAll(`[data-param="font-size"]`).forEach(b => {
+          if (b.dataset.value === normalized || b.dataset.value === fontSizeParam) b.classList.add('active-param');
+        });
       }
 
-      // --- theme param: light (default) | dark | high-contrast ---
+      // theme
       const themeParam = params.get('theme');
-      const appRoot = document.getElementById('app-root');
       const allowedThemes = ['dark', 'high-contrast'];
       if (themeParam && allowedThemes.includes(themeParam)) {
-        appRoot.classList.add('theme-' + themeParam);
+        applyTheme(themeParam);
+      } else {
+        applyTheme('light');
       }
 
-      // --- layout param ---
-      // 'grid' shows all languages; a bare language code (e.g. 'en', 'zh') is
-      // treated as 'single-<lang>' for backwards compatibility.
+      // layout
       let layoutParam = params.get('layout') || 'grid';
-      // If the value is not 'grid' and not already prefixed, treat as language
-      if (layoutParam !== 'grid' && !layoutParam.startsWith('single-')) {
-        layoutParam = 'single-' + layoutParam;
-      }
+      if (layoutParam !== 'grid' && !layoutParam.startsWith('single-')) layoutParam = 'single-' + layoutParam;
       document.getElementById('combined-select').value = layoutParam;
       switchLayout(layoutParam);
+
+      updateCurrentUrlDisplay();
     });
 
-    // Cleanup on page unload
     window.addEventListener('beforeunload', function () {
       socket.disconnect();
     });
