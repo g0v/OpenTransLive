@@ -365,6 +365,7 @@
 
   // ── Keywords panel ────────────────────────────────────────────────────────
   let currentKeywords = []
+  let keywordSavePending = false  // true while a save is in flight; blocks sync
 
   function updateKeywordLabel() {
     const label = document.getElementById('kw-dropdown-label')
@@ -416,7 +417,10 @@
 
   // Merge server keywords into the local list without overwriting user edits.
   // New keywords added server-side (by auto-extraction) are appended locally.
+  // Skipped while a save is in flight to avoid a race where the server still
+  // holds a pre-deletion snapshot and re-adds a keyword the user just removed.
   async function syncKeywords() {
+    if (keywordSavePending) return
     try {
       const res = await fetch(`/api/session/${sid}/keywords`, { credentials: 'same-origin' })
       if (!res.ok) return
@@ -441,6 +445,7 @@
   async function saveKeywords() {
     const statusEl = document.getElementById('keyword-status')
     statusEl.textContent = 'Saving'
+    keywordSavePending = true
     try {
       const res = await fetch(`/api/session/${sid}/keywords`, {
         method: 'POST',
@@ -457,6 +462,8 @@
     } catch (e) {
       statusEl.textContent = 'Error'
       console.error('Failed to save keywords:', e)
+    } finally {
+      keywordSavePending = false
     }
   }
 
