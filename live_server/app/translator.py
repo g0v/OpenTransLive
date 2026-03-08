@@ -102,6 +102,58 @@ async def save_current_keywords(redis_client, session_id, keywords):
     except Exception as e:
         log_exception(logger, e, "Redis set keywords error")
 
+
+async def rerank_keywords(redis_client, session_id, keywords: list[str], recent_text: str):
+    """
+    Ask the LLM to re-rank keywords by relevance to the current transcript context.
+    The most relevant keywords are moved to the front so that the prompt cap [:20]
+    always includes the most important terms.
+    Runs as a fire-and-forget background task; result is saved to Redis.
+    """
+    if len(keywords) < 2:
+        return
+
+    provider_cfg = get_provider_config()
+    api_key = REALTIME_SETTINGS.get(provider_cfg["api_key_setting"])
+    if not api_key:
+        return
+
+    AI_MODEL = REALTIME_SETTINGS.get("AI_MODEL", provider_cfg["default_model"])
+    numbered = "\n".join(f"{i+1}. {kw}" for i, kw in enumerate(keywords))
+    json_body = {
+        "model": AI_MODEL,
+        "temperature": 0,
+        "max_tokens": 300,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {
+                "role": "developer",
+                "content": (
+                    "You are managing a keyword list for a live transcription session. "
+                    "Re-rank the provided keywords from most relevant/important to least, "
+                    "based on the recent transcript excerpt. "
+                    "Return only JSON: {\"keywords\": [<ordered list of keyword strings>]}"
+                )
+            },
+            {
+                "role": "user",
+                "content": f"Recent transcript:\n{recent_text[-200:]}\n\nKeywords to rank:\n{numbered}"
+            }
+        ]
+    }
+    try:
+        response = await async_chat_completion(json_body)
+        if response and response.status_code == 200:
+            reranked = json.loads(response.json()["choices"][0]["message"]["content"]).get("keywords", [])
+            # Only accept if the returned list contains exactly the same keywords
+            if (isinstance(reranked, list) and
+                    len(reranked) == len(keywords) and
+                    set(reranked) == set(keywords)):
+                await save_current_keywords(redis_client, session_id, reranked)
+                logger.debug(f"Keywords re-ranked for session {session_id}: {reranked[:5]}...")
+    except Exception as e:
+        log_exception(logger, e, "Keyword re-ranking error")
+
 async def predict_continuation(session_id, partial_result: dict, cached_data: dict, redis_client) -> dict | None:
     """
     Given the latest partial translation result, ask the LLM to predict the next
@@ -122,6 +174,8 @@ async def predict_continuation(session_id, partial_result: dict, cached_data: di
 
     AI_MODEL = REALTIME_SETTINGS.get("AI_MODEL", provider_cfg["default_model"])
     current_keywords = await get_current_keywords(redis_client, session_id)
+    # Cap keywords to avoid unbounded prompt growth
+    keywords_str = ', '.join(current_keywords[:20])
 
     context_translated = {lang: [] for lang in languages}
     history = cached_data.get("transcriptions", [])[-3:]
@@ -146,7 +200,7 @@ async def predict_continuation(session_id, partial_result: dict, cached_data: di
                 {
                     "role": "developer",
                     "content": (
-                        f"This is a live transcription about:\n{', '.join(current_keywords)}\n\n"
+                        f"This is a live transcription about:\n{keywords_str}\n\n"
                         f"The following is an in-progress {language} translation of a sentence that is not yet finished. "
                         f"Predict the next 5-8 words that will naturally continue it. "
                         f"Return only the predicted continuation words, no punctuation at the end, no explanation."
@@ -196,12 +250,14 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
 
     AI_MODEL = REALTIME_SETTINGS.get("AI_MODEL", provider_cfg["default_model"])
     current_keywords = await get_current_keywords(redis_client, session_id)
-    
+    # Cap keywords to avoid unbounded prompt growth
+    keywords_str = ', '.join(current_keywords[:20])
+
     context = {
         "corrected": [],
         "translated": {language: [] for language in languages}
     }
-    
+
     # Get last 3 transcriptions for context
     history = cached_data.get("transcriptions", [])[-3:]
     for transcription in history:
@@ -227,8 +283,9 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
             json_body = {
                 "model": AI_MODEL,
                 "temperature": 0,
+                "max_tokens": 200,
                 "messages": [
-                    {"role": "developer", "content": f"This is a transcription about:\n{', '.join(current_keywords)}\n\nCorrect the text **only in <correct_this>** as \"corrected text\" according to the reference and context.\nReturn only the corrected text, no any comment."},
+                    {"role": "developer", "content": f"This is a transcription about:\n{keywords_str}\n\nCorrect the text **only in <correct_this>** as \"corrected text\" according to the reference and context.\nReturn only the corrected text, no any comment."},
                     {"role": "user", "content": f"{(' '.join(context['corrected']))[-50:]}\n<correct_this>\n{text}\n</correct_this>"}
                 ]
             }
@@ -247,14 +304,16 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         if cached_data.get("partial") is True:
             pt_trans = cached_data["partial"].get("result", {}).get("translated", {}).get(language, "")
             if pt_trans:
+                pt_trans = pt_trans[-100:]
                 prev_translation = f"<prev_translation>\n{pt_trans}......\n</prev_translation>\n"
 
         json_body = {
             "model": AI_MODEL,
             "temperature": 0,
+            "max_tokens": 200,
             "messages": [
-                {"role": "developer", 
-                 "content": f"This is a transcription about:\n{', '.join(current_keywords)}\n\nRewrite the text **only in <translate_this>** into {language}, the sentence might not ended yet.\nReturn only the translated text, no any comment.\n{prev_translation}"},
+                {"role": "developer",
+                 "content": f"This is a transcription about:\n{keywords_str}\n\nRewrite the text **only in <translate_this>** into {language}, the sentence might not ended yet.\nReturn only the translated text, no any comment.\n{prev_translation}"},
                 {"role": "user", "content": f"{(' '.join(context['translated'][language]))[-50:]}\n<translate_this>\n{result['corrected']}\n</translate_this>"}
             ]
         }
@@ -299,12 +358,16 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         keywords = result.get("special_keywords", [])
         new_keywords_added = False
         for keyword in keywords:
-            if isinstance(keyword, str) and keyword not in current_keywords:
+            if isinstance(keyword, str) and keyword not in current_keywords and len(current_keywords) < 50:
                 current_keywords.append(keyword)
                 new_keywords_added = True
-        
+
         if new_keywords_added:
             await save_current_keywords(redis_client, session_id, current_keywords)
+            # Re-rank in background so prompt cap [:20] always favors the most relevant terms
+            asyncio.create_task(
+                rerank_keywords(redis_client, session_id, current_keywords, result["corrected"])
+            )
 
     data["result"] = result
     return data
