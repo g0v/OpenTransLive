@@ -476,7 +476,11 @@ async def get_cached_transcription(id) -> Any:
     # Try fetching committed transcriptions (ZSET) and partial from Redis
     try:
         # ZSET for committed transcriptions, stored as JSON strings with start_time as score
-        committed_json_list = await redis_client.zrange(f"transcription:{id}:list", 0, -1)
+        # Fetch only the latest 10 entries to limit data transfer; translation context needs only the last 3
+        committed_json_list = await redis_client.zrevrangebyscore(
+            f"transcription:{id}:list", "+inf", "-inf", start=0, num=10
+        )
+        committed_json_list = list(reversed(committed_json_list))
         meta_json = await redis_client.get(f"transcription:{id}:meta")
         partial_json = await redis_client.get(f"transcription:{id}:partial")
         
