@@ -483,7 +483,9 @@ async def get_cached_transcription(id) -> Any:
         committed_json_list = list(reversed(committed_json_list))
         meta_json = await redis_client.get(f"transcription:{id}:meta")
         partial_json = await redis_client.get(f"transcription:{id}:partial")
-        
+
+        REDIS_TTL = 3600
+
         data = None
         if committed_json_list:
             data = {
@@ -493,7 +495,15 @@ async def get_cached_transcription(id) -> Any:
             if meta_json:
                 meta = json.loads(meta_json)
                 data["stream_start_time"] = meta.get("stream_start_time")
-        
+
+            # Sliding expiry: reset TTL on each read so active sessions stay warm
+            pipe = redis_client.pipeline()
+            pipe.expire(f"transcription:{id}:list", REDIS_TTL)
+            pipe.expire(f"transcription:{id}:meta", REDIS_TTL)
+            if partial_json:
+                pipe.expire(f"transcription:{id}:partial", REDIS_TTL)
+            await pipe.execute()
+
         # Migration/Fallback: Check if old String-style cache exists
         if data is None:
             old_committed_json = await redis_client.get(f"transcription:{id}")
@@ -501,7 +511,7 @@ async def get_cached_transcription(id) -> Any:
                 data = json.loads(old_committed_json)
                 # Migrate to ZSET in background
                 asyncio.create_task(migrate_to_zset(id, data))
-        
+
         # Final fallback to DB if no data in Redis
         if data is None:
             store = await transcription_store_collection.find_one({"sid": id})
@@ -514,11 +524,11 @@ async def get_cached_transcription(id) -> Any:
                 asyncio.create_task(migrate_to_zset(id, data))
             else:
                 data = {"transcriptions": []}
-        
+
         # Merge partial data if exists
         if partial_json:
             data["partial"] = json.loads(partial_json)
-            
+
         return data
     except Exception as e:
         log_exception(logger, e, "Redis/DB error in get_cached_transcription")
