@@ -1,3 +1,4 @@
+from ast import Delete
 import os
 import json
 import copy
@@ -27,14 +28,18 @@ async def close_async_client():
 
 _PROVIDER_CONFIG = {
     "gemini": {
+        "provider": "gemini",
         "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
         "api_key_setting": "GEMINI_API_KEY",
         "default_model": "gemini-3.1-flash-lite-preview",
+        "default_temp": 0
     },
     "openai": {
+        "provider": "openai",
         "endpoint": "https://api.openai.com/v1/chat/completions",
         "api_key_setting": "OPENAI_API_KEY",
         "default_model": "gpt-4.1-mini",
+        "default_temp": 0
     },
 }
 
@@ -42,11 +47,15 @@ def get_provider_config():
     provider = REALTIME_SETTINGS.get("AI_PROVIDER", "gemini").lower()
     return _PROVIDER_CONFIG.get(provider, _PROVIDER_CONFIG["gemini"])
 
-async def async_chat_completion(json_body):
+async def async_chat_completion(json_body: dict):
     provider_cfg = get_provider_config()
     api_key = REALTIME_SETTINGS.get(provider_cfg["api_key_setting"])
     if not api_key:
         return None
+    json_body['temperature'] = provider_cfg["default_temp"]
+    
+    if "gpt-4.1" in provider_cfg["default_model"]:
+        json_body.pop("reasoning_effort", None)
 
     client = get_async_client()
     try:
@@ -58,6 +67,8 @@ async def async_chat_completion(json_body):
                 "Content-Type": "application/json"
             }
         )
+        if response.status_code != 200:
+            print("response error", response.status_code, response.text, flush=True)
         return response
     except Exception as e:
         log_exception(logger, e, "HTTP request error in async_chat_completion")
@@ -122,16 +133,14 @@ async def rerank_keywords(redis_client, session_id, keywords: list[str], recent_
     numbered = "\n".join(f"{i+1}. {kw}" for i, kw in enumerate(keywords))
     json_body = {
         "model": AI_MODEL,
-        "temperature": 0,
-        "max_tokens": 300,
         "response_format": {"type": "json_object"},
         "messages": [
             {
                 "role": "developer",
                 "content": (
-                    "You are managing a keyword list for a live transcription session. "
-                    "Re-rank the provided keywords from most relevant/important to least, "
-                    "based on the recent transcript excerpt. "
+                    "You are managing a keyword list for a live transcription session. \n"
+                    "1. Remove very similar keywords.\n"
+                    "2. Re-rank the provided keywords from most relevant/important to least, based on the recent transcript excerpt. \n\n"
                     "Return only JSON: {\"keywords\": [<ordered list of keyword strings>]}"
                 )
             },
@@ -153,80 +162,6 @@ async def rerank_keywords(redis_client, session_id, keywords: list[str], recent_
                 logger.debug(f"Keywords re-ranked for session {session_id}: {reranked[:5]}...")
     except Exception as e:
         log_exception(logger, e, "Keyword re-ranking error")
-
-async def predict_continuation(session_id, partial_result: dict, cached_data: dict, redis_client) -> dict | None:
-    """
-    Given the latest partial translation result, ask the LLM to predict the next
-    few words for each language and return an extended copy of partial_result.
-    Returns None if prediction is disabled or fails.
-    """
-    if not REALTIME_SETTINGS.get("ENABLE_PREDICTION", False):
-        return None
-
-    provider_cfg = get_provider_config()
-    api_key = REALTIME_SETTINGS.get(provider_cfg["api_key_setting"])
-    if not api_key:
-        return None
-
-    languages = list(partial_result.get("result", {}).get("translated", {}).keys())
-    if not languages:
-        return None
-
-    AI_MODEL = REALTIME_SETTINGS.get("AI_MODEL", provider_cfg["default_model"])
-    current_keywords = await get_current_keywords(redis_client, session_id)
-    # Cap keywords to avoid unbounded prompt growth
-    keywords_str = ', '.join(current_keywords[:20])
-
-    context_translated = {lang: [] for lang in languages}
-    history = cached_data.get("transcriptions", [])[-3:]
-    for transcription in history:
-        if "result" in transcription:
-            translated_dict = transcription["result"].get("translated", {})
-            for lang in languages:
-                context_translated[lang].append(translated_dict.get(lang, ""))
-
-    predicted_translated = dict(partial_result["result"]["translated"])
-
-    async def _predict_worker(language):
-        current_translation = partial_result["result"]["translated"].get(language, "")
-        if not current_translation:
-            return
-        prev_context = " ".join(context_translated[language])[-100:]
-        json_body = {
-            "model": AI_MODEL,
-            "temperature": 0.3,
-            "max_tokens": 30,
-            "messages": [
-                {
-                    "role": "developer",
-                    "content": (
-                        f"This is a live transcription about:\n{keywords_str}\n\n"
-                        f"The following is an in-progress {language} translation of a sentence that is not yet finished. "
-                        f"Predict the next 5-8 words that will naturally continue it. "
-                        f"Return only the predicted continuation words, no punctuation at the end, no explanation."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": f"{prev_context}\n<in_progress>\n{current_translation}\n</in_progress>"
-                }
-            ]
-        }
-        try:
-            response = await async_chat_completion(json_body)
-            if response and response.status_code == 200:
-                continuation = response.json()["choices"][0]["message"]["content"].strip()
-                if continuation:
-                    predicted_translated[language] = current_translation + " " + continuation
-        except Exception as e:
-            log_exception(logger, e, f"Prediction error for {language}")
-
-    await asyncio.gather(*[_predict_worker(lang) for lang in languages])
-
-    prediction = copy.deepcopy(partial_result)
-    prediction["result"]["translated"] = predicted_translated
-    prediction["is_prediction"] = True
-    return prediction
 
 
 async def translate_transcription(session_id, data: dict, cached_data: dict, redis_client, skip_correction=False):
@@ -282,8 +217,8 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
             # Correct text
             json_body = {
                 "model": AI_MODEL,
-                "temperature": 0,
-                "max_tokens": 200,
+                "max_completion_tokens": 300,
+                "reasoning_effort": "minimal",
                 "messages": [
                     {"role": "developer", "content": f"This is a transcription about:\n{keywords_str}\n\nCorrect the text **only in <correct_this>** as \"corrected text\" according to the reference and context.\nReturn only the corrected text, no any comment."},
                     {"role": "user", "content": f"{(' '.join(context['corrected']))[-50:]}\n<correct_this>\n{text}\n</correct_this>"}
@@ -309,11 +244,11 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
 
         json_body = {
             "model": AI_MODEL,
-            "temperature": 0,
-            "max_tokens": 200,
+            "max_completion_tokens": 300,
+            "reasoning_effort": "minimal",
             "messages": [
                 {"role": "developer",
-                 "content": f"This is a transcription about:\n{keywords_str}\n\nRewrite the text **only in <translate_this>** into {language}, the sentence might not ended yet.\nReturn only the translated text, no any comment.\n{prev_translation}"},
+                 "content": f"This is a transcription about:\n{keywords_str}\n\nRewrite the text **only in <translate_this>** into {language}, the sentence might not ended yet.\n Add punctuation marks. \nReturn only the translated text, no any comment.\n{prev_translation}"},
                 {"role": "user", "content": f"{(' '.join(context['translated'][language]))[-50:]}\n<translate_this>\n{result['corrected']}\n</translate_this>"}
             ]
         }
@@ -330,7 +265,6 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     async def _keyword_worker():
         json_body = {
             "model": AI_MODEL,
-            "temperature": 0,
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "developer", 
@@ -376,7 +310,6 @@ class TranslationQueueManager:
     def __init__(self, callback):
         self.callback = callback
         self.partial_task = None
-        self.prediction_task = None
         self.commit_queue = asyncio.Queue()
         self.is_running = False
         self.task = None
@@ -389,20 +322,11 @@ class TranslationQueueManager:
         self.is_running = False
         if self.partial_task:
             self.partial_task.cancel()
-        if self.prediction_task:
-            self.prediction_task.cancel()
         if self.task:
             self.task.cancel()
 
-    def _cancel_prediction(self):
-        if self.prediction_task and not self.prediction_task.done():
-            self.prediction_task.cancel()
-            self.prediction_task = None
-
     async def put(self, session_id, sync_data, cached_data, redis_client):
         item = (session_id, sync_data, cached_data, redis_client)
-        # Any real update cancels an in-flight prediction
-        self._cancel_prediction()
         if sync_data.get("partial") is True:
             await self.commit_queue.join()
             if self.partial_task and not self.partial_task.done():
@@ -430,23 +354,7 @@ class TranslationQueueManager:
             result_data = await translate_transcription(session_id, sync_data, cached_data, redis_client, skip_correction=True)
             asyncio.create_task(self.callback(session_id, result_data))
 
-            # After emitting a partial translation, speculatively predict continuation
-            if result_data.get("partial") is True and REALTIME_SETTINGS.get("ENABLE_PREDICTION", False):
-                self._cancel_prediction()
-                self.prediction_task = asyncio.create_task(
-                    self._run_prediction(session_id, result_data, cached_data, redis_client)
-                )
         except asyncio.CancelledError:
             logger.debug(f"Translation task cancelled for session {session_id}")
         except Exception as e:
             log_exception(logger, e, f"Process translation error for session {session_id}")
-
-    async def _run_prediction(self, session_id, partial_result, cached_data, redis_client):
-        try:
-            prediction = await predict_continuation(session_id, partial_result, cached_data, redis_client)
-            if prediction is not None:
-                asyncio.create_task(self.callback(session_id, prediction))
-        except asyncio.CancelledError:
-            logger.debug(f"Prediction task cancelled for session {session_id}")
-        except Exception as e:
-            log_exception(logger, e, f"Prediction error for session {session_id}")

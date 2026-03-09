@@ -586,14 +586,14 @@ async def hello_world(request: Request):
 async def download(id: str):
     # Sanitize id parameter to prevent NoSQL injection
     id = sanitize_query_param(id, "session ID")
-
-    data = await get_cached_transcription(id)
+    data = await transcription_store_collection.find_one({"sid": id}, {"_id": 0})
     if not data or not data.get("transcriptions"):
-        # If cache (Redis) returned empty, we might want to ensure DB is checked.
-        # But get_cached_transcription already does DB fallback.
-        # Just valid safety check manually if needed, but likely redundant if get_cached works.
-        pass
+        raise HTTPException(status_code=404, detail="Session not found")
     
+    # Ensure all fields are JSON serializable
+    if "updated_at" in data and isinstance(data["updated_at"], datetime):
+        data["updated_at"] = data["updated_at"].isoformat()
+
     # Return as JSON
     content = json.dumps(data, ensure_ascii=False, indent=2)
     return Response(content=content, media_type="application/json")
@@ -614,6 +614,11 @@ async def rt(request: Request, id: str):
     id = sanitize_query_param(id, "session ID")
 
     data = await get_cached_transcription(id)
+    if not data:
+        data = {
+            "stream_start_time": None,
+            "transcriptions": []
+        }
     sliced_data = data.copy()
     sliced_data["transcriptions"] = sliced_data["transcriptions"][-50:]
     return templates.TemplateResponse("rt.html", {"request": request, "id": id, "data": sliced_data})
