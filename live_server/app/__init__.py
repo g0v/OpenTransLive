@@ -24,7 +24,7 @@ import dotenv
 dotenv.load_dotenv(override=True)
 
 # Import MongoDB models
-from .database import rooms_collection, transcription_store_collection, realtime_tokens_collection
+from .database import rooms_collection, transcription_store_collection, realtime_tokens_collection, init_indexes
 from .config import SETTINGS, REDIS_URL
 from .scribe_manager import ScribeSessionManager
 from .logger_config import setup_logger, log_exception, get_generic_error_dict
@@ -43,6 +43,7 @@ active_translation_managers = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    await init_indexes()
     import redis.asyncio as _redis
     _limiter_redis = _redis.from_url(REDIS_URL, decode_responses=True)
     await FastAPILimiter.init(_limiter_redis)
