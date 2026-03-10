@@ -20,6 +20,7 @@ import json
 import asyncio
 import time
 import dotenv
+from cachetools import TTLCache
 
 dotenv.load_dotenv(override=True)
 
@@ -37,8 +38,33 @@ import base64
 # Setup logger
 logger = setup_logger(__name__)
 
-active_scribe_managers = {}
-active_translation_managers = {}
+# Session manager caches: max 512 concurrent sessions, 30-minute inactivity TTL.
+# When a session is evicted by cachetools (TTL expiry or capacity), its manager is
+# stopped so background tasks are cleaned up promptly.
+_MANAGER_CACHE_TTL = 1800   # seconds (30 min)
+_MANAGER_CACHE_MAX = 512
+
+
+class _ManagerTTLCache(TTLCache):
+    """TTLCache that calls manager.stop() when an entry is evicted."""
+
+    def popitem(self):
+        key, manager = super().popitem()
+        # Schedule the async stop without blocking the eviction path.
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(manager.stop())
+        except RuntimeError:
+            pass  # No running loop (e.g. during interpreter shutdown) — skip.
+        return key, manager
+
+
+active_scribe_managers: TTLCache = _ManagerTTLCache(
+    maxsize=_MANAGER_CACHE_MAX, ttl=_MANAGER_CACHE_TTL
+)
+active_translation_managers: TTLCache = _ManagerTTLCache(
+    maxsize=_MANAGER_CACHE_MAX, ttl=_MANAGER_CACHE_TTL
+)
 # Pending debounce tasks for partial transcription broadcasts, keyed by session_id.
 _partial_debounce_tasks: dict = {}
 
@@ -57,12 +83,12 @@ async def lifespan(app: FastAPI):
     from .translator import close_async_client
     await close_async_client()
 
-    # Stop all active scribe managers
-    for manager in active_scribe_managers.values():
+    # Stop all active scribe managers (snapshot first to avoid mutation during iteration)
+    for manager in list(active_scribe_managers.values()):
         await manager.stop()
 
     # Stop all active translation managers
-    for manager in active_translation_managers.values():
+    for manager in list(active_translation_managers.values()):
         await manager.stop()
 
 # Initialize FastAPI app with lifespan
@@ -98,7 +124,8 @@ socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 # In-memory cache for transcriptions (Deprecated in favor of Redis)
 # transcription_cache = {}
-youtube_data_cache = {}
+# YouTube video metadata cache: max 256 entries, 30-minute TTL.
+youtube_data_cache: TTLCache = TTLCache(maxsize=256, ttl=_MANAGER_CACHE_TTL)
 
 # Initialize Redis client
 import redis.asyncio as redis
