@@ -3,37 +3,34 @@
 # Licensed under the GNU AGPL v3.0
 # See LICENSE for details.
 
-from fastapi import FastAPI, Request, Form, HTTPException, Depends
-from fastapi.responses import HTMLResponse, Response, RedirectResponse
-from fastapi.templating import Jinja2Templates
+import asyncio
+import hmac
+import json
+import re
+import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import dotenv
+import redis.asyncio as redis
+import socketio
+from cachetools import TTLCache
+from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
-from starlette.middleware.sessions import SessionMiddleware
+from fastapi.templating import Jinja2Templates
 from fastapi_limiter import FastAPILimiter
 from fastapi_limiter.depends import RateLimiter
-import socketio
-from contextlib import asynccontextmanager
-from typing import Any
-from pathlib import Path
-from datetime import datetime, timezone
-import uuid
-import json
-import asyncio
-import time
-import dotenv
-from cachetools import TTLCache
+from starlette.middleware.sessions import SessionMiddleware
 
 dotenv.load_dotenv(override=True)
 
-# Import MongoDB models
-from .database import rooms_collection, transcription_store_collection, realtime_tokens_collection, init_indexes
 from .config import SETTINGS, REDIS_URL
+from .database import rooms_collection, transcription_store_collection, realtime_tokens_collection, init_indexes
+from .logger_config import setup_logger, log_exception
 from .scribe_manager import ScribeSessionManager
-from .logger_config import setup_logger, log_exception, get_generic_error_dict
-import os
-import hmac
-import logging
-import re
-import base64
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -68,12 +65,33 @@ active_translation_managers: TTLCache = _ManagerTTLCache(
 # Pending debounce tasks for partial transcription broadcasts, keyed by session_id.
 _partial_debounce_tasks: dict = {}
 
+
+def _get_or_create_scribe_manager(session_id) -> ScribeSessionManager:
+    """Return existing running ScribeSessionManager or create and start a new one."""
+    manager = active_scribe_managers.get(session_id)
+    if not manager or not manager.is_running:
+        manager = ScribeSessionManager(session_id, on_scribe_transcription)
+        active_scribe_managers[session_id] = manager
+        asyncio.create_task(manager.start())
+    return manager
+
+
+def _get_or_create_translation_manager(session_id):
+    """Return existing TranslationQueueManager or create and start a new one."""
+    manager = active_translation_managers.get(session_id)
+    if not manager:
+        from .translator import TranslationQueueManager
+        manager = TranslationQueueManager(on_translation_completed)
+        active_translation_managers[session_id] = manager
+        asyncio.create_task(manager.start())
+    return manager
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     await init_indexes()
-    import redis.asyncio as _redis
-    _limiter_redis = _redis.from_url(REDIS_URL, decode_responses=True)
+    _limiter_redis = redis.from_url(REDIS_URL, decode_responses=True)
     await FastAPILimiter.init(_limiter_redis)
     yield
     # Shutdown
@@ -120,118 +138,35 @@ sio = socketio.AsyncServer(
 # Wrap with ASGI application
 socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
-
-
-# In-memory cache for transcriptions (Deprecated in favor of Redis)
-# transcription_cache = {}
-# YouTube video metadata cache: max 256 entries, 30-minute TTL.
 youtube_data_cache: TTLCache = TTLCache(maxsize=256, ttl=_MANAGER_CACHE_TTL)
 
-# Initialize Redis client
-import redis.asyncio as redis
 redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
-def sanitize_query_param(value: str, param_name: str = "parameter") -> str:
-    """
-    Sanitize user input to prevent NoSQL injection and enumeration attacks.
-
-    For session IDs specifically, enforces:
-    - Alphanumeric characters, hyphens, and underscores only
-    - Length between 4 and 64 characters
-    - No MongoDB special characters ($ and .)
-
-    For other parameters, applies basic sanitization.
-
-    Args:
-        value: The input string to sanitize
-        param_name: Name of the parameter for error messages
-
-    Returns:
-        The sanitized string if valid
-
-    Raises:
-        HTTPException: If input contains potentially dangerous characters or invalid format
-    """
-    if not isinstance(value, str):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid {param_name}: must be a string"
-        )
-
-    # Additional validation: ensure it's not empty after stripping
-    if not value.strip():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid {param_name}: cannot be empty"
-        )
-
-    # Strict validation for session IDs
-    if "session" in param_name.lower() or param_name.lower() == "sid":
-        # Enforce length limits (4-64 characters)
-        if len(value) < 4 or len(value) > 64:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid {param_name}: must be between 4 and 64 characters"
-            )
-
-        # Enforce alphanumeric format with hyphens and underscores only
-        # This prevents special characters, MongoDB operators, and enumeration attempts
-        if not re.match(r'^[a-zA-Z0-9_-]+$', value):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid {param_name}: must contain only alphanumeric characters, hyphens, and underscores"
-            )
-    else:
-        # For non-session parameters, check for MongoDB operator characters
-        if '$' in value or '.' in value:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid {param_name}: contains prohibited characters"
-            )
-
-    return value
-
 def validate_query_param(value: str, param_name: str = "parameter") -> tuple[bool, str]:
-    """
-    Validate user input to prevent NoSQL injection and enumeration attacks.
-    Returns validation status and error message if invalid.
-
-    For session IDs specifically, enforces:
-    - Alphanumeric characters, hyphens, and underscores only
-    - Length between 4 and 64 characters
-    - No MongoDB special characters ($ and .)
-
-    For other parameters, applies basic validation.
-
-    Args:
-        value: The input string to validate
-        param_name: Name of the parameter for error messages
-
-    Returns:
-        Tuple of (is_valid, error_message)
-    """
+    """Validate user input to prevent NoSQL injection. Returns (is_valid, error_message)."""
     if not isinstance(value, str):
         return False, f"Invalid {param_name}: must be a string"
-
-    # Additional validation: ensure it's not empty after stripping
     if not value.strip():
         return False, f"Invalid {param_name}: cannot be empty"
 
     # Strict validation for session IDs
     if "session" in param_name.lower() or param_name.lower() == "sid":
-        # Enforce length limits (4-64 characters)
         if len(value) < 4 or len(value) > 64:
             return False, f"Invalid {param_name}: must be between 4 and 64 characters"
-
-        # Enforce alphanumeric format with hyphens and underscores only
         if not re.match(r'^[a-zA-Z0-9_-]+$', value):
             return False, f"Invalid {param_name}: must contain only alphanumeric characters, hyphens, and underscores"
     else:
-        # For non-session parameters, check for MongoDB operator characters
         if '$' in value or '.' in value:
             return False, f"Invalid {param_name}: contains prohibited characters"
 
     return True, ""
+
+def sanitize_query_param(value: str, param_name: str = "parameter") -> str:
+    """Validate user input; raise HTTPException on failure. Returns value if valid."""
+    is_valid, error_msg = validate_query_param(value, param_name)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+    return value
 
 async def is_realtime_authorized(session: dict, data: dict | None = None) -> bool:
     """Check if the socket is authorized to use server-side realtime features.
@@ -266,36 +201,37 @@ async def is_realtime_authorized(session: dict, data: dict | None = None) -> boo
 
 
 async def verify_socket_auth(socket_id: str, session_id: str, secret_key: str) -> bool:
-    """
-    Verify WebSocket authentication against database.
-
-    Ensures consistent authentication flow across all WebSocket event handlers.
-    Only returns True if the secret_key matches the room's secret_key in the database.
-
-    Args:
-        socket_id: The socket ID for error reporting
-        session_id: The session/room ID to verify
-        secret_key: The secret key to verify against
-
-    Returns:
-        bool: True if authenticated, False otherwise
-    """
+    """Verify WebSocket authentication against database. Returns True if valid."""
     if not session_id or not secret_key:
         return False
-
-    # Validate session_id to prevent NoSQL injection
     is_valid, _ = validate_query_param(session_id, "session_id")
     if not is_valid:
         return False
-
-    # Validate secret_key to prevent NoSQL injection
     is_valid, _ = validate_query_param(secret_key, "secret_key")
     if not is_valid:
         return False
-
-    # Verify against database
     room = await rooms_collection.find_one({"sid": session_id, "secret_key": secret_key})
     return room is not None
+
+
+async def _ensure_socket_verified(socket_id, session, secret_key, session_id) -> bool:
+    """Try to verify an unverified socket. Returns True if now verified, False otherwise.
+    Emits an error to the socket on failure."""
+    if session.get('verified'):
+        return True
+    if not secret_key:
+        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        return False
+    if not session_id:
+        await sio.emit('error', {'message': 'Unauthorized: not in a session room'}, to=socket_id)
+        return False
+    if not await verify_socket_auth(socket_id, session_id, secret_key):
+        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        return False
+    session['verified'] = True
+    session['secret_key'] = secret_key
+    await sio.save_session(socket_id, session)
+    return True
 
 
 def _verify_admin(request: Request):
@@ -306,6 +242,20 @@ def _verify_admin(request: Request):
     provided = auth_header[7:]
     if not hmac.compare_digest(provided, SETTINGS["SECRET_KEY"]):
         raise HTTPException(status_code=403, detail="Invalid SECRET_KEY")
+
+
+async def _verify_session_admin(request: Request, sid: str):
+    """Verify the request user is the admin of the given session. Returns the room doc."""
+    user_uid = request.session.get("user_uid")
+    user_secret_key = request.session.get("secret_key")
+    if not user_uid or not user_secret_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    room = await rooms_collection.find_one({"sid": sid})
+    if not room:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if room.get("admin_uid") != user_uid or room.get("secret_key") != user_secret_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return room
 
 
 @app.get("/api/tokens", dependencies=[Depends(RateLimiter(times=20, seconds=60))])
@@ -349,17 +299,7 @@ async def delete_token(request: Request, token: str):
 async def get_session_languages_endpoint(request: Request, sid: str):
     """Get the current translate languages for a session."""
     sid = sanitize_query_param(sid, "session ID")
-
-    user_uid = request.session.get("user_uid")
-    user_secret_key = request.session.get("secret_key")
-    if not user_uid or not user_secret_key:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    room = await rooms_collection.find_one({"sid": sid})
-    if not room:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if room.get("admin_uid") != user_uid or room.get("secret_key") != user_secret_key:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    await _verify_session_admin(request, sid)
 
     from .translator import get_session_languages
     languages = await get_session_languages(redis_client, sid)
@@ -370,23 +310,12 @@ async def get_session_languages_endpoint(request: Request, sid: str):
 async def update_session_languages_endpoint(request: Request, sid: str):
     """Update the translate languages for a session."""
     sid = sanitize_query_param(sid, "session ID")
-
-    user_uid = request.session.get("user_uid")
-    user_secret_key = request.session.get("secret_key")
-    if not user_uid or not user_secret_key:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    room = await rooms_collection.find_one({"sid": sid})
-    if not room:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if room.get("admin_uid") != user_uid or room.get("secret_key") != user_secret_key:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    await _verify_session_admin(request, sid)
 
     body = await request.json()
     languages = body.get("languages")
     if not isinstance(languages, list) or not languages:
         raise HTTPException(status_code=400, detail="languages must be a non-empty list")
-    # Basic validation: each entry must be a non-empty string without injection chars
     for lang in languages:
         if not isinstance(lang, str) or not lang.strip():
             raise HTTPException(status_code=400, detail="Each language must be a non-empty string")
@@ -403,17 +332,7 @@ async def update_session_languages_endpoint(request: Request, sid: str):
 async def get_session_keywords_endpoint(request: Request, sid: str):
     """Get the current keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
-
-    user_uid = request.session.get("user_uid")
-    user_secret_key = request.session.get("secret_key")
-    if not user_uid or not user_secret_key:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    room = await rooms_collection.find_one({"sid": sid})
-    if not room:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if room.get("admin_uid") != user_uid or room.get("secret_key") != user_secret_key:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    await _verify_session_admin(request, sid)
 
     from .translator import get_current_keywords
     keywords = await get_current_keywords(redis_client, sid)
@@ -424,17 +343,7 @@ async def get_session_keywords_endpoint(request: Request, sid: str):
 async def update_session_keywords_endpoint(request: Request, sid: str):
     """Update the keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
-
-    user_uid = request.session.get("user_uid")
-    user_secret_key = request.session.get("secret_key")
-    if not user_uid or not user_secret_key:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    room = await rooms_collection.find_one({"sid": sid})
-    if not room:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if room.get("admin_uid") != user_uid or room.get("secret_key") != user_secret_key:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    await _verify_session_admin(request, sid)
 
     body = await request.json()
     keywords = body.get("keywords")
@@ -751,70 +660,38 @@ async def panel(request: Request, sid: str):
 @app.post("/heartbeat/{sid}", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
 async def heartbeat(request: Request, sid: str):
     """Update admin heartbeat to maintain session lock"""
-    # Sanitize sid parameter to prevent NoSQL injection
     sid = sanitize_query_param(sid, "session ID")
-
-    user_uid = request.session.get("user_uid")
-    user_secret_key = request.session.get("secret_key")
-
-    if not user_uid or not user_secret_key:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    # Verify this user is the current admin
-    room = await rooms_collection.find_one({"sid": sid})
-    if not room:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    if room.get("admin_uid") == user_uid and room.get("secret_key") == user_secret_key:
-        # Update heartbeat
-        await rooms_collection.update_one(
-            {"sid": sid},
-            {
-                "$set": {
-                    "admin_last_heartbeat": datetime.now(timezone.utc),
-                    "updated_at": datetime.now(timezone.utc)
-                }
-            }
-        )
-        return {"status": "ok"}
-
-    raise HTTPException(status_code=403, detail="Not the current admin")
+    await _verify_session_admin(request, sid)
+    now = datetime.now(timezone.utc)
+    await rooms_collection.update_one(
+        {"sid": sid},
+        {"$set": {"admin_last_heartbeat": now, "updated_at": now}}
+    )
+    return {"status": "ok"}
 
 @app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=20, seconds=60))])
 async def release_admin(request: Request, sid: str):
     """Release admin lock when admin leaves"""
-    # Sanitize sid parameter to prevent NoSQL injection
     sid = sanitize_query_param(sid, "session ID")
 
     user_uid = request.session.get("user_uid")
     user_secret_key = request.session.get("secret_key")
-
     if not user_uid or not user_secret_key:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    # Verify this user is the current admin
     room = await rooms_collection.find_one({"sid": sid})
     if not room:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    if room.get("admin_uid") == user_uid and room.get("secret_key") == user_secret_key:
-        # Clear admin lock
-        await rooms_collection.update_one(
-            {"sid": sid},
-            {
-                "$set": {
-                    "secret_key": None,
-                    "admin_uid": None,
-                    "admin_last_heartbeat": None,
-                    "updated_at": datetime.now(timezone.utc)
-                }
-            }
-        )
-        # Clear session
-        request.session.pop("secret_key", None)
-        return {"status": "released"}
+    if room.get("admin_uid") != user_uid or room.get("secret_key") != user_secret_key:
+        return {"status": "not_admin"}
 
-    return {"status": "not_admin"}
+    await rooms_collection.update_one(
+        {"sid": sid},
+        {"$set": {"secret_key": None, "admin_uid": None, "admin_last_heartbeat": None, "updated_at": datetime.now(timezone.utc)}}
+    )
+    request.session.pop("secret_key", None)
+    return {"status": "released"}
 
 # Socket.IO Event Handlers
 @sio.event
@@ -939,26 +816,12 @@ async def sync(socket_id, data):
         await sio.emit('error', {'message': error_msg}, to=socket_id)
         return
 
-    if not session.get('verified'):
-        secret_key = session.get('secret_key') or data.get('secret_key')
-        if not secret_key:
-            await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
-            return
+    secret_key = session.get('secret_key') or data.get('secret_key')
+    if not await _ensure_socket_verified(socket_id, session, secret_key, session_id):
+        return
 
-        # Use helper function for consistent authentication verification
-        if not await verify_socket_auth(socket_id, session_id, secret_key):
-            await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
-            return
-
-        # Only set verified=True after database verification
-        session['verified'] = True
-        session['secret_key'] = secret_key
-        await sio.save_session(socket_id, session)
-
-    # Remove id from the data before processing
     sync_data = data.copy()
     sync_data.pop("id", None)
-
     await _process_transcription_update(session_id, sync_data)
 
 @sio.event
@@ -1009,13 +872,7 @@ async def on_scribe_transcription(session_id, transcription):
     cached_data = await get_cached_transcription(session_id)
     sync_data = transcription.copy()
     
-    manager = active_translation_managers.get(session_id)
-    if not manager:
-        from .translator import TranslationQueueManager
-        manager = TranslationQueueManager(on_translation_completed)
-        active_translation_managers[session_id] = manager
-        asyncio.create_task(manager.start())
-        
+    manager = _get_or_create_translation_manager(session_id)
     await manager.put(session_id, sync_data, cached_data, redis_client)
 
 @sio.event
@@ -1034,55 +891,25 @@ async def realtime_connect(socket_id, data):
     rooms = sio.rooms(socket_id)
     session_id = next((r for r in rooms if r != socket_id), None)
 
-    manager = active_scribe_managers.get(session_id)
-    if not manager or not manager.is_running:
-        manager = ScribeSessionManager(session_id, on_scribe_transcription)
-        active_scribe_managers[session_id] = manager
-        asyncio.create_task(manager.start())
-    
-    manager = active_translation_managers.get(session_id)
-    if not manager:
-        from .translator import TranslationQueueManager
-        manager = TranslationQueueManager(on_translation_completed)
-        active_translation_managers[session_id] = manager
-        asyncio.create_task(manager.start())
+    _get_or_create_scribe_manager(session_id)
+    _get_or_create_translation_manager(session_id)
 
 @sio.event
 async def audio_buffer_append(socket_id, data):
     """Handle client audio buffer append events"""
     session = await sio.get_session(socket_id)
 
-    if not session.get('verified'):
-        secret_key = session.get('secret_key') or data.get('secret_key')
-        if not secret_key:
-            await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
-            return
+    rooms = sio.rooms(socket_id)
+    session_id = next((r for r in rooms if r != socket_id), None)
 
-        # Get session_id from rooms to verify against database
-        rooms = sio.rooms(socket_id)
-        session_id = next((r for r in rooms if r != socket_id), None)
-
-        if not session_id:
-            await sio.emit('error', {'message': 'Unauthorized: not in a session room'}, to=socket_id)
-            return
-
-        # Use helper function for consistent authentication verification
-        if not await verify_socket_auth(socket_id, session_id, secret_key):
-            await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
-            return
-
-        # Only set verified=True after database verification
-        session['verified'] = True
-        session['secret_key'] = secret_key
-        await sio.save_session(socket_id, session)
+    secret_key = session.get('secret_key') or data.get('secret_key')
+    if not await _ensure_socket_verified(socket_id, session, secret_key, session_id):
+        return
 
     if not await is_realtime_authorized(session, data):
         await sio.emit('error', {'message': 'Unauthorized: realtime token required'}, to=socket_id)
         return
 
-    rooms = sio.rooms(socket_id)
-    session_id = next((r for r in rooms if r != socket_id), None)
-    
     if not session_id:
         print("No session ID found for socket ID:", socket_id, flush=True)
         return
@@ -1112,11 +939,6 @@ async def audio_buffer_append(socket_id, data):
         logger.warning(f"Invalid base64 audio data from socket {socket_id}")
         return
 
-    manager = active_scribe_managers.get(session_id)
-    if not manager or not manager.is_running:
-        manager = ScribeSessionManager(session_id, on_scribe_transcription)
-        active_scribe_managers[session_id] = manager
-        asyncio.create_task(manager.start())
-        
+    manager = _get_or_create_scribe_manager(session_id)
     await manager.push_audio(base64_audio)
     
