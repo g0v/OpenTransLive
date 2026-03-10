@@ -9,7 +9,7 @@
     <span class="font-bold text-gray-100 tracking-tight">Admin Dashboard</span>
     <div class="flex items-center gap-4">
       <span class="text-xs text-gray-500">{{ current_email }}</span>
-      <a href="/logout" class="text-xs text-gray-400 hover:text-gray-200 transition-colors border border-gray-600 rounded px-2 py-1">Logout</a>
+      <a href="/logout" class="nav-link">Logout</a>
     </div>
   </header>
 
@@ -19,12 +19,13 @@
       <h2 class="text-lg font-semibold text-gray-100">Realtime Transcription Access</h2>
       <p class="mt-1 text-sm text-gray-500">
         Toggle realtime transcription permission for each user.
-        Users must log in via <a href="/login" class="underline text-gray-400 hover:text-gray-200">/login</a> before they appear here.
+        Users must log in via <a href="/login" class="underline text-gray-400 hover:text-gray-200">/login</a> before
+        they appear here.
       </p>
     </div>
 
     {% if users %}
-    <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden">
+    <div class="dark-card overflow-hidden">
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b border-gray-700 text-left text-xs text-gray-500 uppercase tracking-wider">
@@ -39,17 +40,15 @@
             <td class="px-4 py-3 font-mono text-xs text-gray-200 break-all">{{ user.email }}</td>
             <td class="px-4 py-3 text-xs text-gray-500">
               {% if user.last_login_at %}
-                {{ user.last_login_at[:19].replace('T', ' ') }} UTC
+              {{ user.last_login_at[:19].replace('T', ' ') }} UTC
               {% else %}
-                —
+              —
               {% endif %}
             </td>
             <td class="px-4 py-3 text-right">
               <button
                 class="realtime-toggle px-3 py-1 rounded text-xs font-semibold transition-colors {% if user.realtime_enabled %}bg-green-700 hover:bg-green-600 text-green-100{% else %}bg-gray-700 hover:bg-gray-600 text-gray-300{% endif %}"
-                data-email="{{ user.email }}"
-                data-enabled="{{ 'true' if user.realtime_enabled else 'false' }}"
-              >
+                data-email="{{ user.email }}" data-enabled="{{ 'true' if user.realtime_enabled else 'false' }}">
                 {% if user.realtime_enabled %}Enabled{% else %}Disabled{% endif %}
               </button>
             </td>
@@ -59,8 +58,9 @@
       </table>
     </div>
     {% else %}
-    <div class="bg-gray-800 border border-gray-700 rounded-xl px-6 py-10 text-center text-sm text-gray-500">
-      No users yet. Users appear here after logging in at <a href="/login" class="underline hover:text-gray-300">/login</a>.
+    <div class="dark-card px-6 py-10 text-center text-sm text-gray-500">
+      No users yet. Users appear here after logging in at <a href="/login"
+        class="underline hover:text-gray-300">/login</a>.
     </div>
     {% endif %}
 

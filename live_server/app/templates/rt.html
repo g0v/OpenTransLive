@@ -14,28 +14,24 @@
     <div class="flex flex-wrap gap-2 ms-auto items-center justify-end">
       <!-- Font size controls -->
       <div class="flex items-center gap-1 shrink-0" title="Font size">
-        <button id="font-decrease"
-          class="icon-btn w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold"
-          aria-label="Decrease font size"><iconify-icon icon="mdi:format-font-size-decrease" width="18"
-            height="18"></iconify-icon></button>
-        <button id="font-increase"
-          class="icon-btn w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold"
-          aria-label="Increase font size"><iconify-icon icon="mdi:format-font-size-increase" width="18"
-            height="18"></iconify-icon></button>
+        <button id="font-decrease" class="icon-btn icon-btn-sm" aria-label="Decrease font size"><iconify-icon
+            icon="mdi:format-font-size-decrease" width="18" height="18"></iconify-icon></button>
+        <button id="font-increase" class="icon-btn icon-btn-sm" aria-label="Increase font size"><iconify-icon
+            icon="mdi:format-font-size-increase" width="18" height="18"></iconify-icon></button>
       </div>
 
       <!-- Theme buttons -->
       <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
-        <button id="theme-light" class="icon-btn theme-btn w-7 h-7 flex items-center justify-center rounded-md text-xs"
-          aria-label="Light theme" title="Light theme">
+        <button id="theme-light" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="Light theme"
+          title="Light theme">
           <iconify-icon icon="ph:sun" width="15" height="15"></iconify-icon>
         </button>
-        <button id="theme-dark" class="icon-btn theme-btn w-7 h-7 flex items-center justify-center rounded-md text-xs"
-          aria-label="Dark theme" title="Dark theme">
+        <button id="theme-dark" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="Dark theme"
+          title="Dark theme">
           <iconify-icon icon="ph:moon" width="15" height="15"></iconify-icon>
         </button>
-        <button id="theme-hc" class="icon-btn theme-btn w-7 h-7 flex items-center justify-center rounded-md text-xs"
-          aria-label="High contrast theme" title="High contrast theme">
+        <button id="theme-hc" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="High contrast theme"
+          title="High contrast theme">
           <iconify-icon icon="ph:circle-half" width="15" height="15"></iconify-icon>
         </button>
       </div>
@@ -44,8 +40,7 @@
       <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
         <!-- QR code button -->
         <div id="qr-area" class="relative">
-          <button id="qr-btn" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md"
-            aria-label="Show QR code" title="Show QR code">
+          <button id="qr-btn" class="icon-btn icon-btn-sm" aria-label="Show QR code" title="Show QR code">
             <iconify-icon icon="ph:qr-code" width="15" height="15"></iconify-icon>
           </button>
           <!-- QR popup -->
@@ -58,22 +53,20 @@
         </div>
 
         <!-- JSON download -->
-        <a href="/download/{{ id }}" target="_blank"
-          class="icon-btn w-7 h-7 flex items-center justify-center rounded-md" aria-label="Download JSON"
+        <a href="/download/{{ id }}" target="_blank" class="icon-btn icon-btn-sm" aria-label="Download JSON"
           title="Download JSON">
           <iconify-icon icon="ph:download-simple" width="15" height="15"></iconify-icon>
         </a>
 
         <!-- Info / help button -->
-        <button id="info-btn" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md"
-          aria-label="URL parameters help" title="URL parameters">
+        <button id="info-btn" class="icon-btn icon-btn-sm" aria-label="URL parameters help" title="URL parameters">
           <iconify-icon icon="ph:info" width="15" height="15"></iconify-icon>
         </button>
       </div>
 
       <!-- Connection status -->
       <div class="flex items-center gap-1.5 shrink-0 border-l pl-2 ml-1 border-divider text-xs">
-        <span id="status-indicator" class="inline-block w-2 h-2 rounded-full bg-gray-400"></span>
+        <span id="status-indicator" class="status-dot-sm bg-gray-400"></span>
         <span id="status-text" class="inline opacity-70">Connecting...</span>
       </div>
     </div>
@@ -100,7 +93,7 @@
           <h2 class="text-base font-semibold">URL Parameters</h2>
           <p class="text-xs opacity-50 mt-0.5">Customize the viewer by adding these parameters to the URL</p>
         </div>
-        <button id="info-close" class="icon-btn w-8 h-8 flex items-center justify-center rounded-lg" aria-label="Close">
+        <button id="info-close" class="icon-btn icon-btn-md" aria-label="Close">
           <iconify-icon icon="ph:x" width="16" height="16"></iconify-icon>
         </button>
       </div>
@@ -110,13 +103,13 @@
 
         <!-- font-size -->
         <div>
-          <div class="flex items-center gap-2 mb-1.5">
+          <div class="param-header">
             <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">font-size</code>
             <span class="text-xs opacity-50">default: 1.25rem</span>
           </div>
           <p class="text-sm opacity-80 mb-2">Controls the text size of the transcript. Accepts any CSS length value or a
             bare number (treated as pixels).</p>
-          <div class="flex flex-wrap gap-1.5">
+          <div class="param-btn-row">
             <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
               data-value="1rem">1rem</button>
             <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
@@ -136,12 +129,12 @@
 
         <!-- theme -->
         <div>
-          <div class="flex items-center gap-2 mb-1.5">
+          <div class="param-header">
             <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">theme</code>
             <span class="text-xs opacity-50">default: light</span>
           </div>
           <p class="text-sm opacity-80 mb-2">Sets the color scheme of the viewer.</p>
-          <div class="flex flex-wrap gap-1.5">
+          <div class="param-btn-row">
             <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="theme"
               data-value="light">light</button>
             <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="theme"
@@ -155,7 +148,7 @@
 
         <!-- layout -->
         <div>
-          <div class="flex items-center gap-2 mb-1.5">
+          <div class="param-header">
             <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">layout</code>
             <span class="text-xs opacity-50">default: grid</span>
           </div>
@@ -163,7 +156,7 @@
               class="font-mono text-xs">grid</code> to show all languages in a grid, or a language code (e.g. <code
               class="font-mono text-xs">en</code>, <code class="font-mono text-xs">zh</code>) to show a single language.
           </p>
-          <div class="flex flex-wrap gap-1.5">
+          <div class="param-btn-row">
             <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="layout"
               data-value="grid">grid</button>
             <span class="text-xs opacity-40 self-center">or a language code:</span>
@@ -181,11 +174,10 @@
         <!-- current URL preview -->
         <div>
           <div class="text-xs font-semibold mb-1.5 opacity-60">Current URL</div>
-          <div class="flex items-center gap-2">
+          <div class="copyable-row">
             <code id="current-url-display"
               class="text-xs font-mono break-all flex-1 px-2.5 py-2 rounded-lg param-code"></code>
-            <button id="copy-url-btn" class="icon-btn shrink-0 w-8 h-8 flex items-center justify-center rounded-lg"
-              title="Copy URL">
+            <button id="copy-url-btn" class="icon-btn shrink-0 icon-btn-md" title="Copy URL">
               <iconify-icon icon="ph:copy" width="15" height="15"></iconify-icon>
             </button>
           </div>
@@ -810,13 +802,13 @@
     const socket = io();
 
     socket.on('connect', function () {
-      statusIndicator.className = 'inline-block w-2 h-2 rounded-full bg-emerald-500';
+      statusIndicator.className = 'status-dot-sm bg-emerald-500';
       statusText.textContent = 'Connected';
       socket.emit('join_session', { session_id: '{{ id }}' });
     });
 
     socket.on('disconnect', function () {
-      statusIndicator.className = 'inline-block w-2 h-2 rounded-full bg-red-500';
+      statusIndicator.className = 'status-dot-sm bg-red-500';
       statusText.textContent = 'Disconnected';
     });
 
@@ -848,7 +840,7 @@
     });
 
     socket.on('error', function (data) {
-      statusIndicator.className = 'inline-block w-2 h-2 rounded-full bg-red-500';
+      statusIndicator.className = 'status-dot-sm bg-red-500';
       statusText.textContent = 'Error: ' + data.message;
     });
 

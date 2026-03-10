@@ -952,15 +952,13 @@ async def realtime_connect(socket_id, data):
         await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
         return
 
-    if not await is_realtime_authorized(session, data):
-        await sio.emit('error', {'message': 'Unauthorized: realtime token required'}, to=socket_id)
-        return
-
     rooms = sio.rooms(socket_id)
     session_id = next((r for r in rooms if r != socket_id), None)
 
-    _get_or_create_scribe_manager(session_id)
-    _get_or_create_translation_manager(session_id)
+    if await is_realtime_authorized(session, data):
+        _get_or_create_scribe_manager(session_id)
+        _get_or_create_translation_manager(session_id)
+
 
 @sio.event
 async def audio_buffer_append(socket_id, data):

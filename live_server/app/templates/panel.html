@@ -6,8 +6,8 @@
   <!-- Top Bar -->
   <header class="">
     <div class="px-6 py-3 bg-gray-800 flex items-center flex-wrap gap-4">
-      <div class="flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700 flex-grow-1">
-        <span class="pl-2 text-xs text-gray-500 uppercase font-bold">Viewer Link</span>
+      <div class="toolbar-group flex-grow-1">
+        <span class="toolbar-label">Viewer Link</span>
         <div class="relative group flex-grow-1">
           <input id="viewer-url" type="text" value=""
             class="copyable-input w-full bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly"
@@ -17,8 +17,8 @@
           </div>
         </div>
       </div>
-      <div class="flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
-        <span class="pl-2 text-xs text-gray-500 uppercase font-bold">USER ID</span>
+      <div class="toolbar-group">
+        <span class="toolbar-label">USER ID</span>
         <div class="relative group">
           <input id="user-uid-display" type="text" value="{{ user_uid }}"
             class="copyable-input w-full max-w-32 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
@@ -28,7 +28,7 @@
           </div>
         </div>
         <div class="w-px h-4 bg-gray-700 mx-1"></div>
-        <span class="text-xs text-gray-500 uppercase font-bold">KEY</span>
+        <span class="toolbar-label pl-0">KEY</span>
         <div class="relative group">
           <input id="user-secret-key" type="text" value="{{ user_secret_key }}"
             class="copyable-input w-full max-w-32 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
@@ -40,7 +40,7 @@
       </div>
       <!-- Mic Toggle Button -->
       {% if is_realtime_enabled %}
-      <div class="relative flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
+      <div class="toolbar-group">
         <button id="mic-toggle-btn" title="Toggle microphone" class="mic-btn mic-off" aria-pressed="false">
           <!-- Mic ON icon -->
           <iconify-icon id="mic-icon-on" icon="mdi:microphone" width="20" height="20"
@@ -58,24 +58,19 @@
       {% endif %}
 
       <!-- Keywords panel -->
-      <div class="relative flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
-        <span class="pl-2 text-xs text-gray-500 uppercase font-bold whitespace-nowrap">Keywords</span>
-        <button id="kw-dropdown-btn" type="button"
-          class="flex items-center gap-1 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none min-w-20 max-w-40 truncate text-left">
+      <div class="toolbar-group">
+        <span class="toolbar-label">Keywords</span>
+        <button id="kw-dropdown-btn" type="button" class="dropdown-btn min-w-20 max-w-40">
           <span id="kw-dropdown-label" class="truncate flex-1">Loading...</span>
           <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
         </button>
         <span id="keyword-status" class="text-xs text-gray-500 min-w-12">Saved</span>
         <!-- Keywords dropdown panel -->
-        <div id="kw-dropdown-panel"
-          class="hidden absolute left-0 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2 min-w-72"
-          style="top: calc(100% + 4px);">
-          <div id="kw-list" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
-          <div class="border-t border-gray-700 mt-2 pt-2 flex gap-1">
-            <input id="kw-custom-input" type="text" placeholder="Add keyword"
-              class="flex-1 bg-gray-900 border border-gray-600 text-xs text-gray-300 px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500">
-            <button id="kw-custom-add-btn" type="button"
-              class="px-2 py-1 text-xs font-bold rounded bg-gray-700 text-gray-300 hover:bg-blue-700 hover:text-white transition-colors whitespace-nowrap">
+        <div id="kw-dropdown-panel" class="hidden dropdown-panel min-w-72" style="top: calc(100% + 4px);">
+          <div id="kw-list" class="dropdown-list"></div>
+          <div class="dropdown-add-row">
+            <input id="kw-custom-input" type="text" placeholder="Add keyword" class="panel-input">
+            <button id="kw-custom-add-btn" type="button" class="panel-add-btn">
               Add
             </button>
           </div>
@@ -83,24 +78,19 @@
       </div>
 
       <!-- Language multi-select dropdown -->
-      <div class="relative flex items-center gap-2 bg-gray-900 p-1 rounded-lg border border-gray-700">
-        <span class="pl-2 text-xs text-gray-500 uppercase font-bold whitespace-nowrap">Languages</span>
-        <button id="lang-dropdown-btn" type="button"
-          class="flex items-center gap-1 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none min-w-32 max-w-48 truncate text-left">
+      <div class="toolbar-group">
+        <span class="toolbar-label">Languages</span>
+        <button id="lang-dropdown-btn" type="button" class="dropdown-btn min-w-32 max-w-48">
           <span id="lang-dropdown-label" class="truncate flex-1">Loading...</span>
           <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
         </button>
         <span id="language-status" class="text-xs text-gray-500 min-w-12">Saved</span>
         <!-- Dropdown panel -->
-        <div id="lang-dropdown-panel"
-          class="hidden absolute left-0 top-full mt-1 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2 min-w-56"
-          style="top: calc(100% + 4px);">
-          <div id="lang-checkbox-list" class="flex flex-col gap-1 max-h-64 overflow-y-auto"></div>
-          <div class="border-t border-gray-700 mt-2 pt-2 flex gap-1">
-            <input id="lang-custom-input" type="text" placeholder="Custom (e.g. ja-JP)"
-              class="flex-1 bg-gray-900 border border-gray-600 text-xs text-gray-300 px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500 font-mono">
-            <button id="lang-custom-add-btn" type="button"
-              class="px-2 py-1 text-xs font-bold rounded bg-gray-700 text-gray-300 hover:bg-blue-700 hover:text-white transition-colors whitespace-nowrap">
+        <div id="lang-dropdown-panel" class="hidden dropdown-panel min-w-56" style="top: calc(100% + 4px);">
+          <div id="lang-checkbox-list" class="dropdown-list"></div>
+          <div class="dropdown-add-row">
+            <input id="lang-custom-input" type="text" placeholder="Custom (e.g. ja-JP)" class="panel-input font-mono">
+            <button id="lang-custom-add-btn" type="button" class="panel-add-btn">
               Add
             </button>
           </div>
@@ -110,15 +100,15 @@
       <div class="ml-auto flex items-center gap-2 pl-2">
         {% if email %}
         <span class="text-xs text-gray-400">Hi {{ email }}</span>
-        <a href="/logout" class="text-xs text-gray-400 hover:text-gray-200 border border-gray-700 px-2 py-1 rounded transition-colors">Logout</a>
+        <a href="/logout" class="nav-link">Logout</a>
         {% else %}
-        <a href="/login" class="text-xs text-gray-400 hover:text-gray-200 border border-gray-700 px-2 py-1 rounded transition-colors">Login</a>
+        <a href="/login" class="nav-link">Login</a>
         {% endif %}
       </div>
     </div>
     <div class="flex py-1">
       <span class="flex items-center gap-1 text-xs mx-auto">
-        <span id="status-indicator" class="inline-block w-3 h-3 rounded-full bg-gray-400"></span>
+        <span id="status-indicator" class="status-dot-md bg-gray-400"></span>
         <span id="status-text">Connecting...</span>
       </span>
     </div>

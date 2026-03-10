@@ -10,50 +10,29 @@
     </div>
 
     <!-- Step 1: Email input -->
-    <div id="step-email" class="bg-gray-800 border border-gray-700 rounded-xl p-6 flex flex-col gap-4">
+    <div id="step-email" class="auth-card">
       <label class="text-sm font-semibold text-gray-300" for="email-input">Email address</label>
-      <input
-        id="email-input"
-        type="email"
-        autocomplete="email"
-        placeholder="you@example.com"
-        class="bg-gray-900 border border-gray-600 text-gray-100 text-sm rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
-      />
+      <input id="email-input" type="email" autocomplete="email" placeholder="you@example.com"
+        class="auth-input placeholder-gray-600" />
       <div id="email-error" class="hidden text-xs text-red-400"></div>
-      <button
-        id="send-otp-btn"
-        class="mt-1 w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-semibold py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      >
+      <button id="send-otp-btn" class="auth-btn">
         Send code
       </button>
     </div>
 
     <!-- Step 2: OTP input (hidden initially) -->
-    <div id="step-otp" class="hidden bg-gray-800 border border-gray-700 rounded-xl p-6 flex flex-col gap-4">
+    <div id="step-otp" class="auth-card hidden">
       <div>
         <p class="text-sm font-semibold text-gray-300">Enter the 4-digit code</p>
         <p id="otp-hint" class="mt-1 text-xs text-gray-500"></p>
       </div>
-      <input
-        id="otp-input"
-        type="text"
-        inputmode="numeric"
-        pattern="[0-9]{4}"
-        maxlength="4"
-        placeholder="0000"
-        class="bg-gray-900 border border-gray-600 text-gray-100 text-2xl font-mono tracking-widest text-center rounded-lg px-3 py-3 outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-700"
-      />
+      <input id="otp-input" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="0000"
+        class="auth-input text-2xl font-mono tracking-widest text-center py-3 placeholder-gray-700" />
       <div id="otp-error" class="hidden text-xs text-red-400"></div>
-      <button
-        id="verify-otp-btn"
-        class="mt-1 w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white text-sm font-semibold py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      >
+      <button id="verify-otp-btn" class="auth-btn">
         Verify
       </button>
-      <button
-        id="back-btn"
-        class="text-xs text-gray-500 hover:text-gray-300 transition-colors text-center"
-      >
+      <button id="back-btn" class="text-xs text-gray-500 hover:text-gray-300 transition-colors text-center">
         Use a different email
       </button>
     </div>

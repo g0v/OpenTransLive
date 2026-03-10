@@ -3,6 +3,9 @@ const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
 let selectedDeviceId = null;
 let micDeviceSelector = null;
+let mediaStream = null;
+let audioContext = null;
+let audioProcessor = null;
 
 socket.on('connect', function () {
   // Show pending state — auth is not yet confirmed by the server
