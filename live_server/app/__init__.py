@@ -4,7 +4,6 @@
 # See LICENSE for details.
 
 import asyncio
-import hmac
 import json
 import re
 import uuid
@@ -32,7 +31,7 @@ try:
     from .config import EMAIL_SETTINGS
 except ImportError:
     EMAIL_SETTINGS = {}
-from .database import rooms_collection, transcription_store_collection, realtime_tokens_collection, users_collection, init_indexes
+from .database import rooms_collection, transcription_store_collection, users_collection, init_indexes
 from .logger_config import setup_logger, log_exception
 from .scribe_manager import ScribeSessionManager
 from .email_auth import (
@@ -184,38 +183,26 @@ async def is_realtime_authorized(session: dict, data: dict | None = None) -> boo
     """Check if the socket is authorized to use server-side realtime features.
 
     Returns True if:
-    1. The socket is an admin connection (global SECRET_KEY), OR
-    2. The user logged in via email and has realtime_enabled=True, OR
-    3. No tokens exist in DB (no restrictions configured), OR
-    4. A valid user_uid is found in data or session that matches a realtime token
+    1. The socket is a global admin connection, OR
+    2. The user logged in via email and has realtime_enabled=True
     """
     if session.get('admin'):
         return True
 
-    token = None
+    user_uid = None
     if data and isinstance(data, dict):
-        token = data.get('user_uid')
-    if not token:
-        token = session.get('user_uid')
-    if not token:
+        user_uid = data.get('user_uid')
+    if not user_uid:
+        user_uid = session.get('user_uid')
+    if not user_uid:
         return False
 
-    # Validate token to prevent NoSQL injection
-    is_valid, _ = validate_query_param(token, "user_uid")
+    is_valid, _ = validate_query_param(user_uid, "user_uid")
     if not is_valid:
         return False
 
-    # Check email-based user permission
-    user_doc = await users_collection.find_one({"user_uid": token})
-    if user_doc and user_doc.get("realtime_enabled"):
-        return True
-
-    # If no realtime tokens in DB, allow everyone with a user_uid (backward compat)
-    if await realtime_tokens_collection.count_documents({}, limit=1) == 0:
-        return True
-
-    doc = await realtime_tokens_collection.find_one({"token": token})
-    return doc is not None
+    user_doc = await users_collection.find_one({"user_uid": user_uid})
+    return bool(user_doc and user_doc.get("realtime_enabled"))
 
 
 async def verify_socket_auth(socket_id: str, session_id: str, secret_key: str) -> bool:
@@ -252,15 +239,6 @@ async def _ensure_socket_verified(socket_id, session, secret_key, session_id) ->
     return True
 
 
-def _verify_admin(request: Request):
-    """Verify admin via Authorization: Bearer {SECRET_KEY} header."""
-    auth_header = request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
-    provided = auth_header[7:]
-    if not hmac.compare_digest(provided, SETTINGS["SECRET_KEY"]):
-        raise HTTPException(status_code=403, detail="Invalid SECRET_KEY")
-
 
 async def _verify_session_admin(request: Request, sid: str):
     """Verify the request user is the admin of the given session. Returns the room doc."""
@@ -274,43 +252,6 @@ async def _verify_session_admin(request: Request, sid: str):
     if room.get("admin_uid") != user_uid or room.get("secret_key") != user_secret_key:
         raise HTTPException(status_code=403, detail="Forbidden")
     return room
-
-
-@app.get("/api/tokens", dependencies=[Depends(RateLimiter(times=20, seconds=60))])
-async def list_tokens(request: Request):
-    """List all realtime tokens (admin only)."""
-    _verify_admin(request)
-    docs = await realtime_tokens_collection.find({}, {"_id": 0}).to_list(length=1000)
-    return docs
-
-
-@app.post("/api/tokens", dependencies=[Depends(RateLimiter(times=20, seconds=60))])
-async def create_token(request: Request):
-    """Create a new realtime token (admin only)."""
-    _verify_admin(request)
-    body = await request.json() if request.headers.get("content-type") == "application/json" else {}
-    token = str(uuid.uuid4())
-    doc = {
-        "token": token,
-        "label": body.get("label", ""),
-        "created_at": datetime.now(timezone.utc),
-    }
-    await realtime_tokens_collection.insert_one(doc)
-    return {"token": token, "label": doc["label"], "created_at": doc["created_at"].isoformat()}
-
-
-@app.delete("/api/tokens/{token}", dependencies=[Depends(RateLimiter(times=20, seconds=60))])
-async def delete_token(request: Request, token: str):
-    """Revoke a realtime token (admin only)."""
-    _verify_admin(request)
-
-    # Sanitize token parameter to prevent NoSQL injection
-    token = sanitize_query_param(token, "token")
-
-    result = await realtime_tokens_collection.delete_one({"token": token})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Token not found")
-    return {"deleted": token}
 
 
 # ---------------------------------------------------------------------------
