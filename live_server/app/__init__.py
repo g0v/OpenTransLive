@@ -4,7 +4,6 @@
 # See LICENSE for details.
 
 import asyncio
-import hmac
 import json
 import re
 import uuid
@@ -18,7 +17,7 @@ import redis.asyncio as redis
 import socketio
 from cachetools import TTLCache
 from fastapi import FastAPI, Request, HTTPException, Depends
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi_limiter import FastAPILimiter
@@ -28,9 +27,21 @@ from starlette.middleware.sessions import SessionMiddleware
 dotenv.load_dotenv(override=True)
 
 from .config import SETTINGS, REDIS_URL
-from .database import rooms_collection, transcription_store_collection, realtime_tokens_collection, init_indexes
+try:
+    from .config import EMAIL_SETTINGS
+except ImportError:
+    EMAIL_SETTINGS = {}
+from .database import rooms_collection, transcription_store_collection, users_collection, init_indexes
 from .logger_config import setup_logger, log_exception
 from .scribe_manager import ScribeSessionManager
+from .email_auth import (
+    validate_email_format,
+    generate_otp,
+    store_otp,
+    verify_otp,
+    send_otp_email,
+    get_or_create_user,
+)
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -172,32 +183,26 @@ async def is_realtime_authorized(session: dict, data: dict | None = None) -> boo
     """Check if the socket is authorized to use server-side realtime features.
 
     Returns True if:
-    1. The socket is an admin connection (global SECRET_KEY), OR
-    2. No tokens exist in DB (no restrictions configured), OR
-    3. A valid user_uid is found in data or session that matches a token
+    1. The socket is a global admin connection, OR
+    2. The user logged in via email and has realtime_enabled=True
     """
     if session.get('admin'):
         return True
-        
-    token = None
+
+    user_uid = None
     if data and isinstance(data, dict):
-        token = data.get('user_uid')
-    if not token:
-        token = session.get('user_uid')
-    if not token:
+        user_uid = data.get('user_uid')
+    if not user_uid:
+        user_uid = session.get('user_uid')
+    if not user_uid:
         return False
 
-    # Validate token to prevent NoSQL injection
-    is_valid, _ = validate_query_param(token, "user_uid")
+    is_valid, _ = validate_query_param(user_uid, "user_uid")
     if not is_valid:
         return False
 
-    # If no tokens in DB, allow everyone with a token (backward compat)
-    if await realtime_tokens_collection.count_documents({}, limit=1) == 0:
-        return True
-
-    doc = await realtime_tokens_collection.find_one({"token": token})
-    return doc is not None
+    user_doc = await users_collection.find_one({"user_uid": user_uid})
+    return bool(user_doc and user_doc.get("realtime_enabled"))
 
 
 async def verify_socket_auth(socket_id: str, session_id: str, secret_key: str) -> bool:
@@ -234,15 +239,6 @@ async def _ensure_socket_verified(socket_id, session, secret_key, session_id) ->
     return True
 
 
-def _verify_admin(request: Request):
-    """Verify admin via Authorization: Bearer {SECRET_KEY} header."""
-    auth_header = request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
-    provided = auth_header[7:]
-    if not hmac.compare_digest(provided, SETTINGS["SECRET_KEY"]):
-        raise HTTPException(status_code=403, detail="Invalid SECRET_KEY")
-
 
 async def _verify_session_admin(request: Request, sid: str):
     """Verify the request user is the admin of the given session. Returns the room doc."""
@@ -258,41 +254,113 @@ async def _verify_session_admin(request: Request, sid: str):
     return room
 
 
-@app.get("/api/tokens", dependencies=[Depends(RateLimiter(times=20, seconds=60))])
-async def list_tokens(request: Request):
-    """List all realtime tokens (admin only)."""
-    _verify_admin(request)
-    docs = await realtime_tokens_collection.find({}, {"_id": 0}).to_list(length=1000)
-    return docs
+# ---------------------------------------------------------------------------
+# Email login routes
+# ---------------------------------------------------------------------------
+
+def _get_session_email(request: Request) -> str | None:
+    return request.session.get("email")
 
 
-@app.post("/api/tokens", dependencies=[Depends(RateLimiter(times=20, seconds=60))])
-async def create_token(request: Request):
-    """Create a new realtime token (admin only)."""
-    _verify_admin(request)
-    body = await request.json() if request.headers.get("content-type") == "application/json" else {}
-    token = str(uuid.uuid4())
-    doc = {
-        "token": token,
-        "label": body.get("label", ""),
-        "created_at": datetime.now(timezone.utc),
-    }
-    await realtime_tokens_collection.insert_one(doc)
-    return {"token": token, "label": doc["label"], "created_at": doc["created_at"].isoformat()}
+def _require_admin_email(request: Request):
+    email = _get_session_email(request)
+    if not email:
+        raise HTTPException(status_code=401, detail="Not logged in")
+    admin_emails = [e.lower() for e in EMAIL_SETTINGS.get("ADMIN_EMAILS", [])]
+    if email.lower() not in admin_emails:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return email
 
 
-@app.delete("/api/tokens/{token}", dependencies=[Depends(RateLimiter(times=20, seconds=60))])
-async def delete_token(request: Request, token: str):
-    """Revoke a realtime token (admin only)."""
-    _verify_admin(request)
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    email = _get_session_email(request)
+    if email:
+        admin_emails = [e.lower() for e in EMAIL_SETTINGS.get("ADMIN_EMAILS", [])]
+        target = "/dashboard" if email.lower() in admin_emails else "/"
+        return RedirectResponse(url=target, status_code=302)
+    return templates.TemplateResponse("login.html", {"request": request})
 
-    # Sanitize token parameter to prevent NoSQL injection
-    token = sanitize_query_param(token, "token")
 
-    result = await realtime_tokens_collection.delete_one({"token": token})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Token not found")
-    return {"deleted": token}
+@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=5, seconds=60))])
+async def send_otp(request: Request):
+    body = await request.json()
+    email = body.get("email", "").strip()
+    if not validate_email_format(email):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    otp = generate_otp()
+    await store_otp(redis_client, email, otp)
+    try:
+        await send_otp_email(email, otp, EMAIL_SETTINGS)
+    except Exception as e:
+        log_exception(logger, e, f"Failed to send OTP email to {email}")
+        raise HTTPException(status_code=500, detail="Failed to send email")
+    return {"status": "sent"}
+
+
+@app.post("/auth/verify-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60))])
+async def verify_otp_endpoint(request: Request):
+    body = await request.json()
+    email = body.get("email", "").strip()
+    otp = body.get("otp", "").strip()
+    if not validate_email_format(email):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    if not otp or not re.match(r'^\d{4}$', otp):
+        raise HTTPException(status_code=400, detail="Invalid OTP format")
+
+    if not await verify_otp(redis_client, email, otp):
+        raise HTTPException(status_code=401, detail="Invalid or expired code")
+
+    # Reuse existing user_uid from session or generate a new one
+    user_uid = request.session.get("user_uid") or str(uuid.uuid4())
+    await get_or_create_user(users_collection, email, user_uid)
+
+    request.session["email"] = email.lower()
+    request.session["user_uid"] = user_uid
+
+    admin_emails = [e.lower() for e in EMAIL_SETTINGS.get("ADMIN_EMAILS", [])]
+    is_admin = email.lower() in admin_emails
+    return {"status": "ok", "is_admin": is_admin, "redirect": "/dashboard" if is_admin else "/"}
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/login", status_code=302)
+
+
+@app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=30, seconds=60))])
+async def dashboard(request: Request):
+    _require_admin_email(request)
+    users = await users_collection.find({}, {"_id": 0}).to_list(length=1000)
+    # Convert datetimes to ISO strings for template rendering
+    for u in users:
+        if isinstance(u.get("created_at"), datetime):
+            u["created_at"] = u["created_at"].isoformat()
+        if isinstance(u.get("last_login_at"), datetime):
+            u["last_login_at"] = u["last_login_at"].isoformat()
+    return templates.TemplateResponse("dashboard.html", {"request": request, "users": users, "current_email": _get_session_email(request)})
+
+
+@app.post("/api/users/{email}/realtime", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
+async def set_user_realtime(request: Request, email: str):
+    """Toggle realtime_enabled for a user (admin only)."""
+    _require_admin_email(request)
+    if not validate_email_format(email):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    body = await request.json()
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail="'enabled' must be a boolean")
+    from pymongo import ReturnDocument
+    result = await users_collection.find_one_and_update(
+        {"email": email.lower()},
+        {"$set": {"realtime_enabled": enabled}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"email": result["email"], "realtime_enabled": result["realtime_enabled"]}
 
 
 @app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=30, seconds=60))])

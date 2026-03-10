@@ -18,4 +18,5 @@ dependencies = [
     "uvicorn>=0.40.0",
     "websockets>=15.0.1",
     "cachetools>=5.0.0",
+    "aiosmtplib>=3.0.0",
 ]
