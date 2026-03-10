@@ -2,7 +2,7 @@
 <div id="app-root" class="flex flex-col h-svh font-sans">
 
   <!-- Top Bar -->
-  <div id="top-bar" class="flex items-center gap-2 px-3 h-11 shrink-0 border-b top-bar">
+  <div id="top-bar" class="flex px-3 py-1 shrink-0 border-b top-bar">
 
     <!-- View select -->
     <div class="flex items-center gap-1.5 shrink-0">
@@ -11,71 +11,72 @@
         class="text-xs border rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 select-ctrl">
       </select>
     </div>
-
-    <div class="flex-1"></div>
-
-    <!-- Font size controls -->
-    <div class="flex items-center gap-1 shrink-0" title="Font size">
-      <button id="font-decrease" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold"
-        aria-label="Decrease font size">A-</button>
-      <button id="font-reset" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold"
-        aria-label="Reset font size">A</button>
-      <button id="font-increase" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold"
-        aria-label="Increase font size">A+</button>
-    </div>
-
-    <!-- Theme buttons -->
-    <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
-      <button id="theme-light" class="icon-btn theme-btn w-7 h-7 flex items-center justify-center rounded-md text-xs"
-        aria-label="Light theme" title="Light theme">
-        <iconify-icon icon="ph:sun" width="15" height="15"></iconify-icon>
-      </button>
-      <button id="theme-dark" class="icon-btn theme-btn w-7 h-7 flex items-center justify-center rounded-md text-xs"
-        aria-label="Dark theme" title="Dark theme">
-        <iconify-icon icon="ph:moon" width="15" height="15"></iconify-icon>
-      </button>
-      <button id="theme-hc" class="icon-btn theme-btn w-7 h-7 flex items-center justify-center rounded-md text-xs"
-        aria-label="High contrast theme" title="High contrast theme">
-        <iconify-icon icon="ph:circle-half" width="15" height="15"></iconify-icon>
-      </button>
-    </div>
-
-    <!-- Action buttons -->
-    <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
-      <!-- QR code button -->
-      <div id="qr-area" class="relative">
-        <button id="qr-btn" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md"
-          aria-label="Show QR code" title="Show QR code">
-          <iconify-icon icon="ph:qr-code" width="15" height="15"></iconify-icon>
-        </button>
-        <!-- QR popup -->
-        <div id="qr-popup"
-          class="hidden absolute right-0 top-9 z-50 p-3 rounded-xl shadow-xl border qr-popup-bg min-w-max">
-          <div class="text-xs font-semibold mb-2 opacity-70">Scan to open</div>
-          <img id="qr-img" class="w-40 h-40 rounded-lg" src="" alt="QR code" />
-          <div class="text-xs mt-2 opacity-50 text-center max-w-40 truncate" id="qr-url-text"></div>
-        </div>
+    <div class="flex flex-wrap gap-2 ms-auto items-center justify-end">
+      <!-- Font size controls -->
+      <div class="flex items-center gap-1 shrink-0" title="Font size">
+        <button id="font-decrease"
+          class="icon-btn w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold"
+          aria-label="Decrease font size"><iconify-icon icon="mdi:format-font-size-decrease" width="18"
+            height="18"></iconify-icon></button>
+        <button id="font-increase"
+          class="icon-btn w-7 h-7 flex items-center justify-center rounded-md text-sm font-bold"
+          aria-label="Increase font size"><iconify-icon icon="mdi:format-font-size-increase" width="18"
+            height="18"></iconify-icon></button>
       </div>
 
-      <!-- JSON download -->
-      <a href="/download/{{ id }}" target="_blank" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md"
-        aria-label="Download JSON" title="Download JSON">
-        <iconify-icon icon="ph:download-simple" width="15" height="15"></iconify-icon>
-      </a>
+      <!-- Theme buttons -->
+      <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
+        <button id="theme-light" class="icon-btn theme-btn w-7 h-7 flex items-center justify-center rounded-md text-xs"
+          aria-label="Light theme" title="Light theme">
+          <iconify-icon icon="ph:sun" width="15" height="15"></iconify-icon>
+        </button>
+        <button id="theme-dark" class="icon-btn theme-btn w-7 h-7 flex items-center justify-center rounded-md text-xs"
+          aria-label="Dark theme" title="Dark theme">
+          <iconify-icon icon="ph:moon" width="15" height="15"></iconify-icon>
+        </button>
+        <button id="theme-hc" class="icon-btn theme-btn w-7 h-7 flex items-center justify-center rounded-md text-xs"
+          aria-label="High contrast theme" title="High contrast theme">
+          <iconify-icon icon="ph:circle-half" width="15" height="15"></iconify-icon>
+        </button>
+      </div>
 
-      <!-- Info / help button -->
-      <button id="info-btn" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md"
-        aria-label="URL parameters help" title="URL parameters">
-        <iconify-icon icon="ph:info" width="15" height="15"></iconify-icon>
-      </button>
+      <!-- Action buttons -->
+      <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
+        <!-- QR code button -->
+        <div id="qr-area" class="relative">
+          <button id="qr-btn" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md"
+            aria-label="Show QR code" title="Show QR code">
+            <iconify-icon icon="ph:qr-code" width="15" height="15"></iconify-icon>
+          </button>
+          <!-- QR popup -->
+          <div id="qr-popup"
+            class="hidden absolute right-0 top-9 z-50 p-3 rounded-xl shadow-xl border qr-popup-bg min-w-max">
+            <div class="text-xs font-semibold mb-2 opacity-70">Scan to open</div>
+            <img id="qr-img" class="w-40 h-40 rounded-lg" src="" alt="QR code" />
+            <div class="text-xs mt-2 opacity-50 text-center max-w-40 truncate" id="qr-url-text"></div>
+          </div>
+        </div>
+
+        <!-- JSON download -->
+        <a href="/download/{{ id }}" target="_blank"
+          class="icon-btn w-7 h-7 flex items-center justify-center rounded-md" aria-label="Download JSON"
+          title="Download JSON">
+          <iconify-icon icon="ph:download-simple" width="15" height="15"></iconify-icon>
+        </a>
+
+        <!-- Info / help button -->
+        <button id="info-btn" class="icon-btn w-7 h-7 flex items-center justify-center rounded-md"
+          aria-label="URL parameters help" title="URL parameters">
+          <iconify-icon icon="ph:info" width="15" height="15"></iconify-icon>
+        </button>
+      </div>
+
+      <!-- Connection status -->
+      <div class="flex items-center gap-1.5 shrink-0 border-l pl-2 ml-1 border-divider text-xs">
+        <span id="status-indicator" class="inline-block w-2 h-2 rounded-full bg-gray-400"></span>
+        <span id="status-text" class="inline opacity-70">Connecting...</span>
+      </div>
     </div>
-
-    <!-- Connection status -->
-    <div class="flex items-center gap-1.5 shrink-0 border-l pl-2 ml-1 border-divider text-xs">
-      <span id="status-indicator" class="inline-block w-2 h-2 rounded-full bg-gray-400"></span>
-      <span id="status-text" class="hidden sm:inline opacity-70">Connecting...</span>
-    </div>
-
   </div>
 
   <!-- Single Language View -->
@@ -167,11 +168,11 @@
               data-value="grid">grid</button>
             <span class="text-xs opacity-40 self-center">or a language code:</span>
             <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="layout"
-              data-value="en">en</button>
+              data-value="en-US">en</button>
             <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="layout"
-              data-value="zh">zh</button>
+              data-value="zh-Hant-TW">zh</button>
             <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="layout"
-              data-value="ja">ja</button>
+              data-value="ja-JP">ja</button>
           </div>
         </div>
 
@@ -505,7 +506,7 @@
 
   document.getElementById('font-decrease').addEventListener('click', () => applyFontSize(currentFontSizeRem - FONT_STEP));
   document.getElementById('font-increase').addEventListener('click', () => applyFontSize(currentFontSizeRem + FONT_STEP));
-  document.getElementById('font-reset').addEventListener('click', () => applyFontSize(1.25));
+  // document.getElementById('font-reset').addEventListener('click', () => applyFontSize(1.25));
 
   // ------------------------------------------------------------------ //
   // Theme controls                                                      //
@@ -699,7 +700,7 @@
     const wrapper = dataContent.children[0];
     const committedText = (transcriptionsData.transcriptions || []).map(s => s.result.translated[selectedLanguage]).join('\n');
     const partialText = transcriptionsData.partial ? (committedText ? '\n' : '') + transcriptionsData.partial.result.translated[selectedLanguage] : '';
-    updateContent(wrapper, 'single:' + selectedLanguage, committedText, partialText, dataContent);
+    updateContent(wrapper, 'single:' + selectedLanguage, committedText, partialText, document.getElementById('single-view'));
   }
 
   function refreshGridView() {
@@ -856,8 +857,8 @@
     });
 
     window.addEventListener('load', function () {
-      populateCombinedSelect();
       const params = new URLSearchParams(window.location.search);
+      populateCombinedSelect();
 
       // font-size
       const fontSizeParam = params.get('font-size');
