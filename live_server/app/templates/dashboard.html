@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}OpenTransLive - Admin Dashboard{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-900 text-gray-100 font-sans">
+
+  <!-- Top bar -->
+  <header class="bg-gray-800 border-b border-gray-700 px-6 py-3 flex items-center justify-between">
+    <span class="font-bold text-gray-100 tracking-tight">Admin Dashboard</span>
+    <div class="flex items-center gap-4">
+      <span class="text-xs text-gray-500">{{ current_email }}</span>
+      <a href="/logout" class="text-xs text-gray-400 hover:text-gray-200 transition-colors border border-gray-600 rounded px-2 py-1">Logout</a>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto px-4 py-8">
+
+    <div class="mb-6">
+      <h2 class="text-lg font-semibold text-gray-100">Realtime Transcription Access</h2>
+      <p class="mt-1 text-sm text-gray-500">
+        Toggle realtime transcription permission for each user.
+        Users must log in via <a href="/login" class="underline text-gray-400 hover:text-gray-200">/login</a> before they appear here.
+      </p>
+    </div>
+
+    {% if users %}
+    <div class="bg-gray-800 border border-gray-700 rounded-xl overflow-hidden">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-gray-700 text-left text-xs text-gray-500 uppercase tracking-wider">
+            <th class="px-4 py-3 font-semibold">Email</th>
+            <th class="px-4 py-3 font-semibold">Last login</th>
+            <th class="px-4 py-3 font-semibold text-right">Realtime access</th>
+          </tr>
+        </thead>
+        <tbody id="user-table-body">
+          {% for user in users %}
+          <tr class="border-b border-gray-700 last:border-0" data-email="{{ user.email }}">
+            <td class="px-4 py-3 font-mono text-xs text-gray-200 break-all">{{ user.email }}</td>
+            <td class="px-4 py-3 text-xs text-gray-500">
+              {% if user.last_login_at %}
+                {{ user.last_login_at[:19].replace('T', ' ') }} UTC
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td class="px-4 py-3 text-right">
+              <button
+                class="realtime-toggle px-3 py-1 rounded text-xs font-semibold transition-colors {% if user.realtime_enabled %}bg-green-700 hover:bg-green-600 text-green-100{% else %}bg-gray-700 hover:bg-gray-600 text-gray-300{% endif %}"
+                data-email="{{ user.email }}"
+                data-enabled="{{ 'true' if user.realtime_enabled else 'false' }}"
+              >
+                {% if user.realtime_enabled %}Enabled{% else %}Disabled{% endif %}
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="bg-gray-800 border border-gray-700 rounded-xl px-6 py-10 text-center text-sm text-gray-500">
+      No users yet. Users appear here after logging in at <a href="/login" class="underline hover:text-gray-300">/login</a>.
+    </div>
+    {% endif %}
+
+    <div id="action-status" class="mt-4 text-xs text-gray-500 min-h-4"></div>
+  </main>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const statusEl = document.getElementById('action-status')
+
+  function setStatus(msg, isError) {
+    statusEl.textContent = msg
+    statusEl.style.color = isError ? '#f87171' : '#6b7280'
+  }
+
+  document.querySelectorAll('.realtime-toggle').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const email = btn.dataset.email
+      const currentEnabled = btn.dataset.enabled === 'true'
+      const newEnabled = !currentEnabled
+
+      btn.disabled = true
+      const prev = btn.textContent
+      btn.textContent = '...'
+
+      try {
+        const res = await fetch(`/api/users/${encodeURIComponent(email)}/realtime`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: newEnabled })
+        })
+        if (!res.ok) {
+          const data = await res.json()
+          setStatus(data.detail || 'Error updating user.', true)
+          btn.textContent = prev
+          return
+        }
+        const data = await res.json()
+        btn.dataset.enabled = data.realtime_enabled ? 'true' : 'false'
+        btn.textContent = data.realtime_enabled ? 'Enabled' : 'Disabled'
+        if (data.realtime_enabled) {
+          btn.className = 'realtime-toggle px-3 py-1 rounded text-xs font-semibold transition-colors bg-green-700 hover:bg-green-600 text-green-100'
+        } else {
+          btn.className = 'realtime-toggle px-3 py-1 rounded text-xs font-semibold transition-colors bg-gray-700 hover:bg-gray-600 text-gray-300'
+        }
+        setStatus(`Updated ${email}.`, false)
+      } catch (e) {
+        setStatus('Network error.', true)
+        btn.textContent = prev
+      } finally {
+        btn.disabled = false
+      }
+    })
+  })
+</script>
+{% endblock %}

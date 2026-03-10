@@ -18,7 +18,7 @@ import redis.asyncio as redis
 import socketio
 from cachetools import TTLCache
 from fastapi import FastAPI, Request, HTTPException, Depends
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi_limiter import FastAPILimiter
@@ -28,9 +28,21 @@ from starlette.middleware.sessions import SessionMiddleware
 dotenv.load_dotenv(override=True)
 
 from .config import SETTINGS, REDIS_URL
-from .database import rooms_collection, transcription_store_collection, realtime_tokens_collection, init_indexes
+try:
+    from .config import EMAIL_SETTINGS
+except ImportError:
+    EMAIL_SETTINGS = {}
+from .database import rooms_collection, transcription_store_collection, realtime_tokens_collection, users_collection, init_indexes
 from .logger_config import setup_logger, log_exception
 from .scribe_manager import ScribeSessionManager
+from .email_auth import (
+    validate_email_format,
+    generate_otp,
+    store_otp,
+    verify_otp,
+    send_otp_email,
+    get_or_create_user,
+)
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -173,12 +185,13 @@ async def is_realtime_authorized(session: dict, data: dict | None = None) -> boo
 
     Returns True if:
     1. The socket is an admin connection (global SECRET_KEY), OR
-    2. No tokens exist in DB (no restrictions configured), OR
-    3. A valid user_uid is found in data or session that matches a token
+    2. The user logged in via email and has realtime_enabled=True, OR
+    3. No tokens exist in DB (no restrictions configured), OR
+    4. A valid user_uid is found in data or session that matches a realtime token
     """
     if session.get('admin'):
         return True
-        
+
     token = None
     if data and isinstance(data, dict):
         token = data.get('user_uid')
@@ -192,7 +205,12 @@ async def is_realtime_authorized(session: dict, data: dict | None = None) -> boo
     if not is_valid:
         return False
 
-    # If no tokens in DB, allow everyone with a token (backward compat)
+    # Check email-based user permission
+    user_doc = await users_collection.find_one({"user_uid": token})
+    if user_doc and user_doc.get("realtime_enabled"):
+        return True
+
+    # If no realtime tokens in DB, allow everyone with a user_uid (backward compat)
     if await realtime_tokens_collection.count_documents({}, limit=1) == 0:
         return True
 
@@ -293,6 +311,115 @@ async def delete_token(request: Request, token: str):
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Token not found")
     return {"deleted": token}
+
+
+# ---------------------------------------------------------------------------
+# Email login routes
+# ---------------------------------------------------------------------------
+
+def _get_session_email(request: Request) -> str | None:
+    return request.session.get("email")
+
+
+def _require_admin_email(request: Request):
+    email = _get_session_email(request)
+    if not email:
+        raise HTTPException(status_code=401, detail="Not logged in")
+    admin_emails = [e.lower() for e in EMAIL_SETTINGS.get("ADMIN_EMAILS", [])]
+    if email.lower() not in admin_emails:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return email
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    email = _get_session_email(request)
+    if email:
+        admin_emails = [e.lower() for e in EMAIL_SETTINGS.get("ADMIN_EMAILS", [])]
+        target = "/dashboard" if email.lower() in admin_emails else "/"
+        return RedirectResponse(url=target, status_code=302)
+    return templates.TemplateResponse("login.html", {"request": request})
+
+
+@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=5, seconds=60))])
+async def send_otp(request: Request):
+    body = await request.json()
+    email = body.get("email", "").strip()
+    if not validate_email_format(email):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    otp = generate_otp()
+    await store_otp(redis_client, email, otp)
+    try:
+        await send_otp_email(email, otp, EMAIL_SETTINGS)
+    except Exception as e:
+        log_exception(logger, e, f"Failed to send OTP email to {email}")
+        raise HTTPException(status_code=500, detail="Failed to send email")
+    return {"status": "sent"}
+
+
+@app.post("/auth/verify-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60))])
+async def verify_otp_endpoint(request: Request):
+    body = await request.json()
+    email = body.get("email", "").strip()
+    otp = body.get("otp", "").strip()
+    if not validate_email_format(email):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    if not otp or not re.match(r'^\d{4}$', otp):
+        raise HTTPException(status_code=400, detail="Invalid OTP format")
+
+    if not await verify_otp(redis_client, email, otp):
+        raise HTTPException(status_code=401, detail="Invalid or expired code")
+
+    # Reuse existing user_uid from session or generate a new one
+    user_uid = request.session.get("user_uid") or str(uuid.uuid4())
+    await get_or_create_user(users_collection, email, user_uid)
+
+    request.session["email"] = email.lower()
+    request.session["user_uid"] = user_uid
+
+    admin_emails = [e.lower() for e in EMAIL_SETTINGS.get("ADMIN_EMAILS", [])]
+    is_admin = email.lower() in admin_emails
+    return {"status": "ok", "is_admin": is_admin, "redirect": "/dashboard" if is_admin else "/"}
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse(url="/login", status_code=302)
+
+
+@app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=30, seconds=60))])
+async def dashboard(request: Request):
+    _require_admin_email(request)
+    users = await users_collection.find({}, {"_id": 0}).to_list(length=1000)
+    # Convert datetimes to ISO strings for template rendering
+    for u in users:
+        if isinstance(u.get("created_at"), datetime):
+            u["created_at"] = u["created_at"].isoformat()
+        if isinstance(u.get("last_login_at"), datetime):
+            u["last_login_at"] = u["last_login_at"].isoformat()
+    return templates.TemplateResponse("dashboard.html", {"request": request, "users": users, "current_email": _get_session_email(request)})
+
+
+@app.post("/api/users/{email}/realtime", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
+async def set_user_realtime(request: Request, email: str):
+    """Toggle realtime_enabled for a user (admin only)."""
+    _require_admin_email(request)
+    if not validate_email_format(email):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    body = await request.json()
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail="'enabled' must be a boolean")
+    from pymongo import ReturnDocument
+    result = await users_collection.find_one_and_update(
+        {"email": email.lower()},
+        {"$set": {"realtime_enabled": enabled}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"email": result["email"], "realtime_enabled": result["realtime_enabled"]}
 
 
 @app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=30, seconds=60))])

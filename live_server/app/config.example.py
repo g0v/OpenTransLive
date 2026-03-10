@@ -3,6 +3,20 @@ SETTINGS = {
   "SECRET_KEY": "your-secret-key"
 }
 
+EMAIL_SETTINGS = {
+  # List of email addresses with admin dashboard access
+  "ADMIN_EMAILS": ["admin@example.com"],
+
+  # SMTP configuration for sending OTP emails
+  # Leave SMTP_HOST empty to disable email sending (OTP will be logged instead)
+  "SMTP_HOST": "",
+  "SMTP_PORT": 587,
+  "SMTP_USERNAME": "",
+  "SMTP_PASSWORD": "",
+  "SMTP_FROM": "noreply@example.com",
+  "SMTP_USE_TLS": True,
+}
+
 MONGODB_SETTINGS = {
     'db': 'opentranslive-db',
     'host': 'mongodb',
