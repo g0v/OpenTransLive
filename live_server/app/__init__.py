@@ -39,6 +39,8 @@ logger = setup_logger(__name__)
 
 active_scribe_managers = {}
 active_translation_managers = {}
+# Pending debounce tasks for partial transcription broadcasts, keyed by session_id.
+_partial_debounce_tasks: dict = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -863,19 +865,36 @@ async def _process_transcription_update(session_id, sync_data):
         # Save to MongoDB in background
         asyncio.create_task(save_segment_background(session_id, sync_data, meta["stream_start_time"]))
     
-    # Log the update
-    log_msg = f"sync {sync_data['start_time']}"
-    if "result" in sync_data and "corrected" in sync_data["result"]:
-        log_msg += f" {sync_data['result']['corrected']}"
-    print(log_msg, flush=True)
-    
-    # Include last_committed in the payload
+    # Build the broadcast payload
     payload = sync_data.copy()
     if last_committed:
         payload["last_committed"] = last_committed
-    
-    # Emit update to all clients in the session room
-    await sio.emit('transcription_update', payload, room=session_id)
+
+    is_partial = sync_data.get("partial", False) is True
+
+    async def _emit_now(p):
+        log_msg = f"sync {sync_data['start_time']}"
+        if "result" in sync_data and "corrected" in sync_data["result"]:
+            log_msg += f" {sync_data['result']['corrected']}"
+        print(log_msg, flush=True)
+        await sio.emit('transcription_update', p, room=session_id)
+
+    if is_partial:
+        # Cancel any pending broadcast for this session and schedule a fresh one
+        # after 75 ms so only the latest partial is sent when updates burst.
+        existing = _partial_debounce_tasks.get(session_id)
+        if existing and not existing.done():
+            existing.cancel()
+
+        async def _debounced(p):
+            await asyncio.sleep(0.075)
+            _partial_debounce_tasks.pop(session_id, None)
+            await _emit_now(p)
+
+        _partial_debounce_tasks[session_id] = asyncio.create_task(_debounced(payload))
+    else:
+        # Committed segments broadcast immediately without debounce
+        await _emit_now(payload)
     
 @sio.event
 async def sync(socket_id, data):
