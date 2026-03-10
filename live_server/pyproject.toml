@@ -1,7 +1,7 @@
 [project]
-name = "realtime-transcribe-server"
+name = "opentranslive-server"
 version = "0.1.0"
-description = "Add your description here"
+description = "A FastAPI-based web server that provides real-time transcription display, translation management, and WebSocket communication for the OpenTransLive system."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
