@@ -14,10 +14,24 @@
             <p class="text-xl md:text-2xl font-light max-w-3xl mx-auto mb-10 text-indigo-100 drop-shadow-sm">
                 An open-source, real-time voice transcription and translation system.
             </p>
-            <a href="#create-session"
-                class="inline-block bg-white text-indigo-600 font-bold py-3 px-8 rounded-full shadow-lg hover:bg-gray-100 transition duration-300 transform hover:-translate-y-1">
-                Start Now
-            </a>
+            <div class="flex items-center justify-center gap-4 flex-wrap">
+                <a href="#create-session"
+                    class="inline-block bg-white text-indigo-600 font-bold py-3 px-8 rounded-full shadow-lg hover:bg-gray-100 transition duration-300 transform hover:-translate-y-1">
+                    Start Now
+                </a>
+                {% if email %}
+                <span class="text-indigo-100 text-sm">Hi {{ email }}</span>
+                <a href="/logout"
+                    class="inline-block border border-white text-white font-bold py-3 px-8 rounded-full hover:bg-white hover:text-indigo-600 transition duration-300 transform hover:-translate-y-1">
+                    Logout
+                </a>
+                {% else %}
+                <a href="/login"
+                    class="inline-block border border-white text-white font-bold py-3 px-8 rounded-full hover:bg-white hover:text-indigo-600 transition duration-300 transform hover:-translate-y-1">
+                    Login
+                </a>
+                {% endif %}
+            </div>
         </div>
     </div>
 

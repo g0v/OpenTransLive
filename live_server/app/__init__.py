@@ -586,7 +586,7 @@ async def save_segment_background(sid, segment, stream_start_time):
 # FastAPI Routes
 @app.get("/", response_class=HTMLResponse)
 async def hello_world(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("index.html", {"request": request, "email": _get_session_email(request)})
 
 @app.get("/download/{id}", dependencies=[Depends(RateLimiter(times=60, seconds=60))])
 async def download(id: str):
@@ -723,7 +723,7 @@ async def panel(request: Request, sid: str):
 
     is_realtime_enabled = await is_realtime_authorized(request.session)
 
-    return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_uid": user_uid, "user_secret_key": user_secret_key, "is_realtime_enabled": is_realtime_enabled})
+    return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_uid": user_uid, "user_secret_key": user_secret_key, "is_realtime_enabled": is_realtime_enabled, "email": _get_session_email(request)})
 
 @app.post("/heartbeat/{sid}", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
 async def heartbeat(request: Request, sid: str):

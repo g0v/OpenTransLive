@@ -106,6 +106,15 @@
           </div>
         </div>
       </div>
+      <!-- Login status -->
+      <div class="ml-auto flex items-center gap-2 pl-2">
+        {% if email %}
+        <span class="text-xs text-gray-400">Hi {{ email }}</span>
+        <a href="/logout" class="text-xs text-gray-400 hover:text-gray-200 border border-gray-700 px-2 py-1 rounded transition-colors">Logout</a>
+        {% else %}
+        <a href="/login" class="text-xs text-gray-400 hover:text-gray-200 border border-gray-700 px-2 py-1 rounded transition-colors">Login</a>
+        {% endif %}
+      </div>
     </div>
     <div class="flex py-1">
       <span class="flex items-center gap-1 text-xs mx-auto">
