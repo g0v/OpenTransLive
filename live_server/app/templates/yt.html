@@ -1,53 +1,612 @@
 {% extends "base.html" %} {% block content %}
-<div class="h-svh flex flex-col">
-  <div id="player" class="w-full flex-1"></div>
-  <div class="h-fit">
-    <div id="data-display" class="p-2 bg-gray-100 w-full">
-      <pre id="data-content" class=" h-16 overflow-hidden break-all"></pre>
+<div id="app-root" class="flex flex-col h-svh font-sans">
+
+  <!-- Top Bar -->
+  <div id="top-bar" class="flex items-center gap-2 px-3 py-1 shrink-0 border-b top-bar flex-wrap">
+
+    <!-- Language select -->
+    <div class="flex items-center gap-1.5 shrink-0">
+      <span class="text-xs font-medium opacity-60 hidden sm:inline">Language</span>
+      <select id="language-select"
+        class="text-xs border rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 select-ctrl">
+      </select>
     </div>
-    <div class="flex items-center gap-2 p-1">
-      <span>Language</span>
-      <select id="language-select" class="inline-block border-2 border-dark rounded-md p-1"></select>
-      <span class="border-l pl-2 ml-2">Start Time:</span>
-      <span id="start-time">--:--:--</span>
-      <span class="border-l pl-2 ml-2">Offset(Secs):</span>
-      <input type="number" id="offset-seconds" class="rounded-md p-1 border-2 border-dark w-16" value="5" step="0.1" />
-      <div id="connection-status" class="text-sm ms-auto">
-        <span id="status-indicator" class="status-dot-md bg-gray-400"></span>
-        <span id="status-text">Connecting...</span>
+
+    <!-- Start time + offset -->
+    <div class="flex items-center gap-1.5 shrink-0 border-l pl-2 ml-1 border-divider text-xs">
+      <span class="opacity-60 hidden sm:inline">Start:</span>
+      <span id="start-time" class="font-mono opacity-80">--:--:--</span>
+      <span class="opacity-60 border-l pl-2 ml-1 border-divider hidden sm:inline">Offset:</span>
+      <input type="number" id="offset-seconds"
+        class="rounded-md px-1.5 py-0.5 border w-14 text-xs select-ctrl" value="5" step="0.1" />
+      <span class="opacity-40 hidden sm:inline">s</span>
+    </div>
+
+    <div class="flex flex-wrap gap-2 ms-auto items-center justify-end">
+      <!-- Font size controls -->
+      <div class="flex items-center gap-1 shrink-0" title="Font size">
+        <button id="font-decrease" class="icon-btn icon-btn-sm" aria-label="Decrease font size"><iconify-icon
+            icon="mdi:format-font-size-decrease" width="18" height="18"></iconify-icon></button>
+        <button id="font-increase" class="icon-btn icon-btn-sm" aria-label="Increase font size"><iconify-icon
+            icon="mdi:format-font-size-increase" width="18" height="18"></iconify-icon></button>
+      </div>
+
+      <!-- Theme buttons -->
+      <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
+        <button id="theme-light" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="Light theme"
+          title="Light theme">
+          <iconify-icon icon="ph:sun" width="15" height="15"></iconify-icon>
+        </button>
+        <button id="theme-dark" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="Dark theme"
+          title="Dark theme">
+          <iconify-icon icon="ph:moon" width="15" height="15"></iconify-icon>
+        </button>
+        <button id="theme-hc" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="High contrast theme"
+          title="High contrast theme">
+          <iconify-icon icon="ph:circle-half" width="15" height="15"></iconify-icon>
+        </button>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
+        <!-- QR code button -->
+        <div id="qr-area" class="relative">
+          <button id="qr-btn" class="icon-btn icon-btn-sm" aria-label="Show QR code" title="Show QR code">
+            <iconify-icon icon="ph:qr-code" width="15" height="15"></iconify-icon>
+          </button>
+          <!-- QR popup -->
+          <div id="qr-popup"
+            class="hidden absolute right-0 top-9 z-50 p-3 rounded-xl shadow-xl border qr-popup-bg min-w-max">
+            <div class="text-xs font-semibold mb-2 opacity-70">Scan to open</div>
+            <img id="qr-img" class="w-40 h-40 rounded-lg" src="" alt="QR code" />
+            <div class="text-xs mt-2 opacity-50 text-center max-w-40 truncate" id="qr-url-text"></div>
+          </div>
+        </div>
+
+        <!-- JSON download -->
+        <a href="/download/{{ id }}" target="_blank" class="icon-btn icon-btn-sm" aria-label="Download JSON"
+          title="Download JSON">
+          <iconify-icon icon="ph:download-simple" width="15" height="15"></iconify-icon>
+        </a>
+
+        <!-- Info / help button -->
+        <button id="info-btn" class="icon-btn icon-btn-sm" aria-label="URL parameters help" title="URL parameters">
+          <iconify-icon icon="ph:info" width="15" height="15"></iconify-icon>
+        </button>
+      </div>
+
+      <!-- Connection status -->
+      <div class="flex items-center gap-1.5 shrink-0 border-l pl-2 ml-1 border-divider text-xs">
+        <span id="status-indicator" class="status-dot-sm bg-gray-400"></span>
+        <span id="status-text" class="inline opacity-70">Connecting...</span>
       </div>
     </div>
-    <div></div>
   </div>
+
+  <!-- YouTube Player -->
+  <div id="player" class="w-full flex-1 min-h-0"></div>
+
+  <!-- Subtitle Area -->
+  <div id="subtitle-area" class="h-36 overflow-auto shrink-0 border-t subtitle-area">
+    <div id="data-content" class="p-3 break-all whitespace-pre-wrap yt-text leading-relaxed"></div>
+    <div id="partial-content" class="px-3 pb-2 break-all whitespace-pre-wrap yt-text leading-relaxed opacity-50 italic hidden"></div>
+  </div>
+
+  <!-- Info popup (modal overlay) -->
+  <div id="info-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="info-backdrop"></div>
+    <div class="relative z-10 rounded-2xl shadow-2xl border max-w-lg w-full mx-4 info-modal-bg overflow-hidden">
+      <!-- Header -->
+      <div class="flex items-center justify-between px-5 py-4 border-b border-divider">
+        <div>
+          <h2 class="text-base font-semibold">URL Parameters</h2>
+          <p class="text-xs opacity-50 mt-0.5">Customize the viewer by adding these parameters to the URL</p>
+        </div>
+        <button id="info-close" class="icon-btn icon-btn-md" aria-label="Close">
+          <iconify-icon icon="ph:x" width="16" height="16"></iconify-icon>
+        </button>
+      </div>
+
+      <!-- Body -->
+      <div class="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
+
+        <!-- font-size -->
+        <div>
+          <div class="param-header">
+            <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">font-size</code>
+            <span class="text-xs opacity-50">default: 1.25rem</span>
+          </div>
+          <p class="text-sm opacity-80 mb-2">Controls the subtitle text size. Accepts any CSS length value or a
+            bare number (treated as pixels).</p>
+          <div class="param-btn-row">
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
+              data-value="1rem">1rem</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
+              data-value="1.25rem">1.25rem</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
+              data-value="1.5rem">1.5rem</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
+              data-value="2rem">2rem</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
+              data-value="3rem">3rem</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
+              data-value="24px">24px</button>
+          </div>
+        </div>
+
+        <div class="border-t border-divider"></div>
+
+        <!-- theme -->
+        <div>
+          <div class="param-header">
+            <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">theme</code>
+            <span class="text-xs opacity-50">default: light</span>
+          </div>
+          <p class="text-sm opacity-80 mb-2">Sets the color scheme of the viewer.</p>
+          <div class="param-btn-row">
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="theme"
+              data-value="light">light</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="theme"
+              data-value="dark">dark</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="theme"
+              data-value="high-contrast">high-contrast</button>
+          </div>
+        </div>
+
+        <div class="border-t border-divider"></div>
+
+        <!-- current URL preview -->
+        <div>
+          <div class="text-xs font-semibold mb-1.5 opacity-60">Current URL</div>
+          <div class="copyable-row">
+            <code id="current-url-display"
+              class="text-xs font-mono break-all flex-1 px-2.5 py-2 rounded-lg param-code"></code>
+            <button id="copy-url-btn" class="icon-btn shrink-0 icon-btn-md" title="Copy URL">
+              <iconify-icon icon="ph:copy" width="15" height="15"></iconify-icon>
+            </button>
+          </div>
+          <div id="copy-feedback" class="hidden text-xs opacity-60 mt-1 text-right">Copied!</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
 </div>
+{% endblock %} {% block head %}
+<style>
+  /* ------------------------------------------------------------------ */
+  /* CSS custom properties — theme tokens                                */
+  /* ------------------------------------------------------------------ */
+  :root {
+    --yt-font-size: 1.25rem;
+    color-scheme: light;
+  }
+
+  .yt-text {
+    font-size: var(--yt-font-size);
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Light theme (default)                                               */
+  /* ------------------------------------------------------------------ */
+  #app-root {
+    background-color: #ffffff;
+    color: #111827;
+  }
+
+  .top-bar {
+    background-color: #f9fafb;
+    border-color: #e5e7eb;
+  }
+
+  .border-divider {
+    border-color: #e5e7eb;
+  }
+
+  .icon-btn {
+    color: #374151;
+    background-color: transparent;
+    transition: background-color 0.15s;
+  }
+
+  .icon-btn:hover {
+    background-color: #e5e7eb;
+  }
+
+  .icon-btn.active {
+    background-color: #dbeafe;
+    color: #1d4ed8;
+  }
+
+  .select-ctrl {
+    background-color: #ffffff;
+    color: #111827;
+    border-color: #d1d5db;
+  }
+
+  .qr-popup-bg {
+    background-color: #ffffff;
+    border-color: #e5e7eb;
+  }
+
+  .info-modal-bg {
+    background-color: #ffffff;
+    border-color: #e5e7eb;
+    color: #111827;
+  }
+
+  .param-code {
+    background-color: #f3f4f6;
+    color: #7c3aed;
+  }
+
+  .param-example-btn {
+    background-color: #f3f4f6;
+    color: #374151;
+    border: 1px solid #e5e7eb;
+    transition: background-color 0.12s;
+  }
+
+  .param-example-btn:hover {
+    background-color: #e5e7eb;
+  }
+
+  .param-example-btn.active-param {
+    background-color: #dbeafe;
+    color: #1d4ed8;
+    border-color: #93c5fd;
+  }
+
+  .subtitle-area {
+    border-color: #e5e7eb;
+    background-color: #f9fafb;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Dark theme                                                          */
+  /* ------------------------------------------------------------------ */
+  #app-root.theme-dark {
+    background-color: #0f172a;
+    color: #e2e8f0;
+    color-scheme: dark;
+  }
+
+  #app-root.theme-dark .top-bar {
+    background-color: #1e293b;
+    border-color: #334155;
+  }
+
+  #app-root.theme-dark .border-divider {
+    border-color: #334155;
+  }
+
+  #app-root.theme-dark .icon-btn {
+    color: #94a3b8;
+  }
+
+  #app-root.theme-dark .icon-btn:hover {
+    background-color: #334155;
+  }
+
+  #app-root.theme-dark .icon-btn.active {
+    background-color: #1e3a5f;
+    color: #60a5fa;
+  }
+
+  #app-root.theme-dark .select-ctrl {
+    background-color: #1e293b;
+    color: #e2e8f0;
+    border-color: #475569;
+  }
+
+  #app-root.theme-dark .qr-popup-bg {
+    background-color: #1e293b;
+    border-color: #334155;
+  }
+
+  #app-root.theme-dark .info-modal-bg {
+    background-color: #1e293b;
+    border-color: #334155;
+    color: #e2e8f0;
+  }
+
+  #app-root.theme-dark .param-code {
+    background-color: #0f172a;
+    color: #a78bfa;
+  }
+
+  #app-root.theme-dark .param-example-btn {
+    background-color: #1e293b;
+    color: #94a3b8;
+    border-color: #334155;
+  }
+
+  #app-root.theme-dark .param-example-btn:hover {
+    background-color: #334155;
+  }
+
+  #app-root.theme-dark .param-example-btn.active-param {
+    background-color: #1e3a5f;
+    color: #60a5fa;
+    border-color: #3b82f6;
+  }
+
+  #app-root.theme-dark .subtitle-area {
+    border-color: #334155;
+    background-color: #1e293b;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* High contrast theme                                                 */
+  /* ------------------------------------------------------------------ */
+  #app-root.theme-high-contrast {
+    background-color: #000000;
+    color: #ffffff;
+  }
+
+  #app-root.theme-high-contrast .top-bar {
+    background-color: #000000;
+    border-color: #ffff00;
+    border-bottom-width: 2px;
+  }
+
+  #app-root.theme-high-contrast .border-divider {
+    border-color: #444;
+  }
+
+  #app-root.theme-high-contrast .icon-btn {
+    color: #ffff00;
+  }
+
+  #app-root.theme-high-contrast .icon-btn:hover {
+    background-color: #222;
+  }
+
+  #app-root.theme-high-contrast .icon-btn.active {
+    background-color: #333;
+    color: #fff;
+  }
+
+  #app-root.theme-high-contrast .select-ctrl {
+    background-color: #000000;
+    color: #ffff00;
+    border-color: #ffff00;
+  }
+
+  #app-root.theme-high-contrast .qr-popup-bg {
+    background-color: #000000;
+    border-color: #ffff00;
+    border-width: 2px;
+  }
+
+  #app-root.theme-high-contrast .info-modal-bg {
+    background-color: #000000;
+    border-color: #ffff00;
+    border-width: 2px;
+    color: #ffffff;
+  }
+
+  #app-root.theme-high-contrast .param-code {
+    background-color: #111;
+    color: #ffff00;
+  }
+
+  #app-root.theme-high-contrast .param-example-btn {
+    background-color: #111;
+    color: #ffffff;
+    border-color: #555;
+  }
+
+  #app-root.theme-high-contrast .param-example-btn:hover {
+    background-color: #222;
+  }
+
+  #app-root.theme-high-contrast .param-example-btn.active-param {
+    background-color: #333;
+    color: #ffff00;
+    border-color: #ffff00;
+  }
+
+  #app-root.theme-high-contrast .subtitle-area {
+    border-color: #ffff00;
+    border-top-width: 2px;
+    background-color: #000000;
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Highlight animation                                                 */
+  /* ------------------------------------------------------------------ */
+  @keyframes new-text-highlight {
+
+    0%,
+    20% {
+      background-color: rgba(139, 92, 246, 0.25);
+    }
+
+    80%,
+    100% {
+      background-color: transparent;
+    }
+  }
+
+  .new-text {
+    animation: new-text-highlight 2s ease-out forwards;
+  }
+</style>
 {% endblock %} {% block scripts %}
 <script src="https://www.youtube.com/iframe_api"></script>
 <script>
   var player;
-  let currentLanguage = '';
   let transcriptionsData = {{ data | tojson(indent = 2) }};
-  let timeoutId = null;
-  let lastTranscription = null;
+  let lastSubtitle = null;
+  let currentTheme = 'light';
+  let currentFontSizeRem = 1.25;
+  const statusIndicator = document.getElementById('status-indicator');
+  const statusText = document.getElementById('status-text');
 
-  function getLanguages() {
-    if (transcriptionsData.transcriptions &&
-      transcriptionsData.transcriptions.length > 0 &&
-      transcriptionsData.transcriptions[0].result &&
-      transcriptionsData.transcriptions[0].result.translated) {
-      const languages = Object.keys(transcriptionsData.transcriptions[0].result.translated);
-      const languageSelect = document.getElementById('language-select');
-      languages.forEach(language => {
-        if (languageSelect.querySelector(`option[value="${language}"]`)) {
-          return;
-        }
-        const option = document.createElement('option');
-        option.value = language;
-        option.textContent = language;
-        languageSelect.appendChild(option);
-      });
+  // ------------------------------------------------------------------ //
+  // Font size controls                                                  //
+  // ------------------------------------------------------------------ //
+  const FONT_STEP = 0.125;
+  const FONT_MIN = 0.5;
+  const FONT_MAX = 5;
+
+  function applyFontSize(rem) {
+    currentFontSizeRem = Math.min(FONT_MAX, Math.max(FONT_MIN, rem));
+    document.documentElement.style.setProperty('--yt-font-size', currentFontSizeRem + 'rem');
+    updateUrlParam('font-size', currentFontSizeRem + 'rem');
+  }
+
+  document.getElementById('font-decrease').addEventListener('click', () => applyFontSize(currentFontSizeRem - FONT_STEP));
+  document.getElementById('font-increase').addEventListener('click', () => applyFontSize(currentFontSizeRem + FONT_STEP));
+
+  // ------------------------------------------------------------------ //
+  // Theme controls                                                      //
+  // ------------------------------------------------------------------ //
+  function applyTheme(theme) {
+    const appRoot = document.getElementById('app-root');
+    appRoot.classList.remove('theme-dark', 'theme-high-contrast');
+    if (theme === 'dark') appRoot.classList.add('theme-dark');
+    if (theme === 'high-contrast') appRoot.classList.add('theme-high-contrast');
+    currentTheme = theme;
+    document.querySelectorAll('.theme-btn').forEach(btn => btn.classList.remove('active'));
+    const map = { light: 'theme-light', dark: 'theme-dark', 'high-contrast': 'theme-hc' };
+    const activeBtn = document.getElementById(map[theme]);
+    if (activeBtn) activeBtn.classList.add('active');
+    updateUrlParam('theme', theme === 'light' ? null : theme);
+  }
+
+  document.getElementById('theme-light').addEventListener('click', () => applyTheme('light'));
+  document.getElementById('theme-dark').addEventListener('click', () => applyTheme('dark'));
+  document.getElementById('theme-hc').addEventListener('click', () => applyTheme('high-contrast'));
+
+  // ------------------------------------------------------------------ //
+  // URL param helpers                                                   //
+  // ------------------------------------------------------------------ //
+  function updateUrlParam(key, value) {
+    const url = new URL(window.location);
+    if (value === null || value === undefined) {
+      url.searchParams.delete(key);
+    } else {
+      url.searchParams.set(key, value);
+    }
+    window.history.replaceState({}, '', url);
+    updateCurrentUrlDisplay();
+  }
+
+  function updateCurrentUrlDisplay() {
+    const el = document.getElementById('current-url-display');
+    if (el) el.textContent = window.location.href;
+  }
+
+  // ------------------------------------------------------------------ //
+  // QR code popup                                                       //
+  // ------------------------------------------------------------------ //
+  const qrPopup = document.getElementById('qr-popup');
+  const qrBtn = document.getElementById('qr-btn');
+  let qrInitialized = false;
+
+  qrBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isHidden = qrPopup.classList.contains('hidden');
+    if (isHidden) {
+      if (!qrInitialized) {
+        document.getElementById('qr-img').src = `https://quickchart.io/qr?text=${encodeURIComponent(window.location.href)}`;
+        document.getElementById('qr-url-text').textContent = window.location.href;
+        qrInitialized = true;
+      }
+      qrPopup.classList.remove('hidden');
+    } else {
+      qrPopup.classList.add('hidden');
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!document.getElementById('qr-area').contains(e.target)) {
+      qrPopup.classList.add('hidden');
+    }
+  });
+
+  // ------------------------------------------------------------------ //
+  // Info modal                                                          //
+  // ------------------------------------------------------------------ //
+  const infoModal = document.getElementById('info-modal');
+
+  document.getElementById('info-btn').addEventListener('click', () => {
+    infoModal.classList.remove('hidden');
+    updateCurrentUrlDisplay();
+  });
+  document.getElementById('info-close').addEventListener('click', () => infoModal.classList.add('hidden'));
+  document.getElementById('info-backdrop').addEventListener('click', () => infoModal.classList.add('hidden'));
+
+  document.getElementById('copy-url-btn').addEventListener('click', () => {
+    navigator.clipboard.writeText(window.location.href).then(() => {
+      const fb = document.getElementById('copy-feedback');
+      fb.classList.remove('hidden');
+      setTimeout(() => fb.classList.add('hidden'), 1800);
+    });
+  });
+
+  document.querySelectorAll('.param-example-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const param = btn.dataset.param;
+      const value = btn.dataset.value;
+      if (param === 'font-size') {
+        const rem = parseFloat(value);
+        if (!isNaN(rem)) applyFontSize(rem); else applyFontSize(1.25);
+        document.querySelectorAll(`[data-param="font-size"]`).forEach(b => b.classList.remove('active-param'));
+        btn.classList.add('active-param');
+      } else if (param === 'theme') {
+        applyTheme(value);
+        document.querySelectorAll(`[data-param="theme"]`).forEach(b => b.classList.remove('active-param'));
+        btn.classList.add('active-param');
+      }
+      updateCurrentUrlDisplay();
+    });
+  });
+
+  // ------------------------------------------------------------------ //
+  // Language select                                                     //
+  // ------------------------------------------------------------------ //
+  function populateLanguageSelect() {
+    let languages = null;
+    if (transcriptionsData?.partial?.result?.translated) {
+      languages = Object.keys(transcriptionsData.partial.result.translated);
+    } else if (transcriptionsData?.transcriptions?.length > 0) {
+      const last = transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1];
+      languages = Object.keys(last?.result?.translated || {});
+    }
+    if (!languages || languages.length === 0) return;
+
+    const sel = document.getElementById('language-select');
+    const current = sel.value;
+    const existing = Array.from(sel.options).map(o => o.value);
+    if (languages.every(l => existing.includes(l)) && languages.length === existing.length) return;
+
+    sel.innerHTML = '';
+    languages.forEach(lang => {
+      const opt = document.createElement('option');
+      opt.value = lang;
+      opt.textContent = lang;
+      sel.appendChild(opt);
+    });
+    if (current && languages.includes(current)) {
+      sel.value = current;
     }
   }
 
+  document.getElementById('language-select').addEventListener('change', function () {
+    // Clear accumulated display when language changes
+    document.getElementById('data-content').innerHTML = '';
+    document.getElementById('partial-content').textContent = '';
+    document.getElementById('partial-content').classList.add('hidden');
+    lastSubtitle = null;
+  });
+
+  // ------------------------------------------------------------------ //
+  // YouTube Player                                                      //
+  // ------------------------------------------------------------------ //
   function onYouTubeIframeAPIReady() {
     player = new YT.Player('player', {
       height: '100%',
@@ -63,89 +622,151 @@
     event.target.playVideo();
   }
 
-  function getCurrentTime() {
+  // ------------------------------------------------------------------ //
+  // Subtitle display                                                    //
+  // ------------------------------------------------------------------ //
+  function appendSubtitle(text) {
     const dataContent = document.getElementById('data-content');
+    const span = document.createElement('span');
+    span.className = 'new-text block';
+    span.textContent = text;
+    span.addEventListener('animationend', () => span.classList.remove('new-text'));
+    dataContent.appendChild(span);
+    const subtitleArea = document.getElementById('subtitle-area');
+    subtitleArea.scrollTop = subtitleArea.scrollHeight;
+  }
+
+  function updateSubtitleDisplay() {
+    const dataContent = document.getElementById('data-content');
+    const partialEl = document.getElementById('partial-content');
     dataContent.scrollTop = dataContent.scrollHeight;
-    if (player && typeof player.getCurrentTime === 'function') {
-      const currentTime = player.getCurrentTime() + transcriptionsData.stream_start_time;
-      const videoStartDatetime = new Date(transcriptionsData.stream_start_time * 1000);
-      const startTime = document.getElementById('start-time');
-      startTime.textContent = videoStartDatetime.toLocaleString('zh-TW', { timeZoneName: 'short' });
-      console.log("currentTime", currentTime, "init time", transcriptionsData.stream_start_time);
-      getLanguages();
-      // Update the display
-      if (transcriptionsData?.transcriptions) {
-        const offsetSeconds = parseInt(document.getElementById('offset-seconds').value);
-        for (const transcription of transcriptionsData.transcriptions) {
-          const start_time = transcription.start_time + offsetSeconds;
-          const end_time = transcription.end_time + offsetSeconds;
-          if (start_time < currentTime && end_time > currentTime) {
-            if (lastTranscription && lastTranscription === start_time) {
-              break;
-            }
-            lastTranscription = start_time;
-            const currentLanguage = document.getElementById('language-select').value;
-            dataContent.textContent += '\n' + transcription.result.translated[currentLanguage];
-            if (timeoutId) {
-              clearTimeout(timeoutId);
-            }
-            timeoutId = setTimeout(() => {
-              dataContent.textContent += ' ';
-              timeoutId = null;
-            }, 3000);
-            break;
+
+    if (!player || typeof player.getCurrentTime !== 'function') return;
+
+    const currentTime = player.getCurrentTime() + transcriptionsData.stream_start_time;
+    const videoStartDatetime = new Date(transcriptionsData.stream_start_time * 1000);
+    document.getElementById('start-time').textContent = videoStartDatetime.toLocaleString('zh-TW', { timeZoneName: 'short' });
+
+    const offsetSeconds = parseFloat(document.getElementById('offset-seconds').value) || 5;
+    const selectedLanguage = document.getElementById('language-select').value;
+    if (!selectedLanguage) return;
+
+    // Match committed transcriptions to current video time
+    if (transcriptionsData.transcriptions) {
+      for (const transcription of transcriptionsData.transcriptions) {
+        const start = transcription.start_time + offsetSeconds;
+        const end = transcription.end_time + offsetSeconds;
+        if (start < currentTime && end > currentTime) {
+          if (lastSubtitle !== start) {
+            lastSubtitle = start;
+            const text = transcription.result?.translated?.[selectedLanguage];
+            if (text) appendSubtitle(text);
           }
+          break;
         }
       }
     }
+
+    // Show partial preview when video time has reached the partial's start
+    if (transcriptionsData.partial) {
+      const partialStart = transcriptionsData.partial.start_time + offsetSeconds;
+      if (partialStart < currentTime) {
+        const pText = transcriptionsData.partial.result?.translated?.[selectedLanguage] || '';
+        if (pText) {
+          partialEl.textContent = pText;
+          partialEl.classList.remove('hidden');
+        } else {
+          partialEl.classList.add('hidden');
+        }
+      } else {
+        partialEl.classList.add('hidden');
+      }
+    } else {
+      partialEl.textContent = '';
+      partialEl.classList.add('hidden');
+    }
   }
 
+  // ------------------------------------------------------------------ //
+  // Init                                                                //
+  // ------------------------------------------------------------------ //
   document.addEventListener('DOMContentLoaded', function () {
-    setInterval(getCurrentTime, 300);
-    const statusIndicator = document.getElementById('status-indicator');
-    const statusText = document.getElementById('status-text');
+    setInterval(updateSubtitleDisplay, 300);
 
-    // Connect to WebSocket
     const socket = io();
 
     socket.on('connect', function () {
-      statusIndicator.className = 'status-dot-md bg-green-500';
+      statusIndicator.className = 'status-dot-sm bg-emerald-500';
       statusText.textContent = 'Connected';
-      console.log('WebSocket connection opened');
-
-      // Join the session room
       socket.emit('join_session', { session_id: '{{ id }}' });
     });
 
     socket.on('disconnect', function () {
-      statusIndicator.className = 'status-dot-md bg-red-500';
+      statusIndicator.className = 'status-dot-sm bg-red-500';
       statusText.textContent = 'Disconnected';
-      console.log('WebSocket connection closed');
-    });
-
-    socket.on('connected', function (data) {
-      console.log('WebSocket connected:', data);
     });
 
     socket.on('joined_session', function (data) {
-      console.log('Joined session:', data);
-      statusText.textContent = 'Connected to session: ' + data.session_id;
+      statusText.textContent = 'Live';
     });
 
     socket.on('transcription_update', function (data) {
-      console.log('Transcription update received:', data);
-      if (data.partial) return; // Ignore partial updates
-      transcriptionsData["transcriptions"].push(data);
-      transcriptionsData["transcriptions"].sort((a, b) => a.start_time - b.start_time);
+      if (data.last_committed) {
+        const last_committed = data.last_committed;
+        const exists = transcriptionsData.transcriptions.some(t => t.start_time === last_committed.start_time);
+        if (!exists) {
+          transcriptionsData.transcriptions.push(last_committed);
+          transcriptionsData.transcriptions.sort((a, b) => a.start_time - b.start_time);
+        }
+      }
+      if (data.partial) {
+        transcriptionsData.partial = data;
+      } else {
+        transcriptionsData.partial = null;
+        const exists = transcriptionsData.transcriptions.some(t => t.start_time === data.start_time);
+        if (!exists) {
+          transcriptionsData.transcriptions.push(data);
+          transcriptionsData.transcriptions.sort((a, b) => a.start_time - b.start_time);
+        }
+      }
+      populateLanguageSelect();
     });
 
     socket.on('error', function (data) {
-      console.error('WebSocket error:', data);
-      statusIndicator.className = 'status-dot-md bg-red-500';
+      statusIndicator.className = 'status-dot-sm bg-red-500';
       statusText.textContent = 'Error: ' + data.message;
     });
 
-    // Cleanup on page unload
+    window.addEventListener('load', function () {
+      const params = new URLSearchParams(window.location.search);
+      populateLanguageSelect();
+
+      // font-size
+      const fontSizeParam = params.get('font-size');
+      if (fontSizeParam) {
+        const isBarePx = /^\d+(\.\d+)?$/.test(fontSizeParam);
+        const normalized = isBarePx ? fontSizeParam + 'px' : fontSizeParam;
+        const remMatch = normalized.match(/^([\d.]+)rem$/);
+        const pxMatch = normalized.match(/^([\d.]+)px$/);
+        if (remMatch) currentFontSizeRem = parseFloat(remMatch[1]);
+        else if (pxMatch) currentFontSizeRem = parseFloat(pxMatch[1]) / 16;
+        document.documentElement.style.setProperty('--yt-font-size', normalized);
+        document.querySelectorAll(`[data-param="font-size"]`).forEach(b => {
+          if (b.dataset.value === normalized || b.dataset.value === fontSizeParam) b.classList.add('active-param');
+        });
+      }
+
+      // theme
+      const themeParam = params.get('theme');
+      if (themeParam && ['dark', 'high-contrast'].includes(themeParam)) {
+        applyTheme(themeParam);
+      } else {
+        applyTheme('light');
+      }
+
+      updateCurrentUrlDisplay();
+    });
+
     window.addEventListener('beforeunload', function () {
       socket.disconnect();
     });
