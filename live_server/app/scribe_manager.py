@@ -5,6 +5,7 @@ import logging
 from urllib.parse import urlencode
 import httpx
 from websockets.asyncio.client import connect as ws_connect
+from websockets.exceptions import ConnectionClosedOK
 from datetime import datetime, timezone
 from .config import REALTIME_SETTINGS
 from .translator import get_async_client
@@ -88,7 +89,7 @@ class ScribeSessionManager:
                     await self.handle_transcript(data)
                 elif msg_type in ["error", "auth_error", "quota_exceeded_error"]:
                     logger.error(f"Scribe Error: {data.get('error')}")
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, ConnectionClosedOK):
             pass
         except Exception as e:
             log_exception(logger, e, "Error in receive_messages_loop")

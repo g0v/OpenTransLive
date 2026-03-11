@@ -266,12 +266,12 @@ def _require_admin_email(request: Request):
     return email
 
 
-def _require_logged_in(request: Request) -> tuple[str, str]:
+def _require_logged_in(request: Request) -> tuple[str | None, str | None]:
     """Require the user to be logged in. Returns (email, user_uid)."""
     email = _get_session_email(request)
     user_uid = request.session.get("user_uid")
     if not email or not user_uid:
-        raise HTTPException(status_code=401, detail="Not logged in")
+        return None, None
     return email, user_uid
 
 
@@ -346,6 +346,8 @@ async def dashboard(request: Request):
 @app.get("/user-dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=30, seconds=60))])
 async def user_dashboard(request: Request):
     email, user_uid = _require_logged_in(request)
+    if not email or not user_uid:
+        return RedirectResponse(url="/login", status_code=302)
     rooms = await rooms_collection.find(
         {"admin_uid": user_uid},
         {"_id": 0, "sid": 1, "created_at": 1, "admin_last_heartbeat": 1}
@@ -688,7 +690,7 @@ async def panel(request: Request, sid: str):
             if prev_user_doc and prev_user_doc.get("email"):
                 current_email = _get_session_email(request)
                 if not current_email or current_email.lower() != prev_user_doc["email"].lower():
-                    raise HTTPException(status_code=403, detail="Session admin is already connected")
+                    raise HTTPException(status_code=403, detail="Session admin is already connected, please try another room.")
             await rooms_collection.update_one(
                 {"sid": sid},
                 {"$set": {"secret_key": None, "admin_uid": None, "admin_last_heartbeat": None, "updated_at": now}}
@@ -697,7 +699,7 @@ async def panel(request: Request, sid: str):
         else:
             # Active admin: verify caller owns the session
             if request.session.get("secret_key") != admin_key:
-                raise HTTPException(status_code=403, detail="Session admin is already connected")
+                raise HTTPException(status_code=403, detail="Session admin is already connected, only one admin is allowed.")
             await rooms_collection.update_one(
                 {"sid": sid},
                 {"$set": {"admin_last_heartbeat": now, "updated_at": now}}
