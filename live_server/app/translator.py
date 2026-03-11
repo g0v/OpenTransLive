@@ -250,8 +250,8 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
                 {"role": "developer",
                  "content": f"""This is a transcription about:\n{keywords_str}\n\n
                  - Rewrite the text **only in <translate_this>** into {language}, the sentence might not ended yet.\n
-                 - Add punctuation marks.\n
-                 - Remove any repetitive phrases or redundant text.\n
+                 - Do your best to keep original meaning and grammar.\n
+                 - Remove any redundant text, add punctuation marks.\n
                  - Return only the translated text, no any comment.\n
                  {prev_translation}"""},
                 {"role": "user", "content": f"{(' '.join(context['translated'][language]))[-50:]}\n<translate_this>\n{result['corrected']}\n</translate_this>"}
