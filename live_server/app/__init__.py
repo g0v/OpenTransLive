@@ -357,10 +357,12 @@ async def user_dashboard(request: Request):
             r["created_at"] = r["created_at"].isoformat()
         if isinstance(r.get("admin_last_heartbeat"), datetime):
             r["admin_last_heartbeat"] = r["admin_last_heartbeat"].isoformat()
+    is_realtime_enabled = await is_realtime_authorized(request.session)
     return templates.TemplateResponse("user_dashboard.html", {
         "request": request,
         "rooms": rooms,
         "current_email": email,
+        "is_realtime_enabled": is_realtime_enabled,
     })
 
 

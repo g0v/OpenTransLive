@@ -13,6 +13,12 @@
     </div>
   </header>
 
+  {% if not is_realtime_enabled %}
+  <div class="bg-amber-950 border-b border-amber-800 px-6 py-3 text-sm text-amber-300">
+    Your account does not have realtime transcription access. To use the microphone in a panel session, contact an administrator to enable it.
+  </div>
+  {% endif %}
+
   <main class="max-w-4xl mx-auto px-4 py-8">
 
     <div class="mb-6 flex items-center justify-between">
