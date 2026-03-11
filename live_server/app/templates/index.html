@@ -84,6 +84,11 @@
                     <li class="px-5 py-3">Watch live transcriptions</li>
                     <li class="px-5 py-3">Download session transcripts</li>
                     <li class="px-5 py-3">Theme and display controls</li>
+                    <li class="px-5 py-3">
+                        Control a session as panel admin
+                        <p class="text-xs text-amber-600 mt-1">Without login, the admin role is unprotected and can be claimed by anyone once the 30-second heartbeat expires.</p>
+                    </li>
+                    <li class="px-5 py-3">Configure keywords and languages</li>
                 </ul>
             </div>
             <div class="bg-white rounded-xl shadow-lg overflow-hidden">
@@ -92,9 +97,7 @@
                 </div>
                 <p class="px-5 pt-3 text-xs text-gray-400 uppercase tracking-wider font-semibold">Everything above, plus:</p>
                 <ul class="divide-y divide-gray-100 text-sm text-gray-700">
-                    <li class="px-5 py-3">Manage a session as panel admin</li>
                     <li class="px-5 py-3">My Sessions dashboard</li>
-                    <li class="px-5 py-3">Configure keywords and languages</li>
                 </ul>
             </div>
             <div class="bg-white rounded-xl shadow-lg overflow-hidden">
@@ -148,19 +151,22 @@
                             Session Management</td>
                     </tr>
                     <tr class="hover:bg-gray-50 transition-colors">
-                        <td class="px-6 py-4 text-gray-700">Manage a session as panel admin</td>
-                        <td class="px-6 py-4 text-center text-gray-400">No</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                    </tr>
-                    <tr class="hover:bg-gray-50 transition-colors">
-                        <td class="px-6 py-4 text-gray-700">My Sessions dashboard</td>
-                        <td class="px-6 py-4 text-center text-gray-400">No</td>
+                        <td class="px-6 py-4 text-gray-700">Control a session as panel admin</td>
+                        <td class="px-6 py-4 text-center">
+                            <span class="text-green-600 font-bold">Yes</span>
+                            <p class="text-xs text-amber-600 mt-1">Admin role unprotected; can be claimed by anyone after the 30-second heartbeat expires.</p>
+                        </td>
                         <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
                         <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
                     </tr>
                     <tr class="hover:bg-gray-50 transition-colors">
                         <td class="px-6 py-4 text-gray-700">Configure keywords and languages</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                    </tr>
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="px-6 py-4 text-gray-700">My Sessions dashboard</td>
                         <td class="px-6 py-4 text-center text-gray-400">No</td>
                         <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
                         <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
