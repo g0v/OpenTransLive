@@ -239,7 +239,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         if cached_data.get("partial") is True:
             pt_trans = cached_data["partial"].get("result", {}).get("translated", {}).get(language, "")
             if pt_trans:
-                pt_trans = pt_trans[-100:]
+                pt_trans = pt_trans[-50:]
                 prev_translation = f"<prev_translation>\n{pt_trans}......\n</prev_translation>\n"
 
         json_body = {
@@ -248,7 +248,12 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
             "reasoning_effort": "minimal",
             "messages": [
                 {"role": "developer",
-                 "content": f"This is a transcription about:\n{keywords_str}\n\nRewrite the text **only in <translate_this>** into {language}, the sentence might not ended yet.\n Add punctuation marks. \nReturn only the translated text, no any comment.\n{prev_translation}"},
+                 "content": f"""This is a transcription about:\n{keywords_str}\n\n
+                 - Rewrite the text **only in <translate_this>** into {language}, the sentence might not ended yet.\n
+                 - Add punctuation marks.\n
+                 - Remove any repetitive phrases or redundant text.\n
+                 - Return only the translated text, no any comment.\n
+                 {prev_translation}"""},
                 {"role": "user", "content": f"{(' '.join(context['translated'][language]))[-50:]}\n<translate_this>\n{result['corrected']}\n</translate_this>"}
             ]
         }
