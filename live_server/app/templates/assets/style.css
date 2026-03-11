@@ -78,7 +78,7 @@
 
   /* ── Dropdown panel (floating list) ─────────────────────────────────── */
   .dropdown-panel {
-    @apply absolute left-0 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2;
+    @apply absolute right-0 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2;
   }
 
   /* ── Scrollable dropdown list ────────────────────────────────────────── */
