@@ -68,6 +68,127 @@
         </div>
     </div>
 
+    <!-- Access Levels Comparison -->
+    <div class="container mx-auto px-6 py-20">
+        <h2 class="text-3xl font-bold text-center mb-4 text-gray-800">Access Levels</h2>
+        <p class="text-center text-gray-500 mb-12 max-w-2xl mx-auto">Different features are available depending on
+            whether you are logged in and whether your account has realtime transcription enabled.</p>
+
+        <!-- Mobile layout: stacked cards (hidden on md+) -->
+        <div class="md:hidden space-y-4">
+            <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+                <div class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 px-5 py-3">
+                    <h3 class="text-white font-semibold">Not logged in</h3>
+                </div>
+                <ul class="divide-y divide-gray-100 text-sm text-gray-700">
+                    <li class="px-5 py-3">Watch live transcriptions</li>
+                    <li class="px-5 py-3">Download session transcripts</li>
+                    <li class="px-5 py-3">Theme and display controls</li>
+                </ul>
+            </div>
+            <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+                <div class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 px-5 py-3">
+                    <h3 class="text-white font-semibold">Logged in</h3>
+                </div>
+                <p class="px-5 pt-3 text-xs text-gray-400 uppercase tracking-wider font-semibold">Everything above, plus:</p>
+                <ul class="divide-y divide-gray-100 text-sm text-gray-700">
+                    <li class="px-5 py-3">Manage a session as panel admin</li>
+                    <li class="px-5 py-3">My Sessions dashboard</li>
+                    <li class="px-5 py-3">Configure keywords and languages</li>
+                </ul>
+            </div>
+            <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+                <div class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 px-5 py-3">
+                    <h3 class="text-white font-semibold">Logged in + Realtime</h3>
+                </div>
+                <p class="px-5 pt-3 text-xs text-gray-400 uppercase tracking-wider font-semibold">Everything above, plus:</p>
+                <ul class="divide-y divide-gray-100 text-sm text-gray-700">
+                    <li class="px-5 py-3">Use microphone for live transcription</li>
+                    <li class="px-5 py-3">Stream audio for server-side processing</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Desktop layout: table (hidden below md) -->
+        <div class="hidden md:block overflow-x-auto rounded-xl shadow-xl">
+            <table class="w-full text-sm text-left bg-white">
+                <thead>
+                    <tr class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white">
+                        <th class="px-6 py-4 font-semibold text-base w-1/2">Feature</th>
+                        <th class="px-6 py-4 font-semibold text-base text-center">Not logged in</th>
+                        <th class="px-6 py-4 font-semibold text-base text-center">Logged in</th>
+                        <th class="px-6 py-4 font-semibold text-base text-center">Logged in + Realtime</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    <tr class="bg-gray-50">
+                        <td colspan="4" class="px-6 py-3 text-xs font-bold uppercase tracking-wider text-gray-500">
+                            Viewing</td>
+                    </tr>
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="px-6 py-4 text-gray-700">Watch live transcriptions</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                    </tr>
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="px-6 py-4 text-gray-700">Download session transcripts</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                    </tr>
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="px-6 py-4 text-gray-700">Theme and display controls</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                    </tr>
+                    <tr class="bg-gray-50">
+                        <td colspan="4" class="px-6 py-3 text-xs font-bold uppercase tracking-wider text-gray-500">
+                            Session Management</td>
+                    </tr>
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="px-6 py-4 text-gray-700">Manage a session as panel admin</td>
+                        <td class="px-6 py-4 text-center text-gray-400">No</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                    </tr>
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="px-6 py-4 text-gray-700">My Sessions dashboard</td>
+                        <td class="px-6 py-4 text-center text-gray-400">No</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                    </tr>
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="px-6 py-4 text-gray-700">Configure keywords and languages</td>
+                        <td class="px-6 py-4 text-center text-gray-400">No</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                    </tr>
+                    <tr class="bg-gray-50">
+                        <td colspan="4" class="px-6 py-3 text-xs font-bold uppercase tracking-wider text-gray-500">
+                            Realtime Transcription</td>
+                    </tr>
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="px-6 py-4 text-gray-700">Use microphone for live transcription</td>
+                        <td class="px-6 py-4 text-center text-gray-400">No</td>
+                        <td class="px-6 py-4 text-center text-gray-400">No</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                    </tr>
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="px-6 py-4 text-gray-700">Stream audio for server-side processing</td>
+                        <td class="px-6 py-4 text-center text-gray-400">No</td>
+                        <td class="px-6 py-4 text-center text-gray-400">No</td>
+                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p class="text-center text-gray-400 text-xs mt-4">Realtime transcription access is granted by an administrator.
+            <a href="/login" class="text-indigo-500 hover:underline">Log in</a> to request access.</p>
+    </div>
+
     <!-- Create Session Section -->
     <div id="create-session" class="bg-gray-100 py-20">
         <div class="container mx-auto px-6">
