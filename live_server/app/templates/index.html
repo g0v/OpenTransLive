@@ -86,7 +86,8 @@
                     <li class="px-5 py-3">Theme and display controls</li>
                     <li class="px-5 py-3">
                         Control a session as panel admin
-                        <p class="text-xs text-amber-600 mt-1">Without login, the admin role is unprotected and can be claimed by anyone once the 30-second heartbeat expires.</p>
+                        <p class="text-xs text-amber-600 mt-1">Without login, the admin role is unprotected and can be
+                            claimed by anyone once the 30-second heartbeat expires.</p>
                     </li>
                     <li class="px-5 py-3">Configure keywords and languages</li>
                 </ul>
@@ -95,7 +96,8 @@
                 <div class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 px-5 py-3">
                     <h3 class="text-white font-semibold">Logged in</h3>
                 </div>
-                <p class="px-5 pt-3 text-xs text-gray-400 uppercase tracking-wider font-semibold">Everything above, plus:</p>
+                <p class="px-5 pt-3 text-xs text-gray-400 uppercase tracking-wider font-semibold">Everything above,
+                    plus:</p>
                 <ul class="divide-y divide-gray-100 text-sm text-gray-700">
                     <li class="px-5 py-3">My Sessions dashboard</li>
                 </ul>
@@ -104,7 +106,8 @@
                 <div class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 px-5 py-3">
                     <h3 class="text-white font-semibold">Logged in + Realtime</h3>
                 </div>
-                <p class="px-5 pt-3 text-xs text-gray-400 uppercase tracking-wider font-semibold">Everything above, plus:</p>
+                <p class="px-5 pt-3 text-xs text-gray-400 uppercase tracking-wider font-semibold">Everything above,
+                    plus:</p>
                 <ul class="divide-y divide-gray-100 text-sm text-gray-700">
                     <li class="px-5 py-3">Use microphone for live transcription</li>
                     <li class="px-5 py-3">Stream audio for server-side processing</li>
@@ -153,15 +156,16 @@
                     <tr class="hover:bg-gray-50 transition-colors">
                         <td class="px-6 py-4 text-gray-700">Control a session as panel admin</td>
                         <td class="px-6 py-4 text-center">
-                            <span class="text-green-600 font-bold">Yes</span>
-                            <p class="text-xs text-amber-600 mt-1">Admin role unprotected; can be claimed by anyone after the 30-second heartbeat expires.</p>
+                            <div class="text-green-600 font-bold">Yes <span class="text-red-500">*</span></div>
                         </td>
                         <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
                         <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
                     </tr>
                     <tr class="hover:bg-gray-50 transition-colors">
                         <td class="px-6 py-4 text-gray-700">Configure keywords and languages</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
+                        <td class="px-6 py-4 text-center">
+                            <div class="text-green-600 font-bold">Yes <span class="text-red-500">*</span></div>
+                        </td>
                         <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
                         <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
                     </tr>
@@ -190,9 +194,14 @@
                 </tbody>
             </table>
         </div>
-
-        <p class="text-center text-gray-400 text-xs mt-4">Realtime transcription access is granted by an administrator.
-            <a href="/login" class="text-indigo-500 hover:underline">Log in</a> to request access.</p>
+        <div class="text-center text-xs text-gray-400">
+            <p class="mt-4"><span class="text-red-500">* </span>If not logged in, admin role is unprotected, can be
+                claimed by anyone after the 30-second heartbeat expires.</p>
+            <p class="mt-1">Realtime transcription access is granted by an
+                administrator.
+                <a href="/login" class="text-indigo-500 hover:underline">Log in</a> to request access.
+            </p>
+        </div>
     </div>
 
     <!-- Create Session Section -->
