@@ -18,17 +18,7 @@
         </div>
       </div>
       <div class="toolbar-group">
-        <span class="toolbar-label">USER ID</span>
-        <div class="relative group">
-          <input id="user-uid-display" type="text" value="{{ user_uid }}"
-            class="copyable-input w-full max-w-32 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
-            readonly title="{{ user_uid }}">
-          <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-            <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
-          </div>
-        </div>
-        <div class="w-px h-4 bg-gray-700 mx-1"></div>
-        <span class="toolbar-label pl-0">KEY</span>
+        <span class="toolbar-label">KEY</span>
         <div class="relative group">
           <input id="user-secret-key" type="text" value="{{ user_secret_key }}"
             class="copyable-input w-full max-w-32 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
@@ -196,13 +186,7 @@
 <script>
   const sid = "{{ sid }}"
   const sessionId = "{{ sid }}"
-  const user_uid = "{{ user_uid }}"
   const user_secret_key = "{{ user_secret_key }}"
-
-  // Sync user_uid with localStorage for persistence across sessions
-  if (user_uid) {
-    localStorage.setItem('user_uid', user_uid)
-  }
 
   // ── Mic toggle ───────────────────────────────────────────────────────────
 
