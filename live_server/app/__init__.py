@@ -272,12 +272,21 @@ def _require_admin_email(request: Request):
     return email
 
 
+def _require_logged_in(request: Request) -> tuple[str, str]:
+    """Require the user to be logged in. Returns (email, user_uid)."""
+    email = _get_session_email(request)
+    user_uid = request.session.get("user_uid")
+    if not email or not user_uid:
+        raise HTTPException(status_code=401, detail="Not logged in")
+    return email, user_uid
+
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     email = _get_session_email(request)
     if email:
         admin_emails = [e.lower() for e in EMAIL_SETTINGS.get("ADMIN_EMAILS", [])]
-        target = "/dashboard" if email.lower() in admin_emails else "/"
+        target = "/dashboard" if email.lower() in admin_emails else "/user-dashboard"
         return RedirectResponse(url=target, status_code=302)
     return templates.TemplateResponse("login.html", {"request": request})
 
@@ -320,7 +329,7 @@ async def verify_otp_endpoint(request: Request):
 
     admin_emails = [e.lower() for e in EMAIL_SETTINGS.get("ADMIN_EMAILS", [])]
     is_admin = email.lower() in admin_emails
-    return {"status": "ok", "is_admin": is_admin, "redirect": "/dashboard" if is_admin else "/"}
+    return {"status": "ok", "is_admin": is_admin, "redirect": "/dashboard" if is_admin else "/user-dashboard"}
 
 
 @app.get("/logout")
@@ -340,6 +349,25 @@ async def dashboard(request: Request):
         if isinstance(u.get("last_login_at"), datetime):
             u["last_login_at"] = u["last_login_at"].isoformat()
     return templates.TemplateResponse("dashboard.html", {"request": request, "users": users, "current_email": _get_session_email(request)})
+
+
+@app.get("/user-dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=30, seconds=60))])
+async def user_dashboard(request: Request):
+    email, user_uid = _require_logged_in(request)
+    rooms = await rooms_collection.find(
+        {"admin_uid": user_uid},
+        {"_id": 0, "sid": 1, "created_at": 1, "admin_last_heartbeat": 1}
+    ).sort("created_at", -1).to_list(length=200)
+    for r in rooms:
+        if isinstance(r.get("created_at"), datetime):
+            r["created_at"] = r["created_at"].isoformat()
+        if isinstance(r.get("admin_last_heartbeat"), datetime):
+            r["admin_last_heartbeat"] = r["admin_last_heartbeat"].isoformat()
+    return templates.TemplateResponse("user_dashboard.html", {
+        "request": request,
+        "rooms": rooms,
+        "current_email": email,
+    })
 
 
 @app.post("/api/users/{email}/realtime", dependencies=[Depends(RateLimiter(times=30, seconds=60))])

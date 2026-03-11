@@ -19,10 +19,17 @@
                     class="inline-block bg-white text-indigo-600 font-bold py-3 px-8 rounded-full shadow-lg hover:bg-gray-100 transition duration-300 transform hover:-translate-y-1">
                     Start Now
                 </a>
+                {% if email %}
+                <a href="/user-dashboard"
+                    class="inline-block border border-white text-white font-bold py-3 px-8 rounded-full hover:bg-white hover:text-indigo-600 transition duration-300 transform hover:-translate-y-1">
+                    My Sessions
+                </a>
+                {% else %}
                 <a href="/login"
                     class="inline-block border border-white text-white font-bold py-3 px-8 rounded-full hover:bg-white hover:text-indigo-600 transition duration-300 transform hover:-translate-y-1">
                     Login
                 </a>
+                {% endif %}
             </div>
         </div>
     </div>

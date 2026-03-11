@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}OpenTransLive - My Sessions{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-900 text-gray-100 font-sans">
+
+  <!-- Top bar -->
+  <header class="bg-gray-800 border-b border-gray-700 px-6 py-3 flex items-center justify-between">
+    <span class="font-bold text-gray-100 tracking-tight">My Sessions</span>
+    <div class="flex items-center gap-4">
+      <span class="text-xs text-gray-500">{{ current_email }}</span>
+      <a href="/logout" class="nav-link">Logout</a>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-4 py-8">
+
+    <div class="mb-6 flex items-center justify-between">
+      <div>
+        <h2 class="text-lg font-semibold text-gray-100">Session Rooms</h2>
+        <p class="mt-1 text-sm text-gray-500">
+          Rooms where you have been the panel admin. Go to
+          <a href="/" class="underline text-gray-400 hover:text-gray-200">the homepage</a>
+          to create or join a new session.
+        </p>
+      </div>
+    </div>
+
+    {% if rooms %}
+    <div class="dark-card overflow-hidden">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-gray-700 text-left text-xs text-gray-500 uppercase tracking-wider">
+            <th class="px-4 py-3 font-semibold">Session ID</th>
+            <th class="px-4 py-3 font-semibold">Created</th>
+            <th class="px-4 py-3 font-semibold text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for room in rooms %}
+          <tr class="border-b border-gray-700 last:border-0">
+            <td class="px-4 py-3 font-mono text-xs text-gray-200 break-all">{{ room.sid }}</td>
+            <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
+              {% if room.created_at %}
+              {{ room.created_at[:19].replace('T', ' ') }} UTC
+              {% else %}
+              &mdash;
+              {% endif %}
+            </td>
+            <td class="px-4 py-3 text-right">
+              <div class="flex items-center justify-end gap-2 flex-wrap">
+                <a href="/panel/{{ room.sid }}"
+                  class="px-3 py-1 rounded text-xs font-semibold bg-indigo-700 hover:bg-indigo-600 text-indigo-100 transition-colors">
+                  Panel
+                </a>
+                <a href="/rt/{{ room.sid }}" target="_blank"
+                  class="px-3 py-1 rounded text-xs font-semibold bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors">
+                  View
+                </a>
+                <a href="/download/{{ room.sid }}"
+                  class="px-3 py-1 rounded text-xs font-semibold bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors">
+                  Download
+                </a>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="dark-card px-6 py-10 text-center text-sm text-gray-500">
+      No sessions yet. Go to <a href="/" class="underline hover:text-gray-300">the homepage</a> to start a session.
+    </div>
+    {% endif %}
+
+  </main>
+</div>
+{% endblock %}
