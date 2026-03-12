@@ -250,8 +250,8 @@ async def _verify_session_admin(request: Request, sid: str):
 # ---------------------------------------------------------------------------
 
 async def _get_session_uid(request: Request) -> str:
-    uid = request.session.get("uuid")
-    if not uid:
+    uid = request.session.get("uuid", "")
+    if not uid or len(uid) < 36:
         uid = str(uuid.uuid4())
         request.session["uuid"] = uid
     return uid
@@ -333,7 +333,7 @@ async def user_dashboard(request: Request):
     })
 
 
-@app.post("/api/users/{email}/realtime", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
+@app.post("/api/users/{email}/realtime", dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
 async def set_user_realtime(request: Request, email: str):
     """Toggle realtime_enabled for a user (admin only)."""
     _require_admin_email(request)
@@ -354,7 +354,7 @@ async def set_user_realtime(request: Request, email: str):
     return {"email": result["email"], "realtime_enabled": result["realtime_enabled"]}
 
 
-@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=5, seconds=60, identifier=_get_session_uid))])
+@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_get_session_uid))])
 async def send_otp(request: Request):
     body = await request.json()
     email = body.get("email", "").strip()
@@ -394,7 +394,7 @@ async def verify_otp_endpoint(request: Request):
     return {"status": "ok", "is_admin": is_admin, "redirect": "/dashboard" if is_admin else "/user-dashboard"}
 
 
-@app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
+@app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
 async def get_session_languages_endpoint(request: Request, sid: str):
     """Get the current translate languages for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -405,7 +405,7 @@ async def get_session_languages_endpoint(request: Request, sid: str):
     return {"languages": languages}
 
 
-@app.post("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
+@app.post("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
 async def update_session_languages_endpoint(request: Request, sid: str):
     """Update the translate languages for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -427,7 +427,7 @@ async def update_session_languages_endpoint(request: Request, sid: str):
     return {"languages": languages}
 
 
-@app.get("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
+@app.get("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
 async def get_session_keywords_endpoint(request: Request, sid: str):
     """Get the current keywords and locked keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -439,7 +439,7 @@ async def get_session_keywords_endpoint(request: Request, sid: str):
     return {"keywords": keywords, "locked_keywords": locked_keywords}
 
 
-@app.post("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
+@app.post("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
 async def update_session_keywords_endpoint(request: Request, sid: str):
     """Update the keywords and locked keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -760,7 +760,7 @@ async def heartbeat(request: Request, sid: str):
     )
     return {"status": "ok"}
 
-@app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=20, seconds=60, identifier=_get_session_uid))])
+@app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
 async def release_admin(request: Request, sid: str):
     """Release admin lock when admin leaves"""
     sid = sanitize_query_param(sid, "session ID")

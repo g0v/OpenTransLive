@@ -62,6 +62,10 @@
         <button id="info-btn" class="icon-btn icon-btn-sm" aria-label="URL parameters help" title="URL parameters">
           <iconify-icon icon="ph:info" width="15" height="15"></iconify-icon>
         </button>
+        <!-- Language order button -->
+        <button id="sort-btn" class="icon-btn icon-btn-sm" aria-label="Language order" title="Language order">
+          <iconify-icon icon="ph:arrows-down-up" width="15" height="15"></iconify-icon>
+        </button>
       </div>
 
       <!-- Connection status -->
@@ -188,6 +192,25 @@
     </div>
   </div>
 
+  <!-- Language order modal -->
+  <div id="sort-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="sort-backdrop"></div>
+    <div class="relative z-10 rounded-2xl shadow-2xl border max-w-sm w-full mx-4 info-modal-bg overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-divider">
+        <div>
+          <h2 class="text-base font-semibold">Language Order</h2>
+          <p class="text-xs opacity-50 mt-0.5">Set the display order of languages in the grid and selector</p>
+        </div>
+        <button id="sort-close" class="icon-btn icon-btn-md" aria-label="Close">
+          <iconify-icon icon="ph:x" width="16" height="16"></iconify-icon>
+        </button>
+      </div>
+      <div class="px-5 py-4 space-y-1.5 max-h-[60vh] overflow-y-auto" id="sort-lang-list">
+        <p class="text-xs opacity-50">No languages available yet.</p>
+      </div>
+    </div>
+  </div>
+
 </div>
 {% endblock %} {% block head %}
 <style>
@@ -290,6 +313,12 @@
     border-bottom: 1px solid #e5e7eb;
   }
 
+  .sort-lang-item {
+    background-color: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+  }
+
   /* ------------------------------------------------------------------ */
   /* Dark theme                                                          */
   /* ------------------------------------------------------------------ */
@@ -366,6 +395,11 @@
   #app-root.theme-dark .grid-lang-label {
     background-color: #1e293b;
     color: #475569;
+    border-color: #334155;
+  }
+
+  #app-root.theme-dark .sort-lang-item {
+    background-color: #0f172a;
     border-color: #334155;
   }
 
@@ -451,6 +485,11 @@
     border-color: #ffff00;
   }
 
+  #app-root.theme-high-contrast .sort-lang-item {
+    background-color: #111;
+    border-color: #555;
+  }
+
   /* ------------------------------------------------------------------ */
   /* Highlight animation                                                 */
   /* ------------------------------------------------------------------ */
@@ -480,6 +519,7 @@
   let currentTheme = 'light';
   let currentFontSizeRem = 1.25;
   const renderedText = new Map();
+  let languageOrder = [];
   const statusIndicator = document.getElementById('status-indicator');
   const statusText = document.getElementById('status-text');
 
@@ -617,6 +657,69 @@
   });
 
   // ------------------------------------------------------------------ //
+  // Language order                                                      //
+  // ------------------------------------------------------------------ //
+  function getOrderedLanguages(languages) {
+    languages.forEach(l => { if (!languageOrder.includes(l)) languageOrder.push(l); });
+    return languageOrder.filter(l => languages.includes(l));
+  }
+
+  function renderSortModal() {
+    const list = document.getElementById('sort-lang-list');
+    if (!list) return;
+    if (languageOrder.length === 0) {
+      list.innerHTML = '<p class="text-xs opacity-50">No languages available yet.</p>';
+      return;
+    }
+    list.innerHTML = '';
+    languageOrder.forEach((lang, idx) => {
+      const item = document.createElement('div');
+      item.className = 'sort-lang-item flex items-center gap-2 px-3 py-1.5';
+
+      const label = document.createElement('span');
+      label.className = 'flex-1 text-sm font-mono';
+      label.textContent = lang;
+
+      const upBtn = document.createElement('button');
+      upBtn.className = 'icon-btn icon-btn-sm' + (idx === 0 ? ' opacity-30 cursor-not-allowed' : '');
+      upBtn.setAttribute('aria-label', 'Move up');
+      upBtn.disabled = idx === 0;
+      upBtn.innerHTML = '<iconify-icon icon="ph:arrow-up" width="14" height="14"></iconify-icon>';
+      upBtn.addEventListener('click', () => moveLang(idx, -1));
+
+      const downBtn = document.createElement('button');
+      downBtn.className = 'icon-btn icon-btn-sm' + (idx === languageOrder.length - 1 ? ' opacity-30 cursor-not-allowed' : '');
+      downBtn.setAttribute('aria-label', 'Move down');
+      downBtn.disabled = idx === languageOrder.length - 1;
+      downBtn.innerHTML = '<iconify-icon icon="ph:arrow-down" width="14" height="14"></iconify-icon>';
+      downBtn.addEventListener('click', () => moveLang(idx, 1));
+
+      item.appendChild(label);
+      item.appendChild(upBtn);
+      item.appendChild(downBtn);
+      list.appendChild(item);
+    });
+  }
+
+  function moveLang(idx, direction) {
+    const newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= languageOrder.length) return;
+    [languageOrder[idx], languageOrder[newIdx]] = [languageOrder[newIdx], languageOrder[idx]];
+    renderSortModal();
+    currentLanguages = [];
+    document.getElementById('grid-content').innerHTML = '';
+    populateCombinedSelect();
+  }
+
+  const sortModal = document.getElementById('sort-modal');
+  document.getElementById('sort-btn').addEventListener('click', () => {
+    renderSortModal();
+    sortModal.classList.remove('hidden');
+  });
+  document.getElementById('sort-close').addEventListener('click', () => sortModal.classList.add('hidden'));
+  document.getElementById('sort-backdrop').addEventListener('click', () => sortModal.classList.add('hidden'));
+
+  // ------------------------------------------------------------------ //
   // View / layout                                                       //
   // ------------------------------------------------------------------ //
   function populateCombinedSelect() {
@@ -627,16 +730,17 @@
       languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
     }
     if (!languages) return;
+    const orderedLanguages = getOrderedLanguages(languages);
     const combinedSelect = document.getElementById('combined-select');
-    if (currentLanguages.length >= 0 && languages.every(l => currentLanguages.includes(l)) && languages.length === currentLanguages.length) return;
+    if (orderedLanguages.length === currentLanguages.length && orderedLanguages.every((l, i) => currentLanguages[i] === l)) return;
     let currentSelect = combinedSelect.value || 'grid';
-    currentLanguages = languages;
+    currentLanguages = orderedLanguages;
     combinedSelect.innerHTML = '';
     const gridOption = document.createElement('option');
     gridOption.value = 'grid';
     gridOption.textContent = 'All languages';
     combinedSelect.appendChild(gridOption);
-    languages.forEach(language => {
+    orderedLanguages.forEach(language => {
       const option = document.createElement('option');
       option.value = `single-${language}`;
       option.textContent = language;
@@ -729,13 +833,14 @@
 
   function refreshGridView() {
     const gridContent = document.getElementById('grid-content');
-    let languages = [];
+    let rawLanguages = [];
     if (transcriptionsData?.partial?.result?.translated) {
-      languages = Object.keys(transcriptionsData.partial.result.translated || {});
+      rawLanguages = Object.keys(transcriptionsData.partial.result.translated || {});
     } else if (transcriptionsData?.transcriptions?.length > 0) {
-      languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
+      rawLanguages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
     }
-    if (languages.length === 0) return;
+    if (rawLanguages.length === 0) return;
+    const languages = getOrderedLanguages(rawLanguages);
     const languageCount = languages.length;
 
     let actualCols = 1;
