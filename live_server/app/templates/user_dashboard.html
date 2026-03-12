@@ -67,6 +67,10 @@
                   class="px-3 py-1 rounded text-xs font-semibold bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors">
                   Download
                 </a>
+                <button onclick="deleteSession('{{ room.sid }}', this)"
+                  class="px-3 py-1 rounded text-xs font-semibold bg-red-900 hover:bg-red-800 text-red-200 transition-colors">
+                  Delete
+                </button>
               </div>
             </td>
           </tr>
@@ -82,4 +86,29 @@
 
   </main>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  async function deleteSession(sid, btn) {
+    if (!confirm('Remove "' + sid + '" from My Sessions? Others will be able to claim this room.')) return
+    btn.disabled = true
+    btn.textContent = 'Deleting...'
+    try {
+      const resp = await fetch('/api/sessions/' + encodeURIComponent(sid), { method: 'DELETE' })
+      if (resp.ok) {
+        btn.closest('tr').remove()
+      } else {
+        const data = await resp.json().catch(() => ({}))
+        alert('Failed to delete: ' + (data.detail || resp.statusText))
+        btn.disabled = false
+        btn.textContent = 'Delete'
+      }
+    } catch (e) {
+      alert('Request failed: ' + e.message)
+      btn.disabled = false
+      btn.textContent = 'Delete'
+    }
+  }
+</script>
 {% endblock %}

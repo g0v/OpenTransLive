@@ -707,6 +707,15 @@ async def panel(request: Request, sid: str):
     admin_uid = room.get("admin_uid")
     admin_key = room.get("secret_key")
 
+    # If the room is owned by a logged-in user, enforce exclusive ownership.
+    # No other user can open the panel unless the owner deletes the session.
+    if admin_uid:
+        owner_doc = await users_collection.find_one({"user_uid": admin_uid})
+        if owner_doc and owner_doc.get("email"):
+            current_email = _get_session_email(request)
+            if not current_email or current_email.lower() != owner_doc["email"].lower():
+                raise HTTPException(status_code=403, detail="This session is owned by another user.")
+
     if admin_uid and admin_key:
         last_heartbeat = room.get("admin_last_heartbeat")
         if last_heartbeat and last_heartbeat.tzinfo is None:
@@ -714,17 +723,12 @@ async def panel(request: Request, sid: str):
         admin_expired = not last_heartbeat or (now - last_heartbeat).total_seconds() > ADMIN_TIMEOUT
 
         if admin_expired:
-            # Only the original logged-in admin can reclaim after expiry
-            prev_user_doc = await users_collection.find_one({"user_uid": admin_uid})
-            if prev_user_doc and prev_user_doc.get("email"):
-                current_email = _get_session_email(request)
-                if not current_email or current_email.lower() != prev_user_doc["email"].lower():
-                    raise HTTPException(status_code=403, detail="Session admin is already connected, please try another room.")
+            # Lock expired — clear the lock but preserve ownership.
             await rooms_collection.update_one(
                 {"sid": sid},
-                {"$set": {"secret_key": None, "admin_uid": None, "admin_last_heartbeat": None, "updated_at": now}}
+                {"$set": {"secret_key": None, "admin_last_heartbeat": None, "updated_at": now}}
             )
-            admin_uid, admin_key = None, None
+            admin_key = None
         else:
             # Active admin: verify caller owns the session
             if request.session.get("secret_key") != admin_key:
@@ -778,10 +782,29 @@ async def release_admin(request: Request, sid: str):
 
     await rooms_collection.update_one(
         {"sid": sid},
-        {"$set": {"secret_key": None, "admin_uid": None, "admin_last_heartbeat": None, "updated_at": datetime.now(timezone.utc)}}
+        {"$set": {"secret_key": None, "admin_last_heartbeat": None, "updated_at": datetime.now(timezone.utc)}}
     )
     request.session.pop("secret_key", None)
     return {"status": "released"}
+
+@app.delete("/api/sessions/{sid}", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
+async def delete_session(request: Request, sid: str):
+    """Release session ownership, removing it from the owner's My Sessions list.
+    Once deleted, anyone can claim the session again."""
+    sid = sanitize_query_param(sid, "session ID")
+    email, user_uid = _require_logged_in(request)
+    if not email or not user_uid:
+        raise HTTPException(status_code=401, detail="Not logged in")
+    room = await rooms_collection.find_one({"sid": sid})
+    if not room:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if room.get("admin_uid") != user_uid:
+        raise HTTPException(status_code=403, detail="You do not own this session")
+    await rooms_collection.update_one(
+        {"sid": sid},
+        {"$set": {"admin_uid": None, "secret_key": None, "admin_last_heartbeat": None, "updated_at": datetime.now(timezone.utc)}}
+    )
+    return {"status": "deleted"}
 
 # Socket.IO Event Handlers
 @sio.event
