@@ -237,12 +237,11 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     translated = {}
     async def _translation_worker(language):
         prev_translation = ""
-        if cached_data.get("partial") is True:
+        if cached_data.get("partial"):
             pt_trans = cached_data["partial"].get("result", {}).get("translated", {}).get(language, "")
             if pt_trans:
                 pt_trans = pt_trans[-50:]
                 prev_translation = f"<previous_translation>\n{pt_trans}......\n</previous_translation>\n"
-
         json_body = {
             "model": AI_MODEL,
             "max_completion_tokens": 300,
@@ -251,7 +250,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
                 {"role": "developer",
                  "content": f"""This is a transcription about:\n{keywords_str}\n\n
                  - Rewrite the text **only in <translate_this>** into {language}{', the sentence might not ended yet' if partial else ''}.\n
-                 - Do your best to close to the previous translation.\n
+                 - Do not change too much of the previous translation.\n
                  - Remove redundant text. Add punctuation marks.\n
                  - Return only the translated text, no any comment.\n
                  {prev_translation}"""},
