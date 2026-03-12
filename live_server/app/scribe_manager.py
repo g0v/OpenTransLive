@@ -123,11 +123,6 @@ class ScribeSessionManager:
             if reps >= 4 and lower.startswith(unit * reps):
                 return True
 
-        # Detect pure digit sequences: "12345678910", counting hallucinations
-        digits_only = re.sub(r"\s", "", text)
-        if re.fullmatch(r"\d+", digits_only) and len(digits_only) >= 8:
-            return True
-
         return False
 
     async def handle_transcript(self, data):

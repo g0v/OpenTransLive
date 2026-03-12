@@ -309,7 +309,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
                 {
                     "role": "developer",
                     "content": f"""Context: This transcription is about {keywords_str}.
-Task: Translate or convert the text within <translate_this> into {language}.
+Task: Rewrite the text within <translate_this> into language {language}.
 
 Constraints:
 1. Strict Fidelity: Literal meaning only; no stylistic changes or summaries.
