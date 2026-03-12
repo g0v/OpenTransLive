@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 from urllib.parse import urlencode
 import httpx
 from websockets.asyncio.client import connect as ws_connect
@@ -107,6 +108,28 @@ class ScribeSessionManager:
             except Exception:
                 pass
 
+    @staticmethod
+    def _is_hallucination(text: str) -> bool:
+        """Detect common ASR hallucinations: repetitive patterns or pure digit sequences."""
+        if len(text) < 8:
+            return False
+
+        lower = text.lower().replace(" ", "")
+
+        # Detect repetitive unit patterns: hahahaha, lalalala, hmm hmm hmm hmm, etc.
+        for unit_len in range(1, min(len(lower) // 4, 8) + 1):
+            unit = lower[:unit_len]
+            reps = len(lower) // unit_len
+            if reps >= 4 and lower.startswith(unit * reps):
+                return True
+
+        # Detect pure digit sequences: "12345678910", counting hallucinations
+        digits_only = re.sub(r"\s", "", text)
+        if re.fullmatch(r"\d+", digits_only) and len(digits_only) >= 8:
+            return True
+
+        return False
+
     async def handle_transcript(self, data):
         try:
             transcript = data.get("text", "").strip()
@@ -116,9 +139,13 @@ class ScribeSessionManager:
             msg_type = data.get("message_type")
             partial = (msg_type == "partial_transcript")
             now = datetime.now(timezone.utc)
-            
+
             # Efficiently strip specific punctuation
             transcript = transcript.rstrip(",.。，")
+
+            if self._is_hallucination(transcript):
+                logger.warning(f"Hallucination detected, dropping: {repr(transcript)}")
+                return
             delta_t = (now - self.last_partial_time).total_seconds()
             if partial and (transcript == self.last_partial_text or 
                             delta_t < self.partial_interval):
