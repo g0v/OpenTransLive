@@ -16,7 +16,11 @@ services:
       - "${SERVER_PORT:-5000}:5000"
     volumes:
       - ./app:/app/app
-    command: ["./.venv/bin/uvicorn", "app:socket_app", "--host", "0.0.0.0", "--port", "5000", "--workers", "${SERVER_WORKERS:-1}", "--ws", "websockets", "--reload"]
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    command: ["./.venv/bin/uvicorn", "app:socket_app", "--host", "0.0.0.0", "--port", "5000", "--workers", "${SERVER_WORKERS:-2}", "--ws", "websockets", "--reload"]
     depends_on:
       - redis
       - mongodb
