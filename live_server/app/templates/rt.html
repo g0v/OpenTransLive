@@ -651,10 +651,25 @@
     else refreshGridView();
   }
 
-  function updateContent(container, key, committedText, partialText, scrollParent) {
-    const committedEl = container.children[0];
-    const partialEl = container.children[1];
-    if (committedEl.textContent !== committedText) committedEl.textContent = committedText;
+  function updateContent(container, key, historyText, lastText, partialText, scrollParent) {
+    const historyEl = container.children[0];
+    const lastEl = container.children[1];
+    const partialEl = container.children[2];
+    let changed = false;
+
+    if (historyEl.textContent !== historyText) {
+      historyEl.textContent = historyText;
+      changed = true;
+    }
+
+    if (lastEl.textContent !== lastText) {
+      lastEl.textContent = lastText;
+      lastEl.classList.remove('new-text');
+      void lastEl.offsetWidth;
+      if (lastText) lastEl.classList.add('new-text');
+      changed = true;
+    }
+
     const prevPartial = renderedText.get(key) || '';
     if (prevPartial !== partialText) {
       partialEl.textContent = partialText;
@@ -662,6 +677,10 @@
       void partialEl.offsetWidth;
       if (partialText) partialEl.classList.add('new-text');
       renderedText.set(key, partialText);
+      changed = true;
+    }
+
+    if (changed) {
       setTimeout(() => { (scrollParent || container).scrollTop = (scrollParent || container).scrollHeight; }, 10);
     }
   }
@@ -669,10 +688,13 @@
   function makeContentContainer() {
     const wrapper = document.createElement('div');
     wrapper.className = 'contents';
-    const committed = document.createElement('span');
+    const history = document.createElement('span');
+    const last = document.createElement('span');
     const partial = document.createElement('span');
+    last.addEventListener('animationend', () => last.classList.remove('new-text'));
     partial.addEventListener('animationend', () => partial.classList.remove('new-text'));
-    wrapper.appendChild(committed);
+    wrapper.appendChild(history);
+    wrapper.appendChild(last);
     wrapper.appendChild(partial);
     return wrapper;
   }
@@ -690,9 +712,19 @@
     if (!selectedLanguage) return;
     if (!dataContent.children.length) dataContent.appendChild(makeContentContainer());
     const wrapper = dataContent.children[0];
-    const committedText = (transcriptionsData.transcriptions || []).map(s => s.result.translated[selectedLanguage]).join('\n');
-    const partialText = transcriptionsData?.partial?.result?.translated ? (committedText ? '\n' : '') + transcriptionsData.partial.result.translated[selectedLanguage] : '';
-    updateContent(wrapper, 'single:' + selectedLanguage, committedText, partialText, document.getElementById('single-view'));
+
+    const transcriptions = transcriptionsData.transcriptions || [];
+    let historyText = '';
+    let lastText = '';
+    for (let i = 0; i < transcriptions.length; i++) {
+      const text = transcriptions[i].result.translated[selectedLanguage];
+      if (!text) continue;
+      if (i === transcriptions.length - 1) lastText = text + '\n';
+      else historyText += text + '\n';
+    }
+
+    const partialText = transcriptionsData?.partial?.result?.translated ? (transcriptionsData.partial.result.translated[selectedLanguage] || '') + '\n' : '';
+    updateContent(wrapper, 'single:' + selectedLanguage, historyText, lastText, partialText, document.getElementById('single-view'));
   }
 
   function refreshGridView() {
@@ -759,12 +791,17 @@
       if (!languageBox) return;
       const card = languageBox.querySelector('div:last-child');
       const wrapper = card.children[0];
-      let committedText = '';
-      (transcriptionsData.transcriptions || []).forEach(sub => {
-        if (sub.result?.translated[language]) committedText += sub.result.translated[language] + '\n';
-      });
-      const partialText = transcriptionsData?.partial?.result?.translated ? transcriptionsData.partial.result.translated[language] + '\n' : '';
-      updateContent(wrapper, 'grid:' + language, committedText, partialText, card);
+      const transcriptions = transcriptionsData.transcriptions || [];
+      let historyText = '';
+      let lastText = '';
+      for (let i = 0; i < transcriptions.length; i++) {
+        const text = transcriptions[i].result?.translated[language];
+        if (!text) continue;
+        if (i === transcriptions.length - 1) lastText = text + '\n';
+        else historyText += text + '\n';
+      }
+      const partialText = transcriptionsData?.partial?.result?.translated ? (transcriptionsData.partial.result.translated[language] || '') + '\n' : '';
+      updateContent(wrapper, 'grid:' + language, historyText, lastText, partialText, card);
     });
   }
 
@@ -819,7 +856,7 @@
     socket.on('transcription_update', function (data) {
       if (data.last_committed) {
         const last_committed = data.last_committed;
-        const exists = transcriptionsData["transcriptions"].some(t => t.start_time === last_committed.start_time);
+        const exists = !!transcriptionsData["transcriptions"].findLast(t => t.start_time === last_committed.start_time);
         if (!exists) {
           transcriptionsData["transcriptions"].push(last_committed);
           transcriptionsData["transcriptions"].sort((a, b) => a.start_time - b.start_time);
@@ -829,7 +866,7 @@
         transcriptionsData["partial"] = data;
       } else {
         transcriptionsData["partial"] = null;
-        const exists = transcriptionsData["transcriptions"].some(t => t.start_time === data.start_time);
+        const exists = !!transcriptionsData["transcriptions"].findLast(t => t.start_time === data.start_time);
         if (!exists) {
           transcriptionsData["transcriptions"].push(data);
           transcriptionsData["transcriptions"].sort((a, b) => a.start_time - b.start_time);

@@ -291,53 +291,13 @@ async def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
 
-@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=5, seconds=60, identifier=_get_session_uid))])
-async def send_otp(request: Request):
-    body = await request.json()
-    email = body.get("email", "").strip()
-    if not validate_email_format(email):
-        raise HTTPException(status_code=400, detail="Invalid email address")
-    otp = generate_otp()
-    await store_otp(redis_client, email, otp)
-    try:
-        await send_otp_email(email, otp, EMAIL_SETTINGS)
-    except Exception as e:
-        log_exception(logger, e, f"Failed to send OTP email to {email}")
-        raise HTTPException(status_code=500, detail="Failed to send email")
-    return {"status": "sent"}
-
-
-@app.post("/auth/verify-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_get_session_uid))])
-async def verify_otp_endpoint(request: Request):
-    body = await request.json()
-    email = body.get("email", "").strip()
-    otp = body.get("otp", "").strip()
-    if not validate_email_format(email):
-        raise HTTPException(status_code=400, detail="Invalid email address")
-    if not otp or not re.match(r'^\d{4}$', otp):
-        raise HTTPException(status_code=400, detail="Invalid OTP format")
-
-    if not await verify_otp(redis_client, email, otp):
-        raise HTTPException(status_code=401, detail="Invalid or expired code")
-
-    # Reuse existing user_uid from session or generate a new one
-    user_uid = request.session.get("user_uid") or str(uuid.uuid4())
-    await get_or_create_user(users_collection, email, user_uid)
-
-    request.session["email"] = email.lower()
-    request.session["user_uid"] = user_uid
-
-    is_admin = _is_admin_email(email)
-    return {"status": "ok", "is_admin": is_admin, "redirect": "/dashboard" if is_admin else "/user-dashboard"}
-
-
 @app.get("/logout")
 async def logout(request: Request):
     request.session.clear()
     return RedirectResponse(url="/login", status_code=302)
 
 
-@app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
+@app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
 async def dashboard(request: Request):
     _require_admin_email(request)
     users = await users_collection.find({}, {"_id": 0}).to_list(length=1000)
@@ -350,7 +310,7 @@ async def dashboard(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request, "users": users, "current_email": _get_session_email(request)})
 
 
-@app.get("/user-dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
+@app.get("/user-dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
 async def user_dashboard(request: Request):
     email, user_uid = _require_logged_in(request)
     if not email or not user_uid:
@@ -392,6 +352,46 @@ async def set_user_realtime(request: Request, email: str):
     if not result:
         raise HTTPException(status_code=404, detail="User not found")
     return {"email": result["email"], "realtime_enabled": result["realtime_enabled"]}
+
+
+@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=5, seconds=60, identifier=_get_session_uid))])
+async def send_otp(request: Request):
+    body = await request.json()
+    email = body.get("email", "").strip()
+    if not validate_email_format(email):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    otp = generate_otp()
+    await store_otp(redis_client, email, otp)
+    try:
+        await send_otp_email(email, otp, EMAIL_SETTINGS)
+    except Exception as e:
+        log_exception(logger, e, f"Failed to send OTP email to {email}")
+        raise HTTPException(status_code=500, detail="Failed to send email")
+    return {"status": "sent"}
+
+
+@app.post("/auth/verify-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_get_session_uid))])
+async def verify_otp_endpoint(request: Request):
+    body = await request.json()
+    email = body.get("email", "").strip()
+    otp = body.get("otp", "").strip()
+    if not validate_email_format(email):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    if not otp or not re.match(r'^\d{4}$', otp):
+        raise HTTPException(status_code=400, detail="Invalid OTP format")
+
+    if not await verify_otp(redis_client, email, otp):
+        raise HTTPException(status_code=401, detail="Invalid or expired code")
+
+    # Reuse existing user_uid from session or generate a new one
+    user_uid = request.session.get("user_uid") or str(uuid.uuid4())
+    await get_or_create_user(users_collection, email, user_uid)
+
+    request.session["email"] = email.lower()
+    request.session["user_uid"] = user_uid
+
+    is_admin = _is_admin_email(email)
+    return {"status": "ok", "is_admin": is_admin, "redirect": "/dashboard" if is_admin else "/user-dashboard"}
 
 
 @app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
@@ -661,7 +661,7 @@ async def rt(request: Request, id: str):
     print(sliced_data, flush=True)
     return templates.TemplateResponse("rt.html", {"request": request, "id": id, "data": sliced_data})
   
-@app.get("/panel/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=20, seconds=60, identifier=_get_session_uid))])
+@app.get("/panel/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
 async def panel(request: Request, sid: str):
     # Sanitize sid parameter to prevent NoSQL injection
     sid = sanitize_query_param(sid, "session ID")

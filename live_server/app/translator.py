@@ -241,19 +241,26 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
             pt_trans = cached_data["partial"].get("result", {}).get("translated", {}).get(language, "")
             if pt_trans:
                 pt_trans = pt_trans[-50:]
-                prev_translation = f"<previous_translation>\n{pt_trans}......\n</previous_translation>\n"
+                prev_translation = f"<previous_translation>\n{pt_trans}\n</previous_translation>\n"
         json_body = {
             "model": AI_MODEL,
             "max_completion_tokens": 300,
             "reasoning_effort": "minimal",
             "messages": [
-                {"role": "developer",
-                 "content": f"""This is a transcription about:\n{keywords_str}\n\n
-                 - Rewrite the text **only in <translate_this>** into {language}{', the sentence might not ended yet' if partial else ''}.\n
-                 - Do not change too much of the previous translation.\n
-                 - Remove redundant text. Add punctuation marks.\n
-                 - Return only the translated text, no any comment.\n
-                 {prev_translation}"""},
+                {
+                    "role": "developer",
+                    "content": f"""Context: This transcription is about {keywords_str}.
+Task: Translate or convert the text within <translate_this> into {language}.
+
+Constraints:
+1. Fidelity: Prioritize literal meaning and original word choice over stylistic "improvement". 
+2. Tone: Keep the original speaking style. Do not polish or summarize.
+3. Minimal Intervention: If the target language is the same as the source, only fix obvious typos or script differences; DO NOT rewrite the sentences.
+4. Formatting: Return ONLY the processed text, no explanations.
+
+Previous context for reference: {prev_translation}
+"""
+                },
                 {"role": "user", "content": f"{(' '.join(context['translated'][language]))[-50:]}\n<translate_this>\n{result['corrected']}\n</translate_this>"}
             ]
         }
@@ -343,6 +350,8 @@ class TranslationQueueManager:
             else:
                 self.partial_task = asyncio.create_task(self._process(*item))
         else:
+            if self.partial_task and not self.partial_task.done():
+                self.partial_task.cancel()
             await self.commit_queue.put(item)
 
     async def _loop(self):
