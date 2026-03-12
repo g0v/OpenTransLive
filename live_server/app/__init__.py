@@ -249,6 +249,13 @@ async def _verify_session_admin(request: Request, sid: str):
 # Email login routes
 # ---------------------------------------------------------------------------
 
+async def _get_session_uid(request: Request) -> str:
+    uid = request.session.get("uuid")
+    if not uid:
+        uid = str(uuid.uuid4())
+        request.session["uuid"] = uid
+    return uid
+
 def _get_session_email(request: Request) -> str | None:
     return request.session.get("email")
 
@@ -284,7 +291,7 @@ async def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
 
-@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=5, seconds=60))])
+@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=5, seconds=60, identifier=_get_session_uid))])
 async def send_otp(request: Request):
     body = await request.json()
     email = body.get("email", "").strip()
@@ -300,7 +307,7 @@ async def send_otp(request: Request):
     return {"status": "sent"}
 
 
-@app.post("/auth/verify-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60))])
+@app.post("/auth/verify-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_get_session_uid))])
 async def verify_otp_endpoint(request: Request):
     body = await request.json()
     email = body.get("email", "").strip()
@@ -330,7 +337,7 @@ async def logout(request: Request):
     return RedirectResponse(url="/login", status_code=302)
 
 
-@app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=30, seconds=60))])
+@app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
 async def dashboard(request: Request):
     _require_admin_email(request)
     users = await users_collection.find({}, {"_id": 0}).to_list(length=1000)
@@ -343,7 +350,7 @@ async def dashboard(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request, "users": users, "current_email": _get_session_email(request)})
 
 
-@app.get("/user-dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=30, seconds=60))])
+@app.get("/user-dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
 async def user_dashboard(request: Request):
     email, user_uid = _require_logged_in(request)
     if not email or not user_uid:
@@ -366,7 +373,7 @@ async def user_dashboard(request: Request):
     })
 
 
-@app.post("/api/users/{email}/realtime", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
+@app.post("/api/users/{email}/realtime", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
 async def set_user_realtime(request: Request, email: str):
     """Toggle realtime_enabled for a user (admin only)."""
     _require_admin_email(request)
@@ -387,7 +394,7 @@ async def set_user_realtime(request: Request, email: str):
     return {"email": result["email"], "realtime_enabled": result["realtime_enabled"]}
 
 
-@app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
+@app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
 async def get_session_languages_endpoint(request: Request, sid: str):
     """Get the current translate languages for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -398,7 +405,7 @@ async def get_session_languages_endpoint(request: Request, sid: str):
     return {"languages": languages}
 
 
-@app.post("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
+@app.post("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
 async def update_session_languages_endpoint(request: Request, sid: str):
     """Update the translate languages for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -420,7 +427,7 @@ async def update_session_languages_endpoint(request: Request, sid: str):
     return {"languages": languages}
 
 
-@app.get("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
+@app.get("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
 async def get_session_keywords_endpoint(request: Request, sid: str):
     """Get the current keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -431,7 +438,7 @@ async def get_session_keywords_endpoint(request: Request, sid: str):
     return {"keywords": keywords}
 
 
-@app.post("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
+@app.post("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
 async def update_session_keywords_endpoint(request: Request, sid: str):
     """Update the keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -612,7 +619,7 @@ async def save_segment_background(sid, segment, stream_start_time):
 async def hello_world(request: Request):
     return templates.TemplateResponse("index.html", {"request": request, "email": _get_session_email(request)})
 
-@app.get("/download/{id}", dependencies=[Depends(RateLimiter(times=60, seconds=60))])
+@app.get("/download/{id}", dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
 async def download(id: str):
     # Sanitize id parameter to prevent NoSQL injection
     id = sanitize_query_param(id, "session ID")
@@ -628,7 +635,7 @@ async def download(id: str):
     content = json.dumps(data, ensure_ascii=False, indent=2)
     return Response(content=content, media_type="application/json")
 
-@app.get("/yt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=60, seconds=60))])
+@app.get("/yt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
 async def yt(request: Request, id: str):
     # Sanitize id parameter to prevent NoSQL injection
     id = sanitize_query_param(id, "session ID")
@@ -638,7 +645,7 @@ async def yt(request: Request, id: str):
     data["stream_start_time"] = await get_youtube_start_time(id) 
     return templates.TemplateResponse("yt.html", {"request": request, "id": id, "data": data})
 
-@app.get("/rt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=60, seconds=60))])
+@app.get("/rt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
 async def rt(request: Request, id: str):
     # Sanitize id parameter to prevent NoSQL injection
     id = sanitize_query_param(id, "session ID")
@@ -654,7 +661,7 @@ async def rt(request: Request, id: str):
     print(sliced_data, flush=True)
     return templates.TemplateResponse("rt.html", {"request": request, "id": id, "data": sliced_data})
   
-@app.get("/panel/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=20, seconds=60))])
+@app.get("/panel/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=20, seconds=60, identifier=_get_session_uid))])
 async def panel(request: Request, sid: str):
     # Sanitize sid parameter to prevent NoSQL injection
     sid = sanitize_query_param(sid, "session ID")
@@ -722,7 +729,7 @@ async def panel(request: Request, sid: str):
     is_realtime_enabled = await is_realtime_authorized(request.session)
     return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key, "is_realtime_enabled": is_realtime_enabled, "email": _get_session_email(request)})
 
-@app.post("/heartbeat/{sid}", dependencies=[Depends(RateLimiter(times=30, seconds=60))])
+@app.post("/heartbeat/{sid}", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
 async def heartbeat(request: Request, sid: str):
     """Update admin heartbeat to maintain session lock"""
     sid = sanitize_query_param(sid, "session ID")
@@ -734,7 +741,7 @@ async def heartbeat(request: Request, sid: str):
     )
     return {"status": "ok"}
 
-@app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=20, seconds=60))])
+@app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=20, seconds=60, identifier=_get_session_uid))])
 async def release_admin(request: Request, sid: str):
     """Release admin lock when admin leaves"""
     sid = sanitize_query_param(sid, "session ID")
