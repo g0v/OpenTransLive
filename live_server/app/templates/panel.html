@@ -106,8 +106,18 @@
 
   </header>
 
-  <div class="flex-1 relative w-full h-full bg-white">
-    <iframe src="/rt/{{ sid }}?theme=dark" class="w-full h-full border-0" allow="autoplay; fullscreen"></iframe>
+  <div class="flex-1 flex min-h-0">
+    <div class="flex-1 relative bg-white min-w-0">
+      <iframe src="/rt/{{ sid }}?theme=dark" class="w-full h-full border-0" allow="autoplay; fullscreen"></iframe>
+    </div>
+    <!-- Flow panel -->
+    <div id="flow-panel" class="w-72 flex flex-col bg-gray-900 border-l border-gray-700 shrink-0">
+      <div class="px-3 py-2 border-b border-gray-700 flex items-center gap-2">
+        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Flow</span>
+        <span id="flow-count" class="text-xs text-gray-600 ml-auto">0 segments</span>
+      </div>
+      <div id="flow-content" class="flex-1 overflow-y-auto px-3 py-2 space-y-1"></div>
+    </div>
   </div>
 </div>
 {% endblock %}
@@ -181,6 +191,25 @@
     color: #6b7280;
     cursor: not-allowed;
     animation: none;
+  }
+
+  /* Flow panel */
+  #flow-content {
+    font-size: 0.78rem;
+    line-height: 1.55;
+  }
+
+  .flow-item {
+    color: #cbd5e1;
+    padding: 0.2rem 0.4rem;
+    border-radius: 3px;
+  }
+
+  .flow-item-partial {
+    color: #475569;
+    font-style: italic;
+    padding: 0.2rem 0.4rem;
+    border-radius: 3px;
   }
 </style>
 <script>
@@ -596,4 +625,67 @@
   })
 </script>
 <script src="/static/js/realtime.js?v={{ timestamp }}"></script>
+<script>
+  // Flow panel — shows corrected transcriptions in real-time
+  ;(function () {
+    const flowContent = document.getElementById('flow-content')
+    const flowCountEl = document.getElementById('flow-count')
+    const renderedStartTimes = new Set()
+    let partialEl = null
+    let segmentCount = 0
+
+    function updateCount() {
+      if (flowCountEl) flowCountEl.textContent = segmentCount + (segmentCount === 1 ? ' segment' : ' segments')
+    }
+
+    function scrollToBottom() {
+      flowContent.scrollTop = flowContent.scrollHeight
+    }
+
+    function appendCommitted(text) {
+      if (!text) return
+      if (partialEl) { partialEl.remove(); partialEl = null }
+      const p = document.createElement('p')
+      p.className = 'flow-item'
+      p.textContent = text
+      flowContent.appendChild(p)
+      segmentCount++
+      updateCount()
+      scrollToBottom()
+    }
+
+    function updatePartial(text) {
+      if (!text) {
+        if (partialEl) { partialEl.remove(); partialEl = null }
+        return
+      }
+      if (!partialEl) {
+        partialEl = document.createElement('p')
+        partialEl.className = 'flow-item-partial'
+        flowContent.appendChild(partialEl)
+      }
+      partialEl.textContent = text
+      scrollToBottom()
+    }
+
+    socket.on('transcription_update', function (data) {
+      if (data.last_committed) {
+        const lc = data.last_committed
+        if (!renderedStartTimes.has(lc.start_time)) {
+          renderedStartTimes.add(lc.start_time)
+          appendCommitted(lc.result?.corrected || lc.text || '')
+        }
+      }
+      if (data.partial) {
+        updatePartial(data.result?.corrected || data.text || '')
+      } else {
+        updatePartial(null)
+        if (!renderedStartTimes.has(data.start_time)) {
+          renderedStartTimes.add(data.start_time)
+          appendCommitted(data.result?.corrected || data.text || '')
+        }
+      }
+    })
+  })()
+</script>
 {% endblock %}
