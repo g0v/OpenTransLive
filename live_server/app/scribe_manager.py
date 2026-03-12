@@ -5,7 +5,7 @@ import logging
 from urllib.parse import urlencode
 import httpx
 from websockets.asyncio.client import connect as ws_connect
-from websockets.exceptions import ConnectionClosedOK
+from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
 from datetime import datetime, timezone
 from .config import REALTIME_SETTINGS
 from .translator import get_async_client
@@ -58,6 +58,10 @@ class ScribeSessionManager:
         try:
             while self.is_running:
                 base64_audio = await self.audio_queue.get()
+                if base64_audio is None:
+                    self.audio_queue.task_done()
+                    break
+
                 if self.ws:
                     message = {
                         "message_type": "input_audio_chunk",
@@ -67,10 +71,12 @@ class ScribeSessionManager:
                     }
                     await self.ws.send(json.dumps(message))
                 self.audio_queue.task_done()
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, ConnectionClosed, ConnectionClosedOK):
             pass
         except Exception as e:
             log_exception(logger, e, "Error in send_audio_loop")
+        finally:
+            self.is_running = False
 
     async def receive_messages_loop(self):
         try:
@@ -89,10 +95,17 @@ class ScribeSessionManager:
                     await self.handle_transcript(data)
                 elif msg_type in ["error", "auth_error", "quota_exceeded_error"]:
                     logger.error(f"Scribe Error: {data.get('error')}")
-        except (asyncio.CancelledError, ConnectionClosedOK):
+        except (asyncio.CancelledError, ConnectionClosed, ConnectionClosedOK):
             pass
         except Exception as e:
             log_exception(logger, e, "Error in receive_messages_loop")
+        finally:
+            self.is_running = False
+            # Trigger send_audio_loop to exit if it's waiting on queue
+            try:
+                self.audio_queue.put_nowait(None)
+            except Exception:
+                pass
 
     async def handle_transcript(self, data):
         try:

@@ -118,11 +118,11 @@ async def save_current_keywords(redis_client, session_id, keywords):
 async def rerank_keywords(redis_client, session_id, keywords: list[str], recent_text: str):
     """
     Ask the LLM to re-rank keywords by relevance to the current transcript context.
-    The most relevant keywords are moved to the front so that the prompt cap [:20]
+    The most relevant keywords are moved to the front so that the prompt cap [:30]
     always includes the most important terms.
     Runs as a fire-and-forget background task; result is saved to Redis.
     """
-    if len(keywords) < 2:
+    if len(keywords) < 10:
         return
 
     provider_cfg = get_provider_config()
@@ -140,7 +140,7 @@ async def rerank_keywords(redis_client, session_id, keywords: list[str], recent_
                 "role": "developer",
                 "content": (
                     "You are managing a keyword list for a live transcription session. \n"
-                    "1. Remove very similar keywords.\n"
+                    "1. Remove similar keywords.\n"
                     "2. Re-rank the provided keywords from most relevant/important to least, based on the recent transcript excerpt. \n\n"
                     "Return only JSON: {\"keywords\": [<ordered list of keyword strings>]}"
                 )
@@ -154,13 +154,17 @@ async def rerank_keywords(redis_client, session_id, keywords: list[str], recent_
     try:
         response = await async_chat_completion(json_body)
         if response and response.status_code == 200:
-            reranked = json.loads(response.json()["choices"][0]["message"]["content"]).get("keywords", [])
-            # Only accept if the returned list contains exactly the same keywords
-            if (isinstance(reranked, list) and
-                    len(reranked) == len(keywords) and
-                    set(reranked) == set(keywords)):
+            try:
+                content = response.json()["choices"][0]["message"]["content"]
+                data = json.loads(content)
+                reranked = data.get("keywords", [])
+            except (json.JSONDecodeError, KeyError):
+                logger.error(f"Failed to parse re-ranked keywords from LLM response: {response.text}")
+                return
+
+            if isinstance(reranked, list) and len(reranked) > 0:
                 await save_current_keywords(redis_client, session_id, reranked)
-                logger.debug(f"Keywords re-ranked for session {session_id}: {reranked[:5]}...")
+                logger.debug(f"Keywords re-ranked for session {session_id}: {reranked}")
     except Exception as e:
         log_exception(logger, e, "Keyword re-ranking error")
 
@@ -187,7 +191,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     AI_MODEL = REALTIME_SETTINGS.get("AI_MODEL", provider_cfg["default_model"])
     current_keywords = await get_current_keywords(redis_client, session_id)
     # Cap keywords to avoid unbounded prompt growth
-    keywords_str = ', '.join(current_keywords[:20])
+    keywords_str = ', '.join(current_keywords[:30])
 
     context = {
         "corrected": [],
@@ -253,10 +257,10 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
 Task: Translate or convert the text within <translate_this> into {language}.
 
 Constraints:
-1. Fidelity: Prioritize literal meaning and original word choice over stylistic "improvement". 
-2. Tone: Keep the original speaking style. Do not polish or summarize.
-3. Minimal Intervention: If the target language is the same as the source, only fix obvious typos or script differences; DO NOT rewrite the sentences.
-4. Formatting: Return ONLY the processed text, no explanations.
+1. Strict Fidelity: Literal meaning only; no stylistic changes or summaries.
+2. Original Style: Keep the exact speaking tone.
+3. Minimal Edit: If languages match, only fix typos.
+4. Format: Output ONLY processed text.
 
 Previous context for reference: {prev_translation}
 """
@@ -307,15 +311,18 @@ Previous context for reference: {prev_translation}
         keywords = result.get("special_keywords", [])
         new_keywords_added = False
         for keyword in keywords:
-            if isinstance(keyword, str) and keyword not in current_keywords and len(current_keywords) < 50:
+            if isinstance(keyword, str) and keyword not in current_keywords:
                 current_keywords.append(keyword)
                 new_keywords_added = True
 
         if new_keywords_added:
             await save_current_keywords(redis_client, session_id, current_keywords)
-            # Re-rank in background so prompt cap [:20] always favors the most relevant terms
+        
+        # Re-rank in background if list is substantial, keeping top[:30] relevant
+        if len(current_keywords) >= 10:
+            history_context = " ".join(context["corrected"] + [result["corrected"]])
             asyncio.create_task(
-                rerank_keywords(redis_client, session_id, current_keywords, result["corrected"])
+                rerank_keywords(redis_client, session_id, current_keywords, history_context)
             )
 
     data["result"] = result
