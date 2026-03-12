@@ -429,18 +429,19 @@ async def update_session_languages_endpoint(request: Request, sid: str):
 
 @app.get("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
 async def get_session_keywords_endpoint(request: Request, sid: str):
-    """Get the current keywords for a session."""
+    """Get the current keywords and locked keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
     await _verify_session_admin(request, sid)
 
-    from .translator import get_current_keywords
+    from .translator import get_current_keywords, get_locked_keywords
     keywords = await get_current_keywords(redis_client, sid)
-    return {"keywords": keywords}
+    locked_keywords = await get_locked_keywords(redis_client, sid)
+    return {"keywords": keywords, "locked_keywords": locked_keywords}
 
 
 @app.post("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
 async def update_session_keywords_endpoint(request: Request, sid: str):
-    """Update the keywords for a session."""
+    """Update the keywords and locked keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
     await _verify_session_admin(request, sid)
 
@@ -455,9 +456,27 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
             raise HTTPException(status_code=400, detail=f"Invalid keyword value: {kw}")
     keywords = [kw.strip() for kw in keywords]
 
-    from .translator import save_current_keywords
+    from .translator import save_current_keywords, save_locked_keywords
     await save_current_keywords(redis_client, sid, keywords)
-    return {"keywords": keywords}
+
+    if "locked_keywords" in body:
+        locked_keywords = body.get("locked_keywords")
+        if not isinstance(locked_keywords, list):
+            raise HTTPException(status_code=400, detail="locked_keywords must be a list")
+        for kw in locked_keywords:
+            if not isinstance(kw, str) or not kw.strip():
+                raise HTTPException(status_code=400, detail="Each locked keyword must be a non-empty string")
+            if '$' in kw or len(kw) > 128:
+                raise HTTPException(status_code=400, detail=f"Invalid locked keyword value: {kw}")
+        locked_keywords = [kw.strip() for kw in locked_keywords]
+        await save_locked_keywords(redis_client, sid, locked_keywords)
+    else:
+        locked_keywords = None
+
+    result = {"keywords": keywords}
+    if locked_keywords is not None:
+        result["locked_keywords"] = locked_keywords
+    return result
 
 
 async def get_youtube_start_time(video_id: str) -> float | None:

@@ -369,11 +369,24 @@
 
   // ── Keywords panel ────────────────────────────────────────────────────────
   let currentKeywords = []
+  let lockedKeywords = new Set()  // keywords that survive auto-rerank/removal
   let keywordSavePending = false  // true while a save is in flight; blocks sync
 
   function updateKeywordLabel() {
     const label = document.getElementById('kw-dropdown-label')
-    label.textContent = currentKeywords.length ? currentKeywords.length + ' keyword' + (currentKeywords.length === 1 ? '' : 's') : 'None'
+    const total = currentKeywords.length
+    const locked = lockedKeywords.size
+    if (!total) {
+      label.textContent = 'None'
+    } else if (locked) {
+      label.textContent = total + ' keyword' + (total === 1 ? '' : 's') + ' (' + locked + ' pinned)'
+    } else {
+      label.textContent = total + ' keyword' + (total === 1 ? '' : 's')
+    }
+  }
+
+  function escapeHtml(str) {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   }
 
   function renderKeywordList() {
@@ -387,16 +400,31 @@
       return
     }
     currentKeywords.forEach(function (kw) {
+      const isLocked = lockedKeywords.has(kw)
       const row = document.createElement('div')
-      row.className = 'flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300 group'
+      row.className = 'flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300 group'
       row.innerHTML = `
-        <span class="flex-1 font-mono text-xs text-gray-300 truncate">${kw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span>
-        <button class="kw-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove keyword" data-kw="${kw.replace(/"/g, '&quot;')}">
+        <span class="flex-1 font-mono text-xs truncate ${isLocked ? 'text-yellow-300' : 'text-gray-300'}">${escapeHtml(kw)}</span>
+        <button class="kw-lock-btn flex-shrink-0 transition-colors ${isLocked ? 'text-yellow-400 hover:text-yellow-200' : 'text-gray-600 hover:text-yellow-400'}" title="${isLocked ? 'Unpin keyword' : 'Pin keyword (preserve from auto-removal)'}" data-kw="${escapeHtml(kw)}">
+          <iconify-icon icon="${isLocked ? 'mdi:pin' : 'mdi:pin-outline'}" width="14" height="14"></iconify-icon>
+        </button>
+        <button class="kw-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove keyword" data-kw="${escapeHtml(kw)}">
           <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
         </button>
       `
+      row.querySelector('.kw-lock-btn').addEventListener('click', function () {
+        if (lockedKeywords.has(kw)) {
+          lockedKeywords.delete(kw)
+        } else {
+          lockedKeywords.add(kw)
+        }
+        updateKeywordLabel()
+        renderKeywordList()
+        saveKeywords()
+      })
       row.querySelector('.kw-remove-btn').addEventListener('click', function () {
         currentKeywords = currentKeywords.filter(function (k) { return k !== kw })
+        lockedKeywords.delete(kw)
         updateKeywordLabel()
         renderKeywordList()
         saveKeywords()
@@ -411,6 +439,7 @@
       if (res.ok) {
         const data = await res.json()
         currentKeywords = data.keywords
+        lockedKeywords = new Set(data.locked_keywords || [])
         updateKeywordLabel()
         renderKeywordList()
       }
@@ -455,7 +484,7 @@
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keywords: currentKeywords })
+        body: JSON.stringify({ keywords: currentKeywords, locked_keywords: Array.from(lockedKeywords) })
       })
       if (res.ok) {
         statusEl.textContent = 'Saved'

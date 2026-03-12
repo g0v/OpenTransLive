@@ -115,14 +115,61 @@ async def save_current_keywords(redis_client, session_id, keywords):
         log_exception(logger, e, "Redis set keywords error")
 
 
+async def get_locked_keywords(redis_client, session_id) -> list[str]:
+    """Return the list of locked (pinned) keywords for a session."""
+    try:
+        raw = await redis_client.get(f"locked_keywords:{session_id}")
+        if raw:
+            return json.loads(raw)
+    except Exception as e:
+        log_exception(logger, e, "Redis get locked_keywords error")
+    return []
+
+
+async def get_keywords_and_locked(redis_client, session_id) -> tuple[list[str], list[str]]:
+    """Fetch current keywords and locked keywords in a single Redis round-trip via mget."""
+    try:
+        kw_raw, locked_raw = await redis_client.mget(
+            f"keywords:{session_id}",
+            f"locked_keywords:{session_id}",
+        )
+        keywords = json.loads(kw_raw) if kw_raw else None
+        locked = json.loads(locked_raw) if locked_raw else []
+        if keywords is None:
+            common_prompt = REALTIME_SETTINGS.get('COMMON_PROMPT', '')
+            keywords = [k.strip() for k in common_prompt.split(',') if k.strip()]
+        return keywords, locked
+    except Exception as e:
+        log_exception(logger, e, "Redis mget keywords error")
+        common_prompt = REALTIME_SETTINGS.get('COMMON_PROMPT', '')
+        return [k.strip() for k in common_prompt.split(',') if k.strip()], []
+
+
+async def save_locked_keywords(redis_client, session_id, locked_keywords: list[str]):
+    """Persist the locked keywords list for a session."""
+    try:
+        await redis_client.set(f"locked_keywords:{session_id}", json.dumps(locked_keywords), ex=86400)
+    except Exception as e:
+        log_exception(logger, e, "Redis set locked_keywords error")
+
+
 async def rerank_keywords(redis_client, session_id, keywords: list[str], recent_text: str):
     """
     Ask the LLM to re-rank keywords by relevance to the current transcript context.
     The most relevant keywords are moved to the front so that the prompt cap [:30]
     always includes the most important terms.
+    Locked keywords are always preserved at the front and excluded from LLM reranking.
     Runs as a fire-and-forget background task; result is saved to Redis.
     """
-    if len(keywords) < 10:
+    locked = await get_locked_keywords(redis_client, session_id)
+    locked_set = set(locked)
+    unlocked = [kw for kw in keywords if kw not in locked_set]
+
+    if len(unlocked) < 10:
+        # Not enough unlocked keywords to bother reranking; still preserve locked order
+        if locked:
+            merged = locked + [kw for kw in keywords if kw not in locked_set]
+            await save_current_keywords(redis_client, session_id, merged)
         return
 
     provider_cfg = get_provider_config()
@@ -131,7 +178,7 @@ async def rerank_keywords(redis_client, session_id, keywords: list[str], recent_
         return
 
     AI_MODEL = REALTIME_SETTINGS.get("AI_MODEL", provider_cfg["default_model"])
-    numbered = "\n".join(f"{i+1}. {kw}" for i, kw in enumerate(keywords))
+    numbered = "\n".join(f"{i+1}. {kw}" for i, kw in enumerate(unlocked))
     json_body = {
         "model": AI_MODEL,
         "response_format": {"type": "json_object"},
@@ -163,8 +210,10 @@ async def rerank_keywords(redis_client, session_id, keywords: list[str], recent_
                 return
 
             if isinstance(reranked, list) and len(reranked) > 0:
-                await save_current_keywords(redis_client, session_id, reranked)
-                logger.debug(f"Keywords re-ranked for session {session_id}: {reranked}")
+                # Locked keywords go first (in original locked order), then reranked unlocked ones
+                final = locked + [kw for kw in reranked if kw not in locked_set]
+                await save_current_keywords(redis_client, session_id, final)
+                logger.debug(f"Keywords re-ranked for session {session_id}: {final}")
     except Exception as e:
         log_exception(logger, e, "Keyword re-ranking error")
 
@@ -189,9 +238,15 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         return data
 
     AI_MODEL = REALTIME_SETTINGS.get("AI_MODEL", provider_cfg["default_model"])
-    current_keywords = await get_current_keywords(redis_client, session_id)
-    # Cap keywords to avoid unbounded prompt growth
-    keywords_str = ', '.join(current_keywords[:30])
+    # Single round-trip: fetch keywords and locked keywords together.
+    current_keywords, locked_list = await get_keywords_and_locked(redis_client, session_id)
+    # Cap keywords to avoid unbounded prompt growth.
+    # Pinned keywords are always included first; remaining slots go to unpinned ones.
+    _KEYWORD_CAP = 30
+    locked_set = set(locked_list)
+    pinned_kws = [kw for kw in current_keywords if kw in locked_set]
+    unpinned_kws = [kw for kw in current_keywords if kw not in locked_set]
+    keywords_str = ', '.join(pinned_kws + unpinned_kws[:max(0, _KEYWORD_CAP - len(pinned_kws))])
 
     context = {
         "corrected": [],
