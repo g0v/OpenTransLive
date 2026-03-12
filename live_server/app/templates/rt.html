@@ -74,12 +74,12 @@
 
   <!-- Single Language View -->
   <div id="single-view" class="flex-1 overflow-auto">
-    <div id="data-content" class="p-4 break-all whitespace-pre-wrap rt-text leading-relaxed"></div>
+    <div id="data-content" class="p-4 rt-text leading-relaxed"></div>
   </div>
 
   <!-- Grid Layout View -->
   <div id="grid-view" class="flex-1 overflow-hidden p-2 hidden">
-    <div id="grid-content" class="grid h-full w-full gap-2 whitespace-pre-wrap rt-text">
+    <div id="grid-content" class="grid h-full w-full gap-2 rt-text">
     </div>
   </div>
 
@@ -621,7 +621,7 @@
   // ------------------------------------------------------------------ //
   function populateCombinedSelect() {
     let languages = null;
-    if (transcriptionsData?.partial) {
+    if (transcriptionsData?.partial?.result?.translated) {
       languages = Object.keys(transcriptionsData.partial.result.translated || {});
     } else if (transcriptionsData?.transcriptions) {
       languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
@@ -691,14 +691,14 @@
     if (!dataContent.children.length) dataContent.appendChild(makeContentContainer());
     const wrapper = dataContent.children[0];
     const committedText = (transcriptionsData.transcriptions || []).map(s => s.result.translated[selectedLanguage]).join('\n');
-    const partialText = transcriptionsData.partial ? (committedText ? '\n' : '') + transcriptionsData.partial.result.translated[selectedLanguage] : '';
+    const partialText = transcriptionsData?.partial?.result?.translated ? (committedText ? '\n' : '') + transcriptionsData.partial.result.translated[selectedLanguage] : '';
     updateContent(wrapper, 'single:' + selectedLanguage, committedText, partialText, document.getElementById('single-view'));
   }
 
   function refreshGridView() {
     const gridContent = document.getElementById('grid-content');
     let languages = [];
-    if (transcriptionsData?.partial) {
+    if (transcriptionsData?.partial?.result?.translated) {
       languages = Object.keys(transcriptionsData.partial.result.translated || {});
     } else if (transcriptionsData?.transcriptions?.length > 0) {
       languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
@@ -746,7 +746,7 @@
         label.textContent = language;
 
         const card = document.createElement('div');
-        card.className = 'flex-1 overflow-auto px-2 py-1 break-all whitespace-pre-wrap leading-relaxed';
+        card.className = 'flex-1 overflow-auto px-2 py-1 leading-relaxed';
         card.appendChild(makeContentContainer());
 
         languageBox.appendChild(label);
@@ -761,9 +761,9 @@
       const wrapper = card.children[0];
       let committedText = '';
       (transcriptionsData.transcriptions || []).forEach(sub => {
-        if (sub.result.translated[language]) committedText += sub.result.translated[language] + '\n';
+        if (sub.result?.translated[language]) committedText += sub.result.translated[language] + '\n';
       });
-      const partialText = transcriptionsData.partial ? transcriptionsData.partial.result.translated[language] + '\n' : '';
+      const partialText = transcriptionsData?.partial?.result?.translated ? transcriptionsData.partial.result.translated[language] + '\n' : '';
       updateContent(wrapper, 'grid:' + language, committedText, partialText, card);
     });
   }

@@ -651,6 +651,7 @@ async def rt(request: Request, id: str):
         }
     sliced_data = data.copy()
     sliced_data["transcriptions"] = sliced_data["transcriptions"][-50:]
+    print(sliced_data, flush=True)
     return templates.TemplateResponse("rt.html", {"request": request, "id": id, "data": sliced_data})
   
 @app.get("/panel/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=20, seconds=60))])
@@ -719,7 +720,6 @@ async def panel(request: Request, sid: str):
         user_secret_key = request.session.get("secret_key")
 
     is_realtime_enabled = await is_realtime_authorized(request.session)
-
     return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key, "is_realtime_enabled": is_realtime_enabled, "email": _get_session_email(request)})
 
 @app.post("/heartbeat/{sid}", dependencies=[Depends(RateLimiter(times=30, seconds=60))])

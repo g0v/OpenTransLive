@@ -3,6 +3,7 @@ import os
 import json
 import copy
 import logging
+import re
 import asyncio
 import httpx
 from datetime import datetime
@@ -228,7 +229,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
             if response and response.status_code == 200:
                 result["corrected"] = response.json()["choices"][0]["message"]["content"].replace('<correct_this>', '').replace('</correct_this>', '').strip()
         else:
-            result["corrected"] = text
+            result["corrected"] = text.strip()
     except Exception as e:
         log_exception(logger, e, "Correction error")
 
@@ -240,7 +241,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
             pt_trans = cached_data["partial"].get("result", {}).get("translated", {}).get(language, "")
             if pt_trans:
                 pt_trans = pt_trans[-50:]
-                prev_translation = f"<prev_translation>\n{pt_trans}......\n</prev_translation>\n"
+                prev_translation = f"<previous_translation>\n{pt_trans}......\n</previous_translation>\n"
 
         json_body = {
             "model": AI_MODEL,
@@ -249,9 +250,9 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
             "messages": [
                 {"role": "developer",
                  "content": f"""This is a transcription about:\n{keywords_str}\n\n
-                 - Rewrite the text **only in <translate_this>** into {language}, the sentence might not ended yet.\n
-                 - Do your best to keep original meaning and grammar.\n
-                 - Remove any redundant text, add punctuation marks.\n
+                 - Rewrite the text **only in <translate_this>** into {language}{', the sentence might not ended yet' if partial else ''}.\n
+                 - Do your best to close to the previous translation.\n
+                 - Remove redundant text. Add punctuation marks.\n
                  - Return only the translated text, no any comment.\n
                  {prev_translation}"""},
                 {"role": "user", "content": f"{(' '.join(context['translated'][language]))[-50:]}\n<translate_this>\n{result['corrected']}\n</translate_this>"}
@@ -259,10 +260,13 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         }
         try:
             response = await async_chat_completion(json_body)
+            _translated_text = ''
             if response and response.status_code == 200:
-                translated[language] = response.json()["choices"][0]["message"]["content"].replace('<translate_this>', '').replace('</translate_this>', '').strip()
+                _translated_text = response.json()["choices"][0]["message"]["content"].replace('<translate_this>', '').replace('</translate_this>', '').strip()
             else:
-                translated[language] = result['corrected']
+                _translated_text = result['corrected']
+            
+            translated[language] = re.sub(r'[\n\r]+', ' ',_translated_text)
         except Exception as e:
             log_exception(logger, e, f"Translation error for {language}")
             translated[language] = result['corrected']
