@@ -39,6 +39,7 @@
           <tr class="border-b border-gray-700 text-left text-xs text-gray-500 uppercase tracking-wider">
             <th class="px-4 py-3 font-semibold">Session ID</th>
             <th class="px-4 py-3 font-semibold">Created</th>
+            <th class="px-4 py-3 font-semibold">Audio</th>
             <th class="px-4 py-3 font-semibold text-right">Actions</th>
           </tr>
         </thead>
@@ -51,6 +52,24 @@
               {{ room.created_at[:19].replace('T', ' ') }} UTC
               {% else %}
               &mdash;
+              {% endif %}
+            </td>
+            <td class="px-4 py-3">
+              {% set dur = room.audio_duration_secs or 0 %}
+              {% if dur > 0 %}
+              <div class="flex items-center gap-2">
+                <div class="w-20 bg-gray-700 rounded h-1.5 flex-shrink-0">
+                  {% if max_audio_secs > 0 %}
+                  {% set pct = [(dur / max_audio_secs * 100)|int, 100]|min %}
+                  {% else %}
+                  {% set pct = 0 %}
+                  {% endif %}
+                  <div class="bg-blue-500 h-1.5 rounded" style="width: {{ pct }}%"></div>
+                </div>
+                <span class="text-xs text-gray-400 font-mono whitespace-nowrap">{{ (dur // 60)|int }}:{{ '%02d' % ((dur % 60)|int) }}</span>
+              </div>
+              {% else %}
+              <span class="text-xs text-gray-600">&mdash;</span>
               {% endif %}
             </td>
             <td class="px-4 py-3 text-right">

@@ -75,6 +75,10 @@ active_translation_managers: TTLCache = _ManagerTTLCache(
 )
 # Pending debounce tasks for partial transcription broadcasts, keyed by session_id.
 _partial_debounce_tasks: dict = {}
+# Audio usage save tracking: session_id -> last saved bytes
+_audio_usage_last_saved: dict = {}
+# Save audio usage to DB every 30 seconds of accumulated audio (16kHz 16-bit PCM)
+_AUDIO_SAVE_INTERVAL_BYTES = 30 * 16000 * 2
 
 
 def _get_or_create_scribe_manager(session_id) -> ScribeSessionManager:
@@ -245,6 +249,22 @@ async def _verify_session_admin(request: Request, sid: str):
     return room
 
 
+async def _save_audio_usage_to_db(session_id: str, stats: dict):
+    """Persist audio usage stats to the rooms collection."""
+    try:
+        await rooms_collection.update_one(
+            {"sid": session_id},
+            {"$set": {
+                "audio_bytes": stats["audio_bytes"],
+                "audio_duration_secs": stats["audio_duration_secs"],
+                "audio_chunks": stats["audio_chunks"],
+                "audio_usage_updated_at": datetime.now(timezone.utc),
+            }}
+        )
+    except Exception as e:
+        log_exception(logger, e, f"Error saving audio usage for {session_id}")
+
+
 # ---------------------------------------------------------------------------
 # Email login routes
 # ---------------------------------------------------------------------------
@@ -317,19 +337,22 @@ async def user_dashboard(request: Request):
         return RedirectResponse(url="/login", status_code=302)
     rooms = await rooms_collection.find(
         {"admin_uid": user_uid},
-        {"_id": 0, "sid": 1, "created_at": 1, "admin_last_heartbeat": 1}
+        {"_id": 0, "sid": 1, "created_at": 1, "admin_last_heartbeat": 1,
+         "audio_bytes": 1, "audio_duration_secs": 1}
     ).sort("created_at", -1).to_list(length=200)
     for r in rooms:
         if isinstance(r.get("created_at"), datetime):
             r["created_at"] = r["created_at"].isoformat()
         if isinstance(r.get("admin_last_heartbeat"), datetime):
             r["admin_last_heartbeat"] = r["admin_last_heartbeat"].isoformat()
+    max_audio_secs = max((r.get("audio_duration_secs") or 0 for r in rooms), default=0)
     is_realtime_enabled = await is_realtime_authorized(request.session)
     return templates.TemplateResponse("user_dashboard.html", {
         "request": request,
         "rooms": rooms,
         "current_email": email,
         "is_realtime_enabled": is_realtime_enabled,
+        "max_audio_secs": max_audio_secs,
     })
 
 
@@ -1067,4 +1090,9 @@ async def audio_buffer_append(socket_id, data):
 
     manager = _get_or_create_scribe_manager(session_id)
     await manager.push_audio(base64_audio)
+    # Persist usage to DB every _AUDIO_SAVE_INTERVAL_BYTES of accumulated audio
+    last_saved = _audio_usage_last_saved.get(session_id, 0)
+    if manager.audio_bytes_total - last_saved >= _AUDIO_SAVE_INTERVAL_BYTES:
+        _audio_usage_last_saved[session_id] = manager.audio_bytes_total
+        asyncio.create_task(_save_audio_usage_to_db(session_id, manager.get_usage_stats()))
     
