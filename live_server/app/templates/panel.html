@@ -97,11 +97,14 @@
         {% endif %}
       </div>
     </div>
-    <div class="flex py-1">
+    <div class="flex py-1 items-center">
       <span class="flex items-center gap-1 text-xs mx-auto">
         <span id="status-indicator" class="status-dot-md bg-gray-400"></span>
         <span id="status-text">Connecting...</span>
       </span>
+      {% if is_realtime_enabled %}
+      <span id="audio-usage-display" class="text-xs text-gray-500 pr-4" title="Audio sent to transcription service this session">Audio: --</span>
+      {% endif %}
     </div>
 
   </header>
@@ -688,4 +691,41 @@
     })
   })()
 </script>
+{% if is_realtime_enabled %}
+<script>
+  ;(function () {
+    const usageDisplay = document.getElementById('audio-usage-display')
+    if (!usageDisplay) return
+
+    function formatDuration(secs) {
+      const m = Math.floor(secs / 60)
+      const s = Math.floor(secs % 60)
+      return m + ':' + String(s).padStart(2, '0')
+    }
+
+    function formatBytes(bytes) {
+      if (bytes < 1024) return bytes + ' B'
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+      return (bytes / (1024 * 1024)).toFixed(2) + ' MB'
+    }
+
+    async function fetchUsage() {
+      try {
+        const res = await fetch('/api/session/' + sid + '/audio-usage', { credentials: 'same-origin' })
+        if (!res.ok) return
+        const data = await res.json()
+        if (data.audio_bytes === 0) {
+          usageDisplay.textContent = 'Audio: --'
+        } else {
+          usageDisplay.textContent = 'Audio: ' + formatDuration(data.audio_duration_secs) + ' / ' + formatBytes(data.audio_bytes)
+        }
+      } catch (e) {
+        // Ignore fetch errors silently
+      }
+    }
+
+    setInterval(fetchUsage, 5000)
+  })()
+</script>
+{% endif %}
 {% endblock %}

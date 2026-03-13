@@ -479,6 +479,18 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
     return result
 
 
+@app.get("/api/session/{sid}/audio-usage", dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
+async def get_session_audio_usage_endpoint(request: Request, sid: str):
+    """Return audio buffer usage stats for the active scribe session."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _verify_session_admin(request, sid)
+
+    manager = active_scribe_managers.get(sid)
+    if not manager:
+        return {"audio_bytes": 0, "audio_chunks": 0, "audio_duration_secs": 0.0, "session_elapsed_secs": 0.0}
+    return manager.get_usage_stats()
+
+
 async def get_youtube_start_time(video_id: str) -> float | None:
     """
     Get the actual stream start time for a YouTube video using YouTube Data API v3.

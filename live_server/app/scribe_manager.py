@@ -33,6 +33,13 @@ class ScribeSessionManager:
         self.last_partial_text = ""
         self.task_group = None
         self.partial_interval = REALTIME_SETTINGS.get('PARTIAL_INTERVAL', 2)
+        # Usage tracking
+        self.audio_bytes_total = 0
+        self.audio_chunks = 0
+        self._logged_at_bytes = 0
+        # 16kHz 16-bit mono PCM: 32000 bytes per second
+        self._BYTES_PER_SEC = 16000 * 2
+        self._LOG_INTERVAL_BYTES = 30 * self._BYTES_PER_SEC  # log every 30s of audio
 
     async def get_token(self) -> str | None:
         """Get a single-use token for realtime transcription"""
@@ -50,9 +57,34 @@ class ScribeSessionManager:
             log_exception(logger, e, "Error getting Scribe API token")
             return None
 
+    def get_usage_stats(self) -> dict:
+        """Return audio usage counters for this session."""
+        duration_secs = self.audio_bytes_total / self._BYTES_PER_SEC
+        elapsed_secs = (datetime.now(timezone.utc) - self.init_time).total_seconds()
+        return {
+            "audio_bytes": self.audio_bytes_total,
+            "audio_chunks": self.audio_chunks,
+            "audio_duration_secs": round(duration_secs, 1),
+            "session_elapsed_secs": round(elapsed_secs, 1),
+        }
+
     async def push_audio(self, base64_audio: str):
         """Called by socket.io to push audio from the client"""
         if self.is_running:
+            # base64: 4 chars encode 3 bytes
+            decoded_bytes = len(base64_audio) * 3 // 4
+            self.audio_bytes_total += decoded_bytes
+            self.audio_chunks += 1
+            # Periodic usage logging
+            if self.audio_bytes_total - self._logged_at_bytes >= self._LOG_INTERVAL_BYTES:
+                self._logged_at_bytes = self.audio_bytes_total
+                duration_secs = self.audio_bytes_total / self._BYTES_PER_SEC
+                logger.info(
+                    f"[audio_usage] session={self.session_id} "
+                    f"bytes={self.audio_bytes_total} "
+                    f"duration={duration_secs:.1f}s "
+                    f"chunks={self.audio_chunks}"
+                )
             await self.audio_queue.put(base64_audio)
 
     async def send_audio_loop(self):
