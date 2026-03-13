@@ -76,9 +76,6 @@ active_translation_managers: TTLCache = _ManagerTTLCache(
 # Pending debounce tasks for partial transcription broadcasts, keyed by session_id.
 _partial_debounce_tasks: dict = {}
 # Audio usage save tracking: session_id -> last saved bytes
-_audio_usage_last_saved: dict = {}
-# Save audio usage to DB every 30 seconds of accumulated audio (16kHz 16-bit PCM)
-_AUDIO_SAVE_INTERVAL_BYTES = 30 * 16000 * 2
 
 
 def _get_or_create_scribe_manager(session_id) -> ScribeSessionManager:
@@ -247,22 +244,6 @@ async def _verify_session_admin(request: Request, sid: str):
     if room.get("secret_key") != user_secret_key:
         raise HTTPException(status_code=403, detail="Forbidden")
     return room
-
-
-async def _save_audio_usage_to_db(session_id: str, stats: dict):
-    """Persist audio usage stats to the rooms collection."""
-    try:
-        await rooms_collection.update_one(
-            {"sid": session_id},
-            {"$set": {
-                "audio_bytes": stats["audio_bytes"],
-                "audio_duration_secs": stats["audio_duration_secs"],
-                "audio_chunks": stats["audio_chunks"],
-                "audio_usage_updated_at": datetime.now(timezone.utc),
-            }}
-        )
-    except Exception as e:
-        log_exception(logger, e, f"Error saving audio usage for {session_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -795,10 +776,14 @@ async def heartbeat(request: Request, sid: str):
     sid = sanitize_query_param(sid, "session ID")
     await _verify_session_admin(request, sid)
     now = datetime.now(timezone.utc)
-    await rooms_collection.update_one(
-        {"sid": sid},
-        {"$set": {"admin_last_heartbeat": now, "updated_at": now}}
-    )
+    update = {"admin_last_heartbeat": now, "updated_at": now}
+    manager = active_scribe_managers.get(sid)
+    if manager and manager.audio_bytes_total > 0:
+        stats = manager.get_usage_stats()
+        update["audio_bytes"] = stats["audio_bytes"]
+        update["audio_duration_secs"] = stats["audio_duration_secs"]
+        update["audio_chunks"] = stats["audio_chunks"]
+    await rooms_collection.update_one({"sid": sid}, {"$set": update})
     return {"status": "ok"}
 
 @app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
@@ -1100,11 +1085,5 @@ async def audio_buffer_append(socket_id, data):
         )
         if room_usage and room_usage.get("audio_bytes"):
             manager.restore_usage(room_usage["audio_bytes"], room_usage.get("audio_chunks", 0))
-            _audio_usage_last_saved[session_id] = room_usage["audio_bytes"]
     await manager.push_audio(base64_audio)
-    # Persist usage to DB every _AUDIO_SAVE_INTERVAL_BYTES of accumulated audio
-    last_saved = _audio_usage_last_saved.get(session_id, 0)
-    if manager.audio_bytes_total - last_saved >= _AUDIO_SAVE_INTERVAL_BYTES:
-        _audio_usage_last_saved[session_id] = manager.audio_bytes_total
-        asyncio.create_task(_save_audio_usage_to_db(session_id, manager.get_usage_stats()))
     
