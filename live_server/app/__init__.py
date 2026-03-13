@@ -251,10 +251,10 @@ async def _verify_session_admin(request: Request, sid: str):
 # ---------------------------------------------------------------------------
 
 async def _get_session_uid(request: Request) -> str:
-    uid = request.session.get("uuid", "")
+    uid = request.session.get("user_uid", "")
     if not uid or len(uid) < 36:
         uid = str(uuid.uuid4())
-        request.session["uuid"] = uid
+        request.session["user_uid"] = uid
     return uid
 
 def _get_session_email(request: Request) -> str | None:
@@ -770,7 +770,7 @@ async def panel(request: Request, sid: str):
     is_realtime_enabled = await is_realtime_authorized(request.session)
     return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key, "is_realtime_enabled": is_realtime_enabled, "email": _get_session_email(request)})
 
-@app.post("/heartbeat/{sid}", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
+@app.post("/heartbeat/{sid}", dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
 async def heartbeat(request: Request, sid: str):
     """Update admin heartbeat to maintain session lock"""
     sid = sanitize_query_param(sid, "session ID")
@@ -786,7 +786,7 @@ async def heartbeat(request: Request, sid: str):
     await rooms_collection.update_one({"sid": sid}, {"$set": update})
     return {"status": "ok"}
 
-@app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
+@app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
 async def release_admin(request: Request, sid: str):
     """Release admin lock when admin leaves"""
     sid = sanitize_query_param(sid, "session ID")
@@ -809,7 +809,7 @@ async def release_admin(request: Request, sid: str):
     request.session.pop("secret_key", None)
     return {"status": "released"}
 
-@app.delete("/api/sessions/{sid}", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
+@app.delete("/api/sessions/{sid}", dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
 async def delete_session(request: Request, sid: str):
     """Release session ownership, removing it from the owner's My Sessions list.
     Once deleted, anyone can claim the session again."""
