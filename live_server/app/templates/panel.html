@@ -97,11 +97,15 @@
         {% endif %}
       </div>
     </div>
-    <div class="flex py-1">
+    <div class="flex py-1 items-center">
       <span class="flex items-center gap-1 text-xs mx-auto">
         <span id="status-indicator" class="status-dot-md bg-gray-400"></span>
         <span id="status-text">Connecting...</span>
       </span>
+      {% if is_realtime_enabled %}
+      <span id="audio-usage-display" class="text-xs text-gray-500 pr-4"
+        title="Audio sent to transcription service this session">Audio: --</span>
+      {% endif %}
     </div>
 
   </header>
@@ -626,66 +630,103 @@
 </script>
 <script src="/static/js/realtime.js?v={{ timestamp }}"></script>
 <script>
-  // Flow panel — shows corrected transcriptions in real-time
-  ;(function () {
-    const flowContent = document.getElementById('flow-content')
-    const flowCountEl = document.getElementById('flow-count')
-    const renderedStartTimes = new Set()
-    let partialEl = null
-    let segmentCount = 0
+    // Flow panel — shows corrected transcriptions in real-time
+    ; (function () {
+      const flowContent = document.getElementById('flow-content')
+      const flowCountEl = document.getElementById('flow-count')
+      const renderedStartTimes = new Set()
+      let partialEl = null
+      let segmentCount = 0
 
-    function updateCount() {
-      if (flowCountEl) flowCountEl.textContent = segmentCount + (segmentCount === 1 ? ' segment' : ' segments')
-    }
+      function updateCount() {
+        if (flowCountEl) flowCountEl.textContent = segmentCount + (segmentCount === 1 ? ' segment' : ' segments')
+      }
 
-    function scrollToBottom() {
-      flowContent.scrollTop = flowContent.scrollHeight
-    }
+      function scrollToBottom() {
+        flowContent.scrollTop = flowContent.scrollHeight
+      }
 
-    function appendCommitted(text) {
-      if (!text) return
-      if (partialEl) { partialEl.remove(); partialEl = null }
-      const p = document.createElement('p')
-      p.className = 'flow-item'
-      p.textContent = text
-      flowContent.appendChild(p)
-      segmentCount++
-      updateCount()
-      scrollToBottom()
-    }
-
-    function updatePartial(text) {
-      if (!text) {
+      function appendCommitted(text) {
+        if (!text) return
         if (partialEl) { partialEl.remove(); partialEl = null }
-        return
+        const p = document.createElement('p')
+        p.className = 'flow-item'
+        p.textContent = text
+        flowContent.appendChild(p)
+        segmentCount++
+        updateCount()
+        scrollToBottom()
       }
-      if (!partialEl) {
-        partialEl = document.createElement('p')
-        partialEl.className = 'flow-item-partial'
-        flowContent.appendChild(partialEl)
-      }
-      partialEl.textContent = text
-      scrollToBottom()
-    }
 
-    socket.on('transcription_update', function (data) {
-      if (data.last_committed) {
-        const lc = data.last_committed
-        if (!renderedStartTimes.has(lc.start_time)) {
-          renderedStartTimes.add(lc.start_time)
-          appendCommitted(lc.result?.corrected || lc.text || '')
+      function updatePartial(text) {
+        if (!text) {
+          if (partialEl) { partialEl.remove(); partialEl = null }
+          return
         }
-      }
-      if (data.partial) {
-        updatePartial(data.result?.corrected || data.text || '')
-      } else {
-        updatePartial(null)
-        if (!renderedStartTimes.has(data.start_time)) {
-          renderedStartTimes.add(data.start_time)
-          appendCommitted(data.result?.corrected || data.text || '')
+        if (!partialEl) {
+          partialEl = document.createElement('p')
+          partialEl.className = 'flow-item-partial'
+          flowContent.appendChild(partialEl)
         }
+        partialEl.textContent = text
+        scrollToBottom()
       }
-    })
-  })()
+
+      socket.on('transcription_update', function (data) {
+        if (data.last_committed) {
+          const lc = data.last_committed
+          if (!renderedStartTimes.has(lc.start_time)) {
+            renderedStartTimes.add(lc.start_time)
+            appendCommitted(lc.result?.corrected || lc.text || '')
+          }
+        }
+        if (data.partial) {
+          updatePartial(data.result?.corrected || data.text || '')
+        } else {
+          updatePartial(null)
+          if (!renderedStartTimes.has(data.start_time)) {
+            renderedStartTimes.add(data.start_time)
+            appendCommitted(data.result?.corrected || data.text || '')
+          }
+        }
+      })
+    })()
 </script>
+{% if is_realtime_enabled %}
+<script>
+    ; (function () {
+      const usageDisplay = document.getElementById('audio-usage-display')
+      if (!usageDisplay) return
+
+      function formatDuration(secs) {
+        const m = Math.floor(secs / 60)
+        const s = Math.floor(secs % 60)
+        return m + ':' + String(s).padStart(2, '0')
+      }
+
+      function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + ' B'
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+        return (bytes / (1024 * 1024)).toFixed(2) + ' MB'
+      }
+
+      async function fetchUsage() {
+        try {
+          const res = await fetch('/api/session/' + sid + '/audio-usage', { credentials: 'same-origin' })
+          if (!res.ok) return
+          const data = await res.json()
+          if (data.audio_bytes === 0) {
+            usageDisplay.textContent = 'Audio: --'
+          } else {
+            usageDisplay.textContent = 'Audio: ' + formatDuration(data.audio_duration_secs) + ' / ' + formatBytes(data.audio_bytes)
+          }
+        } catch (e) {
+          // Ignore fetch errors silently
+        }
+      }
+
+      setInterval(fetchUsage, 5000)
+    })()
+</script>
+{% endif %}
 {% endblock %}

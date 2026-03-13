@@ -15,7 +15,8 @@
 
   {% if not is_realtime_enabled %}
   <div class="bg-amber-950 border-b border-amber-800 px-6 py-3 text-sm text-amber-300">
-    Your account does not have realtime transcription access. To use the microphone in a panel session, contact an administrator to enable it.
+    Your account does not have realtime transcription access. To use the microphone in a panel session, contact an
+    administrator to enable it.
   </div>
   {% endif %}
 
@@ -39,6 +40,7 @@
           <tr class="border-b border-gray-700 text-left text-xs text-gray-500 uppercase tracking-wider">
             <th class="px-4 py-3 font-semibold">Session ID</th>
             <th class="px-4 py-3 font-semibold">Created</th>
+            <th class="px-4 py-3 font-semibold">Audio</th>
             <th class="px-4 py-3 font-semibold text-right">Actions</th>
           </tr>
         </thead>
@@ -51,6 +53,20 @@
               {{ room.created_at[:19].replace('T', ' ') }} UTC
               {% else %}
               &mdash;
+              {% endif %}
+            </td>
+            <td class="px-4 py-3">
+              {% set dur = room.audio_duration_secs or 0 %}
+              {% if dur > 0 %}
+              <div class="flex items-center gap-2">
+                <div class="w-6 bg-gray-700 rounded h-1 flex-shrink-0">
+                  <div class="bg-blue-500 h-1 rounded" style="width: {{ room.audio_pct }}%"></div>
+                </div>
+                <span class="text-xs text-gray-400 font-mono">{{ (dur // 60)|int }}:{{ '%02d' % ((dur % 60)|int)
+                  }}</span>
+              </div>
+              {% else %}
+              <span class="text-xs text-gray-600">&mdash;</span>
               {% endif %}
             </td>
             <td class="px-4 py-3 text-right">

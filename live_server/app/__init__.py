@@ -75,6 +75,7 @@ active_translation_managers: TTLCache = _ManagerTTLCache(
 )
 # Pending debounce tasks for partial transcription broadcasts, keyed by session_id.
 _partial_debounce_tasks: dict = {}
+# Audio usage save tracking: session_id -> last saved bytes
 
 
 def _get_or_create_scribe_manager(session_id) -> ScribeSessionManager:
@@ -317,13 +318,18 @@ async def user_dashboard(request: Request):
         return RedirectResponse(url="/login", status_code=302)
     rooms = await rooms_collection.find(
         {"admin_uid": user_uid},
-        {"_id": 0, "sid": 1, "created_at": 1, "admin_last_heartbeat": 1}
+        {"_id": 0, "sid": 1, "created_at": 1, "admin_last_heartbeat": 1,
+         "audio_bytes": 1, "audio_duration_secs": 1}
     ).sort("created_at", -1).to_list(length=200)
     for r in rooms:
         if isinstance(r.get("created_at"), datetime):
             r["created_at"] = r["created_at"].isoformat()
         if isinstance(r.get("admin_last_heartbeat"), datetime):
             r["admin_last_heartbeat"] = r["admin_last_heartbeat"].isoformat()
+    max_audio_secs = max((r.get("audio_duration_secs") or 0 for r in rooms), default=0)
+    for r in rooms:
+        dur = r.get("audio_duration_secs") or 0
+        r["audio_pct"] = min(int(dur / max_audio_secs * 100), 100) if max_audio_secs > 0 else 0
     is_realtime_enabled = await is_realtime_authorized(request.session)
     return templates.TemplateResponse("user_dashboard.html", {
         "request": request,
@@ -477,6 +483,18 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
     if locked_keywords is not None:
         result["locked_keywords"] = locked_keywords
     return result
+
+
+@app.get("/api/session/{sid}/audio-usage", dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_get_session_uid))])
+async def get_session_audio_usage_endpoint(request: Request, sid: str):
+    """Return audio buffer usage stats for the active scribe session."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _verify_session_admin(request, sid)
+
+    manager = active_scribe_managers.get(sid)
+    if not manager:
+        return {"audio_bytes": 0, "audio_chunks": 0, "audio_duration_secs": 0.0}
+    return manager.get_usage_stats()
 
 
 async def get_youtube_start_time(video_id: str) -> float | None:
@@ -758,10 +776,14 @@ async def heartbeat(request: Request, sid: str):
     sid = sanitize_query_param(sid, "session ID")
     await _verify_session_admin(request, sid)
     now = datetime.now(timezone.utc)
-    await rooms_collection.update_one(
-        {"sid": sid},
-        {"$set": {"admin_last_heartbeat": now, "updated_at": now}}
-    )
+    update = {"admin_last_heartbeat": now, "updated_at": now}
+    manager = active_scribe_managers.get(sid)
+    if manager and manager.audio_bytes_total > 0:
+        stats = manager.get_usage_stats()
+        update["audio_bytes"] = stats["audio_bytes"]
+        update["audio_duration_secs"] = stats["audio_duration_secs"]
+        update["audio_chunks"] = stats["audio_chunks"]
+    await rooms_collection.update_one({"sid": sid}, {"$set": update})
     return {"status": "ok"}
 
 @app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=30, seconds=60, identifier=_get_session_uid))])
@@ -1054,5 +1076,14 @@ async def audio_buffer_append(socket_id, data):
         return
 
     manager = _get_or_create_scribe_manager(session_id)
+    # On first audio chunk of a new manager instance, restore previously saved usage from DB
+    # so counts survive page refreshes. Flag is set before the await to prevent double-restore.
+    if not manager._usage_restored:
+        manager._usage_restored = True
+        room_usage = await rooms_collection.find_one(
+            {"sid": session_id}, {"_id": 0, "audio_bytes": 1, "audio_chunks": 1}
+        )
+        if room_usage and room_usage.get("audio_bytes"):
+            manager.restore_usage(room_usage["audio_bytes"], room_usage.get("audio_chunks", 0))
     await manager.push_audio(base64_audio)
     
