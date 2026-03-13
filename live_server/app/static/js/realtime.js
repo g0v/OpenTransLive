@@ -103,7 +103,7 @@ async function startSession() {
 
     startLevelMeter();
 
-    audioProcessor.port.onmessage = async (e) => {
+    audioProcessor.port.onmessage = (e) => {
       if (!socket.connected) return;
 
       const inputData = e.data;
@@ -115,14 +115,18 @@ async function startSession() {
         view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
       }
 
-      const base64Audio = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+      // Convert to base64 in chunks to avoid call stack overflow on large buffers.
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64Audio = btoa(binary);
 
       socket.emit('audio_buffer_append', {
         secret_key: user_secret_key,
         audio: base64Audio
       });
-
-      await new Promise(resolve => setTimeout(resolve, 10));
     };
 
   } catch (error) {
