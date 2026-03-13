@@ -346,13 +346,15 @@ async def user_dashboard(request: Request):
         if isinstance(r.get("admin_last_heartbeat"), datetime):
             r["admin_last_heartbeat"] = r["admin_last_heartbeat"].isoformat()
     max_audio_secs = max((r.get("audio_duration_secs") or 0 for r in rooms), default=0)
+    for r in rooms:
+        dur = r.get("audio_duration_secs") or 0
+        r["audio_pct"] = min(int(dur / max_audio_secs * 100), 100) if max_audio_secs > 0 else 0
     is_realtime_enabled = await is_realtime_authorized(request.session)
     return templates.TemplateResponse("user_dashboard.html", {
         "request": request,
         "rooms": rooms,
         "current_email": email,
         "is_realtime_enabled": is_realtime_enabled,
-        "max_audio_secs": max_audio_secs,
     })
 
 
@@ -510,7 +512,7 @@ async def get_session_audio_usage_endpoint(request: Request, sid: str):
 
     manager = active_scribe_managers.get(sid)
     if not manager:
-        return {"audio_bytes": 0, "audio_chunks": 0, "audio_duration_secs": 0.0, "session_elapsed_secs": 0.0}
+        return {"audio_bytes": 0, "audio_chunks": 0, "audio_duration_secs": 0.0}
     return manager.get_usage_stats()
 
 

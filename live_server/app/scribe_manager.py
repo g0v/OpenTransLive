@@ -15,6 +15,9 @@ from .logger_config import setup_logger, log_exception
 logger = setup_logger(__name__)
 
 class ScribeSessionManager:
+    _BYTES_PER_SEC = 16000 * 2          # 16kHz 16-bit mono PCM
+    _LOG_INTERVAL_BYTES = 30 * 16000 * 2  # log every 30s of audio
+
     def __init__(self, session_id, callback):
         self.session_id = session_id
         self.api_key = REALTIME_SETTINGS.get("ELEVENLABS_API_KEY", '') 
@@ -38,9 +41,6 @@ class ScribeSessionManager:
         self.audio_chunks = 0
         self._logged_at_bytes = 0
         self._usage_restored = False  # set to True after first DB restore attempt
-        # 16kHz 16-bit mono PCM: 32000 bytes per second
-        self._BYTES_PER_SEC = 16000 * 2
-        self._LOG_INTERVAL_BYTES = 30 * self._BYTES_PER_SEC  # log every 30s of audio
 
     async def get_token(self) -> str | None:
         """Get a single-use token for realtime transcription"""
@@ -66,13 +66,10 @@ class ScribeSessionManager:
 
     def get_usage_stats(self) -> dict:
         """Return audio usage counters for this session."""
-        duration_secs = self.audio_bytes_total / self._BYTES_PER_SEC
-        elapsed_secs = (datetime.now(timezone.utc) - self.init_time).total_seconds()
         return {
             "audio_bytes": self.audio_bytes_total,
             "audio_chunks": self.audio_chunks,
-            "audio_duration_secs": round(duration_secs, 1),
-            "session_elapsed_secs": round(elapsed_secs, 1),
+            "audio_duration_secs": round(self.audio_bytes_total / self._BYTES_PER_SEC, 1),
         }
 
     async def push_audio(self, base64_audio: str):
