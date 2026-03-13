@@ -6,6 +6,10 @@ let micDeviceSelector = null;
 let mediaStream = null;
 let audioContext = null;
 let audioProcessor = null;
+let gainNode = null;
+let compressorNode = null;
+let analyserNode = null;
+let levelAnimFrame = null;
 
 socket.on('connect', function () {
   // Show pending state — auth is not yet confirmed by the server
@@ -53,7 +57,10 @@ async function startSession() {
 
     const audioConstraints = {
       channelCount: 1,
-      sampleRate: 16000
+      sampleRate: 16000,
+      autoGainControl: true,
+      noiseSuppression: true,
+      echoCancellation: true
     };
 
     if (selectedDeviceId) {
@@ -67,10 +74,34 @@ async function startSession() {
       return;
     }
     const source = audioContext.createMediaStreamSource(mediaStream);
+
+    // Dynamic range compressor to normalize loud/quiet audio
+    compressorNode = audioContext.createDynamicsCompressor();
+    compressorNode.threshold.setValueAtTime(-30, audioContext.currentTime);  // compress above -30 dB
+    compressorNode.knee.setValueAtTime(20, audioContext.currentTime);        // soft knee
+    compressorNode.ratio.setValueAtTime(6, audioContext.currentTime);        // 6:1 compression
+    compressorNode.attack.setValueAtTime(0.005, audioContext.currentTime);   // fast attack
+    compressorNode.release.setValueAtTime(0.15, audioContext.currentTime);   // moderate release
+
+    // Gain node for make-up gain after compression
+    gainNode = audioContext.createGain();
+    gainNode.gain.setValueAtTime(2.0, audioContext.currentTime);  // +6 dB make-up gain
+
+    // Analyser node for level metering (after gain, before worklet)
+    analyserNode = audioContext.createAnalyser();
+    analyserNode.fftSize = 256;
+    analyserNode.smoothingTimeConstant = 0.5;
+
     audioProcessor = new AudioWorkletNode(audioContext, 'audio-processor');
 
-    source.connect(audioProcessor);
+    // Audio graph: source -> compressor -> gain -> analyser -> worklet -> destination
+    source.connect(compressorNode);
+    compressorNode.connect(gainNode);
+    gainNode.connect(analyserNode);
+    analyserNode.connect(audioProcessor);
     audioProcessor.connect(audioContext.destination);
+
+    startLevelMeter();
 
     audioProcessor.port.onmessage = async (e) => {
       if (!socket.connected) return;
@@ -100,7 +131,60 @@ async function startSession() {
   }
 }
 
+function startLevelMeter() {
+  const container = document.getElementById('mic-level-container');
+  const bar = document.getElementById('mic-level-bar');
+  const dbLabel = document.getElementById('mic-level-db');
+  if (!container || !bar || !dbLabel) return;
+
+  container.style.display = '';
+  const dataArray = new Float32Array(analyserNode.fftSize);
+
+  function update() {
+    if (!analyserNode) return;
+    analyserNode.getFloatTimeDomainData(dataArray);
+
+    // Compute RMS level
+    let sum = 0;
+    for (let i = 0; i < dataArray.length; i++) {
+      sum += dataArray[i] * dataArray[i];
+    }
+    const rms = Math.sqrt(sum / dataArray.length);
+    const db = rms > 0 ? 20 * Math.log10(rms) : -100;
+
+    // Map dB to percentage: -60 dB = 0%, 0 dB = 100%
+    const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
+
+    bar.style.width = pct + '%';
+    // Color: green below 70%, yellow 70-90%, red above 90%
+    if (pct > 90) {
+      bar.className = bar.className.replace(/bg-\w+-500/, 'bg-red-500');
+    } else if (pct > 70) {
+      bar.className = bar.className.replace(/bg-\w+-500/, 'bg-yellow-500');
+    } else {
+      bar.className = bar.className.replace(/bg-\w+-500/, 'bg-green-500');
+    }
+    dbLabel.textContent = (db > -100 ? db.toFixed(0) : '--') + 'dB';
+    levelAnimFrame = requestAnimationFrame(update);
+  }
+  levelAnimFrame = requestAnimationFrame(update);
+}
+
+function stopLevelMeter() {
+  if (levelAnimFrame) {
+    cancelAnimationFrame(levelAnimFrame);
+    levelAnimFrame = null;
+  }
+  const container = document.getElementById('mic-level-container');
+  const bar = document.getElementById('mic-level-bar');
+  const dbLabel = document.getElementById('mic-level-db');
+  if (container) container.style.display = 'none';
+  if (bar) bar.style.width = '0%';
+  if (dbLabel) dbLabel.textContent = '--dB';
+}
+
 async function stopSession() {
+  stopLevelMeter();
   if (mediaStream) {
     mediaStream.getTracks().forEach(track => track.stop());
     mediaStream = null;
@@ -108,6 +192,18 @@ async function stopSession() {
   if (audioProcessor) {
     audioProcessor.disconnect();
     audioProcessor = null;
+  }
+  if (analyserNode) {
+    analyserNode.disconnect();
+    analyserNode = null;
+  }
+  if (compressorNode) {
+    compressorNode.disconnect();
+    compressorNode = null;
+  }
+  if (gainNode) {
+    gainNode.disconnect();
+    gainNode = null;
   }
   if (audioContext) {
     audioContext.close();

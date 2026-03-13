@@ -39,6 +39,12 @@
           <iconify-icon id="mic-icon-off" icon="mdi:microphone-off" width="20" height="20"></iconify-icon>
           <span id="mic-label">MIC OFF</span>
         </button>
+        <div id="mic-level-container" class="flex items-center gap-1" style="display:none;">
+          <div class="relative w-24 h-3 bg-gray-700 rounded overflow-hidden">
+            <div id="mic-level-bar" class="absolute left-0 top-0 h-full bg-green-500 rounded transition-none" style="width:0%"></div>
+          </div>
+          <span id="mic-level-db" class="text-xs text-gray-500 w-10 text-right font-mono">--dB</span>
+        </div>
         <select id="mic-device-selector"
           class="w-full max-w-64 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-2 py-1 text-sm rounded focus:ring-1 focus:ring-blue-500 outline-none"
           style="display:none;">
