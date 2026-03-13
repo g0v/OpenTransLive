@@ -343,7 +343,7 @@ Previous context for reference: {prev_translation}
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "developer", 
-                 "content": "If there are very special keywords in the provide text, add them to the special_keywords list.\nreturn in json format:\n{\"special_keywords\": []}"},
+                 "content": "If there are special nouns or names in the provide text, add them to the special_keywords list.\nreturn in json format:\n{\"special_keywords\": []}"},
                 {"role": "user", "content": result["corrected"] }
             ]
         }
