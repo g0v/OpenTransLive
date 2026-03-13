@@ -1089,6 +1089,16 @@ async def audio_buffer_append(socket_id, data):
         return
 
     manager = _get_or_create_scribe_manager(session_id)
+    # On first audio chunk of a new manager instance, restore previously saved usage from DB
+    # so counts survive page refreshes. Flag is set before the await to prevent double-restore.
+    if not manager._usage_restored:
+        manager._usage_restored = True
+        room_usage = await rooms_collection.find_one(
+            {"sid": session_id}, {"_id": 0, "audio_bytes": 1, "audio_chunks": 1}
+        )
+        if room_usage and room_usage.get("audio_bytes"):
+            manager.restore_usage(room_usage["audio_bytes"], room_usage.get("audio_chunks", 0))
+            _audio_usage_last_saved[session_id] = room_usage["audio_bytes"]
     await manager.push_audio(base64_audio)
     # Persist usage to DB every _AUDIO_SAVE_INTERVAL_BYTES of accumulated audio
     last_saved = _audio_usage_last_saved.get(session_id, 0)

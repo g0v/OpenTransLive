@@ -37,6 +37,7 @@ class ScribeSessionManager:
         self.audio_bytes_total = 0
         self.audio_chunks = 0
         self._logged_at_bytes = 0
+        self._usage_restored = False  # set to True after first DB restore attempt
         # 16kHz 16-bit mono PCM: 32000 bytes per second
         self._BYTES_PER_SEC = 16000 * 2
         self._LOG_INTERVAL_BYTES = 30 * self._BYTES_PER_SEC  # log every 30s of audio
@@ -56,6 +57,12 @@ class ScribeSessionManager:
         except Exception as e:
             log_exception(logger, e, "Error getting Scribe API token")
             return None
+
+    def restore_usage(self, audio_bytes: int, audio_chunks: int):
+        """Restore usage counters from a previously saved DB value."""
+        self.audio_bytes_total = audio_bytes
+        self.audio_chunks = audio_chunks
+        self._logged_at_bytes = audio_bytes
 
     def get_usage_stats(self) -> dict:
         """Return audio usage counters for this session."""
