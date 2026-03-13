@@ -316,6 +316,7 @@ Constraints:
 2. Original Style: Keep the exact speaking tone.
 3. Minimal Edit: If languages match, only fix typos.
 4. Format: Output ONLY processed text.
+5. Punctuation: Add punctuation marks.
 
 Previous context for reference: {prev_translation}
 """

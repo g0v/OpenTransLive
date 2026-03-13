@@ -220,7 +220,7 @@ class ScribeSessionManager:
                 "audio_format": "pcm_16000",
                 "commit_strategy": "vad",
                 "vad_silence_threshold_secs": 0.5,
-                "vad_threshold": 0.4,
+                "vad_threshold": 0.3,
                 "min_speech_duration_ms": 250,
                 "min_silence_duration_ms": 250,
                 "include_timestamps": "false"
