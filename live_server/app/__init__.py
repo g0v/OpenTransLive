@@ -52,6 +52,9 @@ logger = setup_logger(__name__)
 _MANAGER_CACHE_TTL = 1800   # seconds (30 min)
 _MANAGER_CACHE_MAX = 512
 
+_MAX_AUDIO_CHUNK_SIZE = 1 * 1024 * 1024  # 1MB in bytes
+_BASE64_RE = re.compile(r'^[A-Za-z0-9+/]*={0,2}$')
+
 
 class _ManagerTTLCache(TTLCache):
     """TTLCache that calls manager.stop() when an entry is evicted."""
@@ -1065,15 +1068,14 @@ async def audio_buffer_append(socket_id, data):
 
     # Validate size limit (max 1MB per chunk)
     # Base64 encoding increases size by ~33%, so 1MB limit = ~750KB of actual data
-    MAX_AUDIO_CHUNK_SIZE = 1 * 1024 * 1024  # 1MB in bytes
-    if len(base64_audio) > MAX_AUDIO_CHUNK_SIZE:
-        await sio.emit('error', {'message': f'Audio chunk too large: maximum {MAX_AUDIO_CHUNK_SIZE} bytes allowed'}, to=socket_id)
+    if len(base64_audio) > _MAX_AUDIO_CHUNK_SIZE:
+        await sio.emit('error', {'message': f'Audio chunk too large: maximum {_MAX_AUDIO_CHUNK_SIZE} bytes allowed'}, to=socket_id)
         return
 
     # Lightweight base64 format check: validate length is a multiple of 4
     # and that the first 16 characters match the base64 character set.
     # Full decoding a 1MB chunk just for validation is CPU-intensive at scale.
-    if len(base64_audio) % 4 != 0 or not re.match(r'^[A-Za-z0-9+/]*={0,2}$', base64_audio[:16]):
+    if len(base64_audio) % 4 != 0 or not _BASE64_RE.match(base64_audio[:16]):
         await sio.emit('error', {'message': 'Invalid base64 audio data'}, to=socket_id)
         logger.warning(f"Invalid base64 audio data from socket {socket_id}")
         return
