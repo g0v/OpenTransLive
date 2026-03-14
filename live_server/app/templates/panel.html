@@ -51,6 +51,15 @@
           <option value="">Select Microphone</option>
         </select>
       </div>
+      <!-- Detect Language select (only for realtime transcription) -->
+      <div class="toolbar-group">
+        <span class="toolbar-label">Detect Lang</span>
+        <select id="scribe-lang-select"
+          class="bg-gray-800 border border-gray-700 text-sm text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none">
+          <option value="">Auto Detect</option>
+        </select>
+        <span id="scribe-lang-status" class="text-xs text-gray-500 min-w-12">Saved</span>
+      </div>
       {% endif %}
 
       <!-- Keywords panel -->
@@ -309,6 +318,38 @@
     }
   })
 
+  // ── Scribe detect language select ────────────────────────────────────────
+
+  async function loadScribeLanguage() {
+    try {
+      const res = await fetch(`/api/session/${sid}/scribe-language`, { credentials: 'same-origin' })
+      if (res.ok) {
+        const data = await res.json()
+        const sel = document.getElementById('scribe-lang-select')
+        if (sel) sel.value = data.language || ''
+      }
+    } catch (e) {
+      console.error('Failed to load scribe language:', e)
+    }
+  }
+
+  async function saveScribeLanguage(language) {
+    const statusEl = document.getElementById('scribe-lang-status')
+    if (statusEl) statusEl.textContent = 'Saving'
+    try {
+      const res = await fetch(`/api/session/${sid}/scribe-language`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language })
+      })
+      if (statusEl) statusEl.textContent = res.ok ? 'Saved' : 'Error'
+    } catch (e) {
+      if (statusEl) statusEl.textContent = 'Error'
+      console.error('Failed to save scribe language:', e)
+    }
+  }
+
   // ── Language multi-select dropdown ───────────────────────────────────────
   const PRESET_LANGUAGES = [
     { code: 'zh-Hant-TW', label: 'Chinese Traditional (Taiwan)' },
@@ -540,6 +581,21 @@
   }
 
   document.addEventListener('DOMContentLoaded', function () {
+    // Populate and wire up scribe detect language select
+    const scribeLangSelect = document.getElementById('scribe-lang-select')
+    if (scribeLangSelect) {
+      PRESET_LANGUAGES.forEach(function ({ code, label }) {
+        const opt = document.createElement('option')
+        opt.value = code
+        opt.textContent = label + ' (' + code + ')'
+        scribeLangSelect.appendChild(opt)
+      })
+      loadScribeLanguage()
+      scribeLangSelect.addEventListener('change', function () {
+        saveScribeLanguage(this.value)
+      })
+    }
+
     loadLanguages()
     loadKeywords()
 

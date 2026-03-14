@@ -18,13 +18,14 @@ class ScribeSessionManager:
     _BYTES_PER_SEC = 16000 * 2          # 16kHz 16-bit mono PCM
     _LOG_INTERVAL_BYTES = 30 * 16000 * 2  # log every 30s of audio
 
-    def __init__(self, session_id, callback):
+    def __init__(self, session_id, callback, language_code: str = ""):
         self.session_id = session_id
-        self.api_key = REALTIME_SETTINGS.get("ELEVENLABS_API_KEY", '') 
+        self.api_key = REALTIME_SETTINGS.get("ELEVENLABS_API_KEY", '')
         if not self.api_key:
             logger.error(f"Missing ELEVENLABS_API_KEY for {session_id}")
             return
         self.callback = callback
+        self.language_code = language_code
         self.ws = None
         self.is_running = False
         self.ws_url = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
@@ -212,7 +213,7 @@ class ScribeSessionManager:
                 logger.error(f"Failed to get Scribe token for {self.session_id}")
                 return
 
-            params = urlencode({
+            params_dict = {
                 "token": token,
                 "model_id": "scribe_v2_realtime",
                 "audio_format": "pcm_16000",
@@ -222,7 +223,11 @@ class ScribeSessionManager:
                 "min_speech_duration_ms": 250,
                 "min_silence_duration_ms": 250,
                 "include_timestamps": "false"
-            })
+            }
+            if self.language_code:
+                params_dict["language_code"] = self.language_code
+                logger.info(f"Scribe forced language: {self.language_code} for {self.session_id}")
+            params = urlencode(params_dict)
             url = f"{self.ws_url}?{params}"
             
             async with ws_connect(url, additional_headers={"xi-api-key": self.api_key}) as ws:

@@ -81,11 +81,13 @@ _partial_debounce_tasks: dict = {}
 # Audio usage save tracking: session_id -> last saved bytes
 
 
-def _get_or_create_scribe_manager(session_id) -> ScribeSessionManager:
+async def _get_or_create_scribe_manager(session_id) -> ScribeSessionManager:
     """Return existing running ScribeSessionManager or create and start a new one."""
     manager = active_scribe_managers.get(session_id)
     if not manager or not manager.is_running:
-        manager = ScribeSessionManager(session_id, on_scribe_transcription)
+        from .translator import get_session_scribe_language
+        language_code = await get_session_scribe_language(redis_client, session_id)
+        manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code)
         active_scribe_managers[session_id] = manager
         asyncio.create_task(manager.start())
     return manager
@@ -486,6 +488,41 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
     if locked_keywords is not None:
         result["locked_keywords"] = locked_keywords
     return result
+
+
+@app.get("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+async def get_session_scribe_language_endpoint(request: Request, sid: str):
+    """Get the forced detect language for Scribe (empty means auto-detect)."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _verify_session_admin(request, sid)
+
+    from .translator import get_session_scribe_language
+    language = await get_session_scribe_language(redis_client, sid)
+    return {"language": language}
+
+
+@app.post("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+async def update_session_scribe_language_endpoint(request: Request, sid: str):
+    """Set or clear the forced detect language for Scribe."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _verify_session_admin(request, sid)
+
+    body = await request.json()
+    language = body.get("language", "")
+    if not isinstance(language, str):
+        raise HTTPException(status_code=400, detail="language must be a string")
+    if language and ('$' in language or len(language) > 32):
+        raise HTTPException(status_code=400, detail=f"Invalid language value: {language}")
+
+    from .translator import save_session_scribe_language
+    await save_session_scribe_language(redis_client, sid, language.strip())
+
+    # Restart the active scribe manager so the new language takes effect immediately.
+    manager = active_scribe_managers.pop(sid, None)
+    if manager and manager.is_running:
+        asyncio.create_task(manager.stop())
+
+    return {"language": language.strip()}
 
 
 @app.get("/api/session/{sid}/audio-usage", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
@@ -1029,7 +1066,7 @@ async def realtime_connect(socket_id, data):
     session_id = next((r for r in rooms if r != socket_id), None)
 
     if await is_realtime_authorized(session):
-        _get_or_create_scribe_manager(session_id)
+        await _get_or_create_scribe_manager(session_id)
         _get_or_create_translation_manager(session_id)
 
 
@@ -1080,7 +1117,7 @@ async def audio_buffer_append(socket_id, data):
         logger.warning(f"Invalid base64 audio data from socket {socket_id}")
         return
 
-    manager = _get_or_create_scribe_manager(session_id)
+    manager = await _get_or_create_scribe_manager(session_id)
     # On first audio chunk of a new manager instance, restore previously saved usage from DB
     # so counts survive page refreshes. Flag is set before the await to prevent double-restore.
     if not manager._usage_restored:

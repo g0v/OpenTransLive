@@ -96,6 +96,28 @@ async def save_session_languages(redis_client, session_id, languages: list[str])
         log_exception(logger, e, "Redis set languages error")
 
 
+async def get_session_scribe_language(redis_client, session_id) -> str:
+    """Return forced detect language for Scribe, empty string means auto-detect."""
+    try:
+        raw = await redis_client.get(f"scribe_language:{session_id}")
+        if raw:
+            return raw.decode() if isinstance(raw, bytes) else raw
+    except Exception as e:
+        log_exception(logger, e, "Redis get scribe_language error")
+    return ""
+
+
+async def save_session_scribe_language(redis_client, session_id, language: str):
+    """Persist forced detect language for Scribe in Redis."""
+    try:
+        if language:
+            await redis_client.set(f"scribe_language:{session_id}", language, ex=86400)
+        else:
+            await redis_client.delete(f"scribe_language:{session_id}")
+    except Exception as e:
+        log_exception(logger, e, "Redis set scribe_language error")
+
+
 async def get_current_keywords(redis_client, session_id):
     try:
         keywords = await redis_client.get(f"keywords:{session_id}")
