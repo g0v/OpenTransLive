@@ -517,11 +517,14 @@ async def update_session_scribe_language_endpoint(request: Request, sid: str):
     await save_session_scribe_language(redis_client, sid, language)
 
     # Restart the active scribe manager so the new language takes effect immediately.
-    manager = active_scribe_managers.pop(sid, None)
-    if manager and manager.is_running:
-        asyncio.create_task(manager.stop())
+    old_manager = active_scribe_managers.pop(sid, None)
+    was_running = old_manager and old_manager.is_running
+    if was_running:
+        asyncio.create_task(old_manager.stop())
+    if was_running:
+        await _create_scribe_manager(sid)
 
-    return {"language": language.strip()}
+    return {"language": language}
 
 
 @app.get("/api/session/{sid}/audio-usage", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
