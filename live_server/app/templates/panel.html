@@ -42,6 +42,7 @@
         <div id="mic-level-container" class="flex items-center gap-1" style="display:none;">
           <div class="relative w-24 h-3 bg-gray-700 rounded overflow-hidden">
             <div id="mic-level-bar" class="absolute left-0 top-0 h-full bg-green-500 rounded transition-none" style="width:0%"></div>
+            <div id="mic-peak-indicator" class="absolute top-0 h-full" style="width:2px; left:0%; transform:translateX(-50%); background-color:#22c55e;"></div>
           </div>
           <span id="mic-level-db" class="text-xs text-gray-500 w-10 text-right font-mono">--dB</span>
         </div>
@@ -187,6 +188,20 @@
 
   .mic-on:hover {
     background: #991b1b;
+  }
+
+  #mic-peak-indicator {
+    display: none;
+  }
+
+  #mic-peak-indicator.peak-active {
+    display: block;
+    animation: peak-hold 3s ease-in forwards;
+  }
+
+  @keyframes peak-hold {
+    0%, 80% { opacity: 1; }
+    100%     { opacity: 0; }
   }
 
   @keyframes mic-pulse {
