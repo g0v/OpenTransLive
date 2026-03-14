@@ -139,16 +139,14 @@ function startLevelMeter() {
   const container = document.getElementById('mic-level-container');
   const bar = document.getElementById('mic-level-bar');
   const dbLabel = document.getElementById('mic-level-db');
-  const peakIndicator = document.getElementById('mic-peak-indicator');
   if (!container || !bar || !dbLabel) return;
 
   container.style.display = '';
   const dataArray = new Float32Array(analyserNode.fftSize);
 
   let smoothPct = 0;
-  let peakPct = 0;
   const RISE_COEFF = 0.25;  // fast attack
-  const FALL_COEFF = 0.04;  // slow decay
+  const FALL_COEFF = 0.025;  // slow decay
 
   function update() {
     if (!analyserNode) return;
@@ -176,20 +174,15 @@ function startLevelMeter() {
     // Color: green below 70%, yellow 70-90%, red above 90%
     if (smoothPct > 90) {
       bar.className = bar.className.replace(/bg-\w+-500/, 'bg-red-500');
+      if (dbLabel) {
+        console.log("peak");
+        dbLabel.classList.remove('peak-active');
+        dbLabel.classList.add('peak-active');
+      }
     } else if (smoothPct > 70) {
       bar.className = bar.className.replace(/bg-\w+-500/, 'bg-yellow-500');
     } else {
       bar.className = bar.className.replace(/bg-\w+-500/, 'bg-green-500');
-    }
-
-    // Peak indicator: restart CSS animation on new peak
-    if (peakIndicator && smoothPct > peakPct) {
-      peakPct = smoothPct;
-      peakIndicator.style.left = peakPct + '%';
-      peakIndicator.style.backgroundColor = peakPct > 90 ? '#ef4444' : peakPct > 70 ? '#eab308' : '#22c55e';
-      peakIndicator.classList.remove('peak-active');
-      void peakIndicator.offsetWidth; // force reflow to restart animation
-      peakIndicator.classList.add('peak-active');
     }
 
     dbLabel.textContent = (db > -100 ? db.toFixed(0) : '--') + 'dB';
@@ -206,11 +199,9 @@ function stopLevelMeter() {
   const container = document.getElementById('mic-level-container');
   const bar = document.getElementById('mic-level-bar');
   const dbLabel = document.getElementById('mic-level-db');
-  const peakIndicator = document.getElementById('mic-peak-indicator');
   if (container) container.style.display = 'none';
   if (bar) bar.style.width = '0%';
   if (dbLabel) dbLabel.textContent = '--dB';
-  if (peakIndicator) peakIndicator.classList.remove('peak-active');
 }
 
 async function stopSession() {

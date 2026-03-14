@@ -5,7 +5,7 @@
 <div class="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
   <!-- Top Bar -->
   <header class="">
-    <div class="px-6 py-3 bg-gray-800 flex items-center flex-wrap gap-4">
+    <div class="px-4 md:px-8 py-3 bg-gray-800 flex items-center flex-wrap gap-4">
       <div class="toolbar-group flex-grow-1">
         <span class="toolbar-label">Viewer Link</span>
         <div class="relative group flex-grow-1">
@@ -21,7 +21,7 @@
         <span class="toolbar-label">KEY</span>
         <div class="relative group">
           <input id="user-secret-key" type="text" value="{{ user_secret_key }}"
-            class="copyable-input w-full max-w-32 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
+            class="copyable-input w-full max-w-48 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
             readonly title="{{ user_secret_key }}">
           <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
             <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
@@ -41,13 +41,13 @@
         </button>
         <div id="mic-level-container" class="flex items-center gap-1" style="display:none;">
           <div class="relative w-24 h-3 bg-gray-700 rounded overflow-hidden">
-            <div id="mic-level-bar" class="absolute left-0 top-0 h-full bg-green-500 rounded transition-none" style="width:0%"></div>
-            <div id="mic-peak-indicator" class="absolute top-0 h-full" style="width:2px; left:0%; transform:translateX(-50%); background-color:#22c55e;"></div>
+            <div id="mic-level-bar" class="absolute left-0 top-0 h-full bg-green-500 rounded transition-none"
+              style="width:0%"></div>
           </div>
           <span id="mic-level-db" class="text-xs text-gray-500 w-10 text-right font-mono">--dB</span>
         </div>
         <select id="mic-device-selector"
-          class="w-full max-w-64 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-2 py-1 text-sm rounded focus:ring-1 focus:ring-blue-500 outline-none"
+          class="w-full max-w-48 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-2 py-1 text-sm rounded focus:ring-1 focus:ring-blue-500 outline-none"
           style="display:none;">
           <option value="">Select Microphone</option>
         </select>
@@ -56,7 +56,7 @@
       <div class="toolbar-group">
         <span class="toolbar-label">Detect Lang</span>
         <select id="scribe-lang-select"
-          class="bg-gray-800 border border-gray-700 text-sm text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none">
+          class="w-full max-w-48 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none">
           <option value="">Auto Detect</option>
         </select>
         <span id="scribe-lang-status" class="text-xs text-gray-500 min-w-12">Saved</span>
@@ -190,18 +190,20 @@
     background: #991b1b;
   }
 
-  #mic-peak-indicator {
-    display: none;
-  }
-
-  #mic-peak-indicator.peak-active {
-    display: block;
+  #mic-level-db.peak-active {
     animation: peak-hold 3s ease-in forwards;
   }
 
   @keyframes peak-hold {
-    0%, 80% { opacity: 1; }
-    100%     { opacity: 0; }
+
+    0%,
+    95% {
+      color: #ef4444;
+    }
+
+    100% {
+      color: inherit;
+    }
   }
 
   @keyframes mic-pulse {
@@ -415,16 +417,15 @@
 
   // ── Language multi-select dropdown ───────────────────────────────────────
   const PRESET_LANGUAGES = [
+    { code: 'en-US', label: 'English (US)' },
     { code: 'zh-Hant-TW', label: 'Chinese Traditional (Taiwan)' },
     { code: 'zh-Hans-CN', label: 'Chinese Simplified (China)' },
-    { code: 'en-US', label: 'English (US)' },
-    { code: 'en-GB', label: 'English (UK)' },
     { code: 'ja-JP', label: 'Japanese' },
     { code: 'ko-KR', label: 'Korean' },
+    { code: 'pt-BR', label: 'Portuguese (Brazil)' },
     { code: 'es-ES', label: 'Spanish' },
     { code: 'fr-FR', label: 'French' },
     { code: 'de-DE', label: 'German' },
-    { code: 'pt-BR', label: 'Portuguese (Brazil)' },
     { code: 'ar-SA', label: 'Arabic' },
     { code: 'th-TH', label: 'Thai' },
     { code: 'vi-VN', label: 'Vietnamese' },
