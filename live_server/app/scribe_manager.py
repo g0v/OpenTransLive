@@ -100,13 +100,11 @@ class ScribeSessionManager:
                     break
 
                 if self.ws:
-                    message = {
-                        "message_type": "input_audio_chunk",
-                        "audio_base_64": base64_audio,
-                        "sample_rate": 16000,
-                        "commit": False
-                    }
-                    await self.ws.send(json.dumps(message))
+                    await self.ws.send(
+                        '{"message_type":"input_audio_chunk","audio_base_64":"'
+                        + base64_audio
+                        + '","sample_rate":16000,"commit":false}'
+                    )
                 self.audio_queue.task_done()
         except (asyncio.CancelledError, ConnectionClosed, ConnectionClosedOK):
             pass
