@@ -1035,8 +1035,7 @@ async def audio_buffer_append(socket_id, data):
     """Handle client audio buffer append events"""
     session = await sio.get_session(socket_id)
 
-    rooms = sio.rooms(socket_id)
-    session_id = next((r for r in rooms if r != socket_id), None)
+    session_id = session.get('session_id')
 
     if not session_id:
         print("No session ID found for socket ID:", socket_id, flush=True)
