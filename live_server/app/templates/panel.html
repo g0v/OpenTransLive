@@ -319,6 +319,54 @@
   })
 
   // ── Scribe detect language select ────────────────────────────────────────
+  // Scribe v2 requires ISO 639-1 (2-char) or ISO 639-3 (3-char) codes.
+  const SCRIBE_LANGUAGES = [
+    { code: 'zho', label: 'Mandarin Chinese' },
+    { code: 'yue', label: 'Cantonese' },
+    { code: 'eng', label: 'English' },
+    { code: 'jpn', label: 'Japanese' },
+    { code: 'kor', label: 'Korean' },
+    { code: 'spa', label: 'Spanish' },
+    { code: 'fra', label: 'French' },
+    { code: 'deu', label: 'German' },
+    { code: 'por', label: 'Portuguese' },
+    { code: 'ara', label: 'Arabic' },
+    { code: 'tha', label: 'Thai' },
+    { code: 'vie', label: 'Vietnamese' },
+    { code: 'ind', label: 'Indonesian' },
+    { code: 'rus', label: 'Russian' },
+    { code: 'ita', label: 'Italian' },
+    { code: 'tur', label: 'Turkish' },
+    { code: 'pol', label: 'Polish' },
+    { code: 'nld', label: 'Dutch' },
+    { code: 'hin', label: 'Hindi' },
+    { code: 'ben', label: 'Bengali' },
+    { code: 'ukr', label: 'Ukrainian' },
+    { code: 'swe', label: 'Swedish' },
+    { code: 'nor', label: 'Norwegian' },
+    { code: 'dan', label: 'Danish' },
+    { code: 'fin', label: 'Finnish' },
+    { code: 'ces', label: 'Czech' },
+    { code: 'ron', label: 'Romanian' },
+    { code: 'msa', label: 'Malay' },
+    { code: 'fil', label: 'Filipino' },
+    { code: 'ell', label: 'Greek' },
+    { code: 'heb', label: 'Hebrew' },
+    { code: 'fas', label: 'Persian' },
+    { code: 'tam', label: 'Tamil' },
+    { code: 'tel', label: 'Telugu' },
+    { code: 'kan', label: 'Kannada' },
+    { code: 'mal', label: 'Malayalam' },
+    { code: 'guj', label: 'Gujarati' },
+    { code: 'mar', label: 'Marathi' },
+    { code: 'urd', label: 'Urdu' },
+    { code: 'srp', label: 'Serbian' },
+    { code: 'hrv', label: 'Croatian' },
+    { code: 'bul', label: 'Bulgarian' },
+    { code: 'slk', label: 'Slovak' },
+    { code: 'hun', label: 'Hungarian' },
+    { code: 'cat', label: 'Catalan' },
+  ]
 
   async function loadScribeLanguage() {
     try {
@@ -584,7 +632,7 @@
     // Populate and wire up scribe detect language select
     const scribeLangSelect = document.getElementById('scribe-lang-select')
     if (scribeLangSelect) {
-      PRESET_LANGUAGES.forEach(function ({ code, label }) {
+      SCRIBE_LANGUAGES.forEach(function ({ code, label }) {
         const opt = document.createElement('option')
         opt.value = code
         opt.textContent = label + ' (' + code + ')'

@@ -81,15 +81,13 @@ _partial_debounce_tasks: dict = {}
 # Audio usage save tracking: session_id -> last saved bytes
 
 
-async def _get_or_create_scribe_manager(session_id) -> ScribeSessionManager:
-    """Return existing running ScribeSessionManager or create and start a new one."""
-    manager = active_scribe_managers.get(session_id)
-    if not manager or not manager.is_running:
-        from .translator import get_session_scribe_language
-        language_code = await get_session_scribe_language(redis_client, session_id)
-        manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code)
-        active_scribe_managers[session_id] = manager
-        asyncio.create_task(manager.start())
+async def _create_scribe_manager(session_id) -> ScribeSessionManager:
+    """Create, register, and start a new ScribeSessionManager for the session."""
+    from .translator import get_session_scribe_language
+    language_code = await get_session_scribe_language(redis_client, session_id)
+    manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code)
+    active_scribe_managers[session_id] = manager
+    asyncio.create_task(manager.start())
     return manager
 
 
@@ -511,11 +509,12 @@ async def update_session_scribe_language_endpoint(request: Request, sid: str):
     language = body.get("language", "")
     if not isinstance(language, str):
         raise HTTPException(status_code=400, detail="language must be a string")
-    if language and ('$' in language or len(language) > 32):
-        raise HTTPException(status_code=400, detail=f"Invalid language value: {language}")
+    language = language.strip().lower()
+    if language and not re.fullmatch(r'[a-z]{2,3}', language):
+        raise HTTPException(status_code=400, detail="language must be an ISO 639-1 (2-char) or ISO 639-3 (3-char) code")
 
     from .translator import save_session_scribe_language
-    await save_session_scribe_language(redis_client, sid, language.strip())
+    await save_session_scribe_language(redis_client, sid, language)
 
     # Restart the active scribe manager so the new language takes effect immediately.
     manager = active_scribe_managers.pop(sid, None)
@@ -1066,7 +1065,7 @@ async def realtime_connect(socket_id, data):
     session_id = next((r for r in rooms if r != socket_id), None)
 
     if await is_realtime_authorized(session):
-        await _get_or_create_scribe_manager(session_id)
+        await _create_scribe_manager(session_id)
         _get_or_create_translation_manager(session_id)
 
 
@@ -1117,7 +1116,9 @@ async def audio_buffer_append(socket_id, data):
         logger.warning(f"Invalid base64 audio data from socket {socket_id}")
         return
 
-    manager = await _get_or_create_scribe_manager(session_id)
+    manager = active_scribe_managers.get(session_id)
+    if not manager or not manager.is_running:
+        return
     # On first audio chunk of a new manager instance, restore previously saved usage from DB
     # so counts survive page refreshes. Flag is set before the await to prevent double-restore.
     if not manager._usage_restored:
