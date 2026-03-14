@@ -1041,13 +1041,12 @@ async def audio_buffer_append(socket_id, data):
         print("No session ID found for socket ID:", socket_id, flush=True)
         return
 
-    secret_key = session.get('secret_key') or data.get('secret_key')
-    if not await _ensure_socket_verified(socket_id, session, secret_key, session_id):
-        return
-
-    # Cache the realtime authorization result in the session to avoid a DB query
-    # on every audio chunk (which fires ~4–10 times per second).
+    # On every chunk after the first, skip all auth awaits: realtime_authorized
+    # being True already implies verified is True (set together on first chunk).
     if not session.get('realtime_authorized'):
+        secret_key = session.get('secret_key') or data.get('secret_key')
+        if not await _ensure_socket_verified(socket_id, session, secret_key, session_id):
+            return
         if not await is_realtime_authorized(session):
             await sio.emit('error', {'message': 'Unauthorized: realtime token required'}, to=socket_id)
             return
