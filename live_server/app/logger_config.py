@@ -8,13 +8,13 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-def setup_logger(name: str = __name__, log_file: str | None = None, level: int = logging.INFO) -> logging.Logger:
+def setup_logger(name: str = __name__, log_file: str | Path | None = None, level: int = logging.INFO) -> logging.Logger:
     """
     Setup centralized logging configuration.
 
     Args:
         name: Logger name
-        log_file: Optional log file path. If None, creates default log file
+        log_file: Optional log file path (str or Path). If None, creates default log file
         level: Logging level (default: INFO)
 
     Returns:

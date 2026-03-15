@@ -83,7 +83,7 @@
 
   /* ── Scrollable dropdown list ────────────────────────────────────────── */
   .dropdown-list {
-    @apply flex flex-col gap-1 max-h-64 overflow-y-auto;
+    @apply flex flex-col gap-1 max-h-64 overflow-y-auto text-xs;
   }
 
   /* ── Dropdown list add-row (border + input + button) ────────────────── */

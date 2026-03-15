@@ -10,7 +10,7 @@
         <span class="toolbar-label">Viewer Link</span>
         <div class="relative group flex-grow-1">
           <input id="viewer-url" type="text" value=""
-            class="copyable-input w-full bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly"
+            class="copyable-input w-full min-w-40 bg-gray-800 border-none text-xs text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly"
             readonly>
           <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
             <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
@@ -21,7 +21,7 @@
         <span class="toolbar-label">KEY</span>
         <div class="relative group">
           <input id="user-secret-key" type="text" value="{{ user_secret_key }}"
-            class="copyable-input w-full max-w-48 bg-gray-800 border-none text-sm text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
+            class="copyable-input w-full max-w-40 bg-gray-800 border-none text-xs text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
             readonly title="{{ user_secret_key }}">
           <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
             <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
@@ -47,7 +47,7 @@
           <span id="mic-level-db" class="text-xs text-gray-500 w-10 text-right font-mono">--dB</span>
         </div>
         <select id="mic-device-selector"
-          class="w-full max-w-48 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-2 py-1 text-sm rounded focus:ring-1 focus:ring-blue-500 outline-none"
+          class="w-full max-w-48 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 text-sm rounded focus:ring-1 focus:ring-blue-500 outline-none"
           style="display:none;">
           <option value="">Select Microphone</option>
         </select>
@@ -56,7 +56,7 @@
       <div class="toolbar-group">
         <span class="toolbar-label">Detect Lang</span>
         <select id="scribe-lang-select"
-          class="w-full max-w-48 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none">
+          class="w-full max-w-48 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none">
           <option value="">Auto Detect</option>
         </select>
         <span id="scribe-lang-status" class="text-xs text-gray-500 min-w-12">Saved</span>
@@ -67,7 +67,7 @@
       <div class="toolbar-group">
         <span class="toolbar-label">Keywords</span>
         <button id="kw-dropdown-btn" type="button" class="dropdown-btn min-w-20 max-w-40">
-          <span id="kw-dropdown-label" class="truncate flex-1">Loading...</span>
+          <span id="kw-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
           <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
         </button>
         <span id="keyword-status" class="text-xs text-gray-500 min-w-12">Saved</span>
@@ -87,7 +87,7 @@
       <div class="toolbar-group">
         <span class="toolbar-label">Languages</span>
         <button id="lang-dropdown-btn" type="button" class="dropdown-btn min-w-32 max-w-48">
-          <span id="lang-dropdown-label" class="truncate flex-1">Loading...</span>
+          <span id="lang-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
           <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
         </button>
         <span id="language-status" class="text-xs text-gray-500 min-w-12">Saved</span>
