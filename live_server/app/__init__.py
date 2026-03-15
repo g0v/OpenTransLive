@@ -321,7 +321,7 @@ async def user_dashboard(request: Request):
     if not email or not user_uid:
         return RedirectResponse(url="/login", status_code=302)
     rooms = await rooms_collection.find(
-        {"admin_uid": user_uid},
+        {"admin_email": email.lower()},
         {"_id": 0, "sid": 1, "created_at": 1, "admin_last_heartbeat": 1,
          "audio_bytes": 1, "audio_duration_secs": 1}
     ).sort("created_at", -1).to_list(length=200)
@@ -760,23 +760,27 @@ async def panel(request: Request, sid: str):
             "sid": sid,
             "secret_key": None,
             "admin_uid": None,
+            "admin_email": None,
             "admin_last_heartbeat": None,
             "created_at": now,
             "extra": {}
         })
-        room = {"sid": sid, "secret_key": None, "admin_uid": None, "admin_last_heartbeat": None}
+        room = {"sid": sid, "secret_key": None, "admin_uid": None, "admin_email": None, "admin_last_heartbeat": None}
 
     admin_uid = room.get("admin_uid")
     admin_key = room.get("secret_key")
 
     # If the room is owned by a logged-in user, enforce exclusive ownership.
     # No other user can open the panel unless the owner deletes the session.
-    if admin_uid:
+    room_admin_email = room.get("admin_email")
+    if not room_admin_email and admin_uid:
+        # Backward compat: old rooms have admin_uid but no admin_email, look it up once
         owner_doc = await users_collection.find_one({"user_uid": admin_uid})
-        if owner_doc and owner_doc.get("email"):
-            current_email = _get_session_email(request)
-            if not current_email or current_email.lower() != owner_doc["email"].lower():
-                raise HTTPException(status_code=403, detail="This session is owned by another user.")
+        room_admin_email = owner_doc.get("email") if owner_doc else None
+    if room_admin_email:
+        current_email = _get_session_email(request)
+        if not current_email or current_email.lower() != room_admin_email.lower():
+            raise HTTPException(status_code=403, detail="This session is owned by another user.")
 
     if admin_uid and admin_key:
         last_heartbeat = room.get("admin_last_heartbeat")
@@ -802,9 +806,10 @@ async def panel(request: Request, sid: str):
 
     if not admin_uid or not admin_key:
         session_secret_key = str(uuid.uuid4())
+        current_email = _get_session_email(request)
         await rooms_collection.update_one(
             {"sid": sid},
-            {"$set": {"secret_key": session_secret_key, "admin_uid": user_uid, "admin_last_heartbeat": now, "updated_at": now}}
+            {"$set": {"secret_key": session_secret_key, "admin_uid": user_uid, "admin_email": current_email, "admin_last_heartbeat": now, "updated_at": now}}
         )
         request.session["secret_key"] = session_secret_key
         user_secret_key = session_secret_key
@@ -864,11 +869,16 @@ async def delete_session(request: Request, sid: str):
     room = await rooms_collection.find_one({"sid": sid})
     if not room:
         raise HTTPException(status_code=404, detail="Session not found")
-    if room.get("admin_uid") != user_uid:
+    room_admin_email = room.get("admin_email")
+    if not room_admin_email and room.get("admin_uid"):
+        # Backward compat: old rooms without admin_email
+        owner_doc = await users_collection.find_one({"user_uid": room.get("admin_uid")})
+        room_admin_email = owner_doc.get("email") if owner_doc else None
+    if not room_admin_email or room_admin_email.lower() != email.lower():
         raise HTTPException(status_code=403, detail="You do not own this session")
     await rooms_collection.update_one(
         {"sid": sid},
-        {"$set": {"admin_uid": None, "secret_key": None, "admin_last_heartbeat": None, "updated_at": datetime.now(timezone.utc)}}
+        {"$set": {"admin_uid": None, "admin_email": None, "secret_key": None, "admin_last_heartbeat": None, "updated_at": datetime.now(timezone.utc)}}
     )
     return {"status": "deleted"}
 
@@ -1021,10 +1031,14 @@ async def join_session(socket_id, data):
                 session['verified'] = True
                 session['session_id'] = session_id
                 # Look up admin email so is_realtime_authorized can check realtime_enabled
-                admin_uid = room.get('admin_uid')
-                if admin_uid:
-                    user_doc = await users_collection.find_one({"user_uid": admin_uid})
-                    session['email'] = user_doc.get('email') if user_doc else None
+                admin_email = room.get('admin_email')
+                if not admin_email:
+                    # Backward compat: old rooms without admin_email
+                    admin_uid = room.get('admin_uid')
+                    if admin_uid:
+                        user_doc = await users_collection.find_one({"user_uid": admin_uid})
+                        admin_email = user_doc.get('email') if user_doc else None
+                session['email'] = admin_email
                 await sio.save_session(socket_id, session)
                 print(f"Client verified: {session_id}, email: {session.get('email')}")
         else:
