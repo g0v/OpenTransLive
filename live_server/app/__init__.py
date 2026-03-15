@@ -183,6 +183,14 @@ def sanitize_query_param(value: str, param_name: str = "parameter") -> str:
         raise HTTPException(status_code=400, detail=error_msg)
     return value
 
+async def _identifier(request: Request) -> str:
+    uid = request.session.get("user_uid", "")
+    if not uid or len(uid) < 36:
+        uid = str(uuid.uuid4())
+        request.session["user_uid"] = uid
+    func_name = request.scope["route"].endpoint.__name__
+    return f"{uid}:{func_name}"
+
 async def is_realtime_authorized(session: dict) -> bool:
     """Check if the socket is authorized to use server-side realtime features.
 
@@ -253,13 +261,6 @@ async def _verify_session_admin(request: Request, sid: str):
 # Email login routes
 # ---------------------------------------------------------------------------
 
-async def _get_session_uid(request: Request) -> str:
-    uid = request.session.get("user_uid", "")
-    if not uid or len(uid) < 36:
-        uid = str(uuid.uuid4())
-        request.session["user_uid"] = uid
-    return uid
-
 def _get_session_email(request: Request) -> str | None:
     return request.session.get("email")
 
@@ -301,7 +302,7 @@ async def logout(request: Request):
     return RedirectResponse(url="/login", status_code=302)
 
 
-@app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def dashboard(request: Request):
     _require_admin_email(request)
     users = await users_collection.find({}, {"_id": 0}).to_list(length=1000)
@@ -314,7 +315,7 @@ async def dashboard(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request, "users": users, "current_email": _get_session_email(request)})
 
 
-@app.get("/user-dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.get("/user-dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def user_dashboard(request: Request):
     email, user_uid = _require_logged_in(request)
     if not email or not user_uid:
@@ -342,7 +343,7 @@ async def user_dashboard(request: Request):
     })
 
 
-@app.post("/api/users/{email}/realtime", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.post("/api/users/{email}/realtime", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def set_user_realtime(request: Request, email: str):
     """Toggle realtime_enabled for a user (admin only)."""
     _require_admin_email(request)
@@ -363,13 +364,14 @@ async def set_user_realtime(request: Request, email: str):
     return {"email": result["email"], "realtime_enabled": result["realtime_enabled"]}
 
 
-@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_get_session_uid))])
+@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_identifier))])
 async def send_otp(request: Request):
     body = await request.json()
     email = body.get("email", "").strip()
     if not validate_email_format(email):
         raise HTTPException(status_code=400, detail="Invalid email address")
     otp = generate_otp()
+    print(f"OTP for {email}: {otp}")
     await store_otp(redis_client, email, otp)
     try:
         await send_otp_email(email, otp, EMAIL_SETTINGS)
@@ -379,7 +381,7 @@ async def send_otp(request: Request):
     return {"status": "sent"}
 
 
-@app.post("/auth/verify-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_get_session_uid))])
+@app.post("/auth/verify-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_identifier))])
 async def verify_otp_endpoint(request: Request):
     body = await request.json()
     email = body.get("email", "").strip()
@@ -403,7 +405,7 @@ async def verify_otp_endpoint(request: Request):
     return {"status": "ok", "is_admin": is_admin, "redirect": "/dashboard" if is_admin else "/user-dashboard"}
 
 
-@app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def get_session_languages_endpoint(request: Request, sid: str):
     """Get the current translate languages for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -414,7 +416,7 @@ async def get_session_languages_endpoint(request: Request, sid: str):
     return {"languages": languages}
 
 
-@app.post("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.post("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def update_session_languages_endpoint(request: Request, sid: str):
     """Update the translate languages for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -436,7 +438,7 @@ async def update_session_languages_endpoint(request: Request, sid: str):
     return {"languages": languages}
 
 
-@app.get("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.get("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def get_session_keywords_endpoint(request: Request, sid: str):
     """Get the current keywords and locked keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -448,7 +450,7 @@ async def get_session_keywords_endpoint(request: Request, sid: str):
     return {"keywords": keywords, "locked_keywords": locked_keywords}
 
 
-@app.post("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.post("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def update_session_keywords_endpoint(request: Request, sid: str):
     """Update the keywords and locked keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -488,7 +490,7 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
     return result
 
 
-@app.get("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.get("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def get_session_scribe_language_endpoint(request: Request, sid: str):
     """Get the forced detect language for Scribe (empty means auto-detect)."""
     sid = sanitize_query_param(sid, "session ID")
@@ -499,7 +501,7 @@ async def get_session_scribe_language_endpoint(request: Request, sid: str):
     return {"language": language}
 
 
-@app.post("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.post("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def update_session_scribe_language_endpoint(request: Request, sid: str):
     """Set or clear the forced detect language for Scribe."""
     sid = sanitize_query_param(sid, "session ID")
@@ -517,7 +519,7 @@ async def update_session_scribe_language_endpoint(request: Request, sid: str):
     await save_session_scribe_language(redis_client, sid, language)
 
     # Restart the active scribe manager so the new language takes effect immediately.
-    old_manager = active_scribe_managers.pop(sid, None)
+    old_manager: ScribeSessionManager | None = active_scribe_managers.pop(sid, None)
     was_running = old_manager and old_manager.is_running
     if was_running:
         asyncio.create_task(old_manager.stop())
@@ -527,7 +529,7 @@ async def update_session_scribe_language_endpoint(request: Request, sid: str):
     return {"language": language}
 
 
-@app.get("/api/session/{sid}/audio-usage", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.get("/api/session/{sid}/audio-usage", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def get_session_audio_usage_endpoint(request: Request, sid: str):
     """Return audio buffer usage stats for the active scribe session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -698,7 +700,7 @@ async def save_segment_background(sid, segment, stream_start_time):
 async def hello_world(request: Request):
     return templates.TemplateResponse("index.html", {"request": request, "email": _get_session_email(request)})
 
-@app.get("/download/{id}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.get("/download/{id}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def download(id: str):
     # Sanitize id parameter to prevent NoSQL injection
     id = sanitize_query_param(id, "session ID")
@@ -714,7 +716,7 @@ async def download(id: str):
     content = json.dumps(data, ensure_ascii=False, indent=2)
     return Response(content=content, media_type="application/json")
 
-@app.get("/yt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.get("/yt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def yt(request: Request, id: str):
     # Sanitize id parameter to prevent NoSQL injection
     id = sanitize_query_param(id, "session ID")
@@ -724,7 +726,7 @@ async def yt(request: Request, id: str):
     data["stream_start_time"] = await get_youtube_start_time(id) 
     return templates.TemplateResponse("yt.html", {"request": request, "id": id, "data": data})
 
-@app.get("/rt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.get("/rt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def rt(request: Request, id: str):
     # Sanitize id parameter to prevent NoSQL injection
     id = sanitize_query_param(id, "session ID")
@@ -740,7 +742,7 @@ async def rt(request: Request, id: str):
     print(sliced_data, flush=True)
     return templates.TemplateResponse("rt.html", {"request": request, "id": id, "data": sliced_data})
   
-@app.get("/panel/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.get("/panel/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def panel(request: Request, sid: str):
     # Sanitize sid parameter to prevent NoSQL injection
     sid = sanitize_query_param(sid, "session ID")
@@ -812,7 +814,7 @@ async def panel(request: Request, sid: str):
     is_realtime_enabled = await is_realtime_authorized(request.session)
     return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key, "is_realtime_enabled": is_realtime_enabled, "email": _get_session_email(request)})
 
-@app.post("/heartbeat/{sid}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.post("/heartbeat/{sid}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def heartbeat(request: Request, sid: str):
     """Update admin heartbeat to maintain session lock"""
     sid = sanitize_query_param(sid, "session ID")
@@ -828,7 +830,7 @@ async def heartbeat(request: Request, sid: str):
     await rooms_collection.update_one({"sid": sid}, {"$set": update})
     return {"status": "ok"}
 
-@app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def release_admin(request: Request, sid: str):
     """Release admin lock when admin leaves"""
     sid = sanitize_query_param(sid, "session ID")
@@ -851,7 +853,7 @@ async def release_admin(request: Request, sid: str):
     request.session.pop("secret_key", None)
     return {"status": "released"}
 
-@app.delete("/api/sessions/{sid}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_get_session_uid))])
+@app.delete("/api/sessions/{sid}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def delete_session(request: Request, sid: str):
     """Release session ownership, removing it from the owner's My Sessions list.
     Once deleted, anyone can claim the session again."""

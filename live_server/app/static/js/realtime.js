@@ -6,8 +6,6 @@ let micDeviceSelector = null;
 let mediaStream = null;
 let audioContext = null;
 let audioProcessor = null;
-let gainNode = null;
-let compressorNode = null;
 let analyserNode = null;
 let levelAnimFrame = null;
 
@@ -75,18 +73,6 @@ async function startSession() {
     }
     const source = audioContext.createMediaStreamSource(mediaStream);
 
-    // Dynamic range compressor to normalize loud/quiet audio
-    compressorNode = audioContext.createDynamicsCompressor();
-    compressorNode.threshold.setValueAtTime(-30, audioContext.currentTime);  // compress above -30 dB
-    compressorNode.knee.setValueAtTime(20, audioContext.currentTime);        // soft knee
-    compressorNode.ratio.setValueAtTime(6, audioContext.currentTime);        // 6:1 compression
-    compressorNode.attack.setValueAtTime(0.005, audioContext.currentTime);   // fast attack
-    compressorNode.release.setValueAtTime(0.15, audioContext.currentTime);   // moderate release
-
-    // Gain node for make-up gain after compression
-    gainNode = audioContext.createGain();
-    gainNode.gain.setValueAtTime(2.0, audioContext.currentTime);  // +6 dB make-up gain
-
     // Analyser node for level metering (after gain, before worklet)
     analyserNode = audioContext.createAnalyser();
     analyserNode.fftSize = 256;
@@ -94,10 +80,8 @@ async function startSession() {
 
     audioProcessor = new AudioWorkletNode(audioContext, 'audio-processor');
 
-    // Audio graph: source -> compressor -> gain -> analyser -> worklet -> destination
-    source.connect(compressorNode);
-    compressorNode.connect(gainNode);
-    gainNode.connect(analyserNode);
+    // Audio graph: source -> analyser -> worklet -> destination
+    source.connect(analyserNode);
     analyserNode.connect(audioProcessor);
     audioProcessor.connect(audioContext.destination);
 
@@ -217,14 +201,6 @@ async function stopSession() {
   if (analyserNode) {
     analyserNode.disconnect();
     analyserNode = null;
-  }
-  if (compressorNode) {
-    compressorNode.disconnect();
-    compressorNode = null;
-  }
-  if (gainNode) {
-    gainNode.disconnect();
-    gainNode = null;
   }
   if (audioContext) {
     audioContext.close();
