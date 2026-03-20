@@ -18,4 +18,4 @@ temp/
 # database
 mongo_data/
 
-app/logs/
+logs/
