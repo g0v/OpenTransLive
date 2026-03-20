@@ -82,7 +82,15 @@ _partial_debounce_tasks: dict = {}
 
 
 async def _create_scribe_manager(session_id) -> ScribeSessionManager:
-    """Create, register, and start a new ScribeSessionManager for the session."""
+    """Create, register, and start a new ScribeSessionManager for the session.
+
+    Any previously running manager for the same session is stopped first so
+    there is never more than one active connection per session.
+    """
+    old_manager: ScribeSessionManager | None = active_scribe_managers.pop(session_id, None)
+    if old_manager is not None:
+        asyncio.create_task(old_manager.stop())
+
     from .translator import get_session_scribe_language
     language_code = await get_session_scribe_language(redis_client, session_id)
     manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code)
@@ -519,11 +527,8 @@ async def update_session_scribe_language_endpoint(request: Request, sid: str):
     await save_session_scribe_language(redis_client, sid, language)
 
     # Restart the active scribe manager so the new language takes effect immediately.
-    old_manager: ScribeSessionManager | None = active_scribe_managers.pop(sid, None)
-    was_running = old_manager and old_manager.is_running
-    if was_running:
-        asyncio.create_task(old_manager.stop())
-    if was_running:
+    # _create_scribe_manager already stops any existing manager for the session.
+    if active_scribe_managers.get(sid):
         await _create_scribe_manager(sid)
 
     return {"language": language}

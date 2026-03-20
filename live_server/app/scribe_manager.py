@@ -1,10 +1,6 @@
 import asyncio
-import base64
 import json
-import logging
-import re
 from urllib.parse import urlencode
-import httpx
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
 from datetime import datetime, timezone
@@ -14,22 +10,30 @@ from .logger_config import setup_logger, log_exception
 
 logger = setup_logger(__name__)
 
+_MAX_RECONNECT_RETRIES = 5
+_RECONNECT_BASE_DELAY = 2.0   # seconds; doubles each attempt, capped at 60s
+_RECONNECT_MAX_DELAY = 60.0
+
+
 class ScribeSessionManager:
     _BYTES_PER_SEC = 16000 * 2          # 16kHz 16-bit mono PCM
     _LOG_INTERVAL_BYTES = 30 * 16000 * 2  # log every 30s of audio
 
     def __init__(self, session_id, callback, language_code: str = ""):
         self.session_id = session_id
+        # Initialize essential state before the API key guard so that stop(),
+        # push_audio(), and is_running checks always find these attributes.
+        self.ws = None
+        self.is_running = False
+        self.audio_queue = asyncio.Queue()
+        self._stop_event = asyncio.Event()
         self.api_key = REALTIME_SETTINGS.get("ELEVENLABS_API_KEY", '')
         if not self.api_key:
             logger.error(f"Missing ELEVENLABS_API_KEY for {session_id}")
             return
         self.callback = callback
         self.language_code = language_code
-        self.ws = None
-        self.is_running = False
         self.ws_url = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
-        self.audio_queue = asyncio.Queue()
         self.seg_start_time = None
         now = datetime.now(timezone.utc)
         self.init_time = now
@@ -92,9 +96,25 @@ class ScribeSessionManager:
                 )
             await self.audio_queue.put(base64_audio)
 
+    def _drain_audio_queue(self):
+        """Discard queued audio chunks that accumulated while disconnected."""
+        drained = 0
+        while True:
+            try:
+                item = self.audio_queue.get_nowait()
+                self.audio_queue.task_done()
+                if item is not None:
+                    drained += 1
+            except asyncio.QueueEmpty:
+                break
+        if drained:
+            logger.info(
+                f"[reconnect] drained {drained} stale audio chunks for {self.session_id}"
+            )
+
     async def send_audio_loop(self):
         try:
-            while self.is_running:
+            while True:
                 base64_audio = await self.audio_queue.get()
                 if base64_audio is None:
                     self.audio_queue.task_done()
@@ -111,19 +131,17 @@ class ScribeSessionManager:
             pass
         except Exception as e:
             log_exception(logger, e, "Error in send_audio_loop")
-        finally:
-            self.is_running = False
 
     async def receive_messages_loop(self):
         try:
-            while self.is_running:
+            while True:
                 if not self.ws:
                     await asyncio.sleep(0.1)
                     continue
-                
+
                 message = await self.ws.recv()
                 data = json.loads(message)
-                
+
                 msg_type = data.get("message_type")
                 if msg_type == "session_started":
                     logger.info(f"Scribe session started for {self.session_id}")
@@ -136,8 +154,7 @@ class ScribeSessionManager:
         except Exception as e:
             log_exception(logger, e, "Error in receive_messages_loop")
         finally:
-            self.is_running = False
-            # Trigger send_audio_loop to exit if it's waiting on queue
+            # Signal send_audio_loop to exit so the TaskGroup can complete.
             try:
                 self.audio_queue.put_nowait(None)
             except Exception:
@@ -177,11 +194,11 @@ class ScribeSessionManager:
                 logger.warning(f"Hallucination detected, dropping: {repr(transcript)}")
                 return
             delta_t = (now - self.last_partial_time).total_seconds()
-            if partial and (transcript == self.last_partial_text or 
+            if partial and (transcript == self.last_partial_text or
                             delta_t < self.partial_interval):
                 return
             print(f"accept transcript {'partial' if partial else 'committed'}: {transcript}, {delta_t}", flush=True)
-            
+
             if self.seg_start_time is None:
                 self.seg_start_time = now
 
@@ -192,7 +209,7 @@ class ScribeSessionManager:
                 "start_time": self.seg_start_time.timestamp() - 0.3, # approximate adjust
                 "end_time": now.timestamp()
             }
-            
+
             if partial:
                 self.last_partial_time = now
                 self.last_partial_text = transcript
@@ -204,51 +221,107 @@ class ScribeSessionManager:
         except Exception as e:
             log_exception(logger, e, "Error handling transcript")
 
+    async def _reconnect_delay(self, delay: float) -> bool:
+        """Sleep for `delay` seconds, or return early if stop() was called.
+        Returns True if we should stop, False if we should continue."""
+        try:
+            await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
+            return True  # stop event fired
+        except asyncio.TimeoutError:
+            return False  # normal timeout, continue
+
     async def start(self):
         self.is_running = True
+        self._stop_event.clear()
         logger.info(f"Starting Scribe session for {self.session_id}")
-        try:
-            token = await self.get_token()
-            if not token:
-                logger.error(f"Failed to get Scribe token for {self.session_id}")
-                return
 
-            params_dict = {
-                "token": token,
-                "model_id": "scribe_v2_realtime",
-                "audio_format": "pcm_16000",
-                "commit_strategy": "vad",
-                "vad_silence_threshold_secs": 1,
-                "vad_threshold": 0.4,
-                "min_speech_duration_ms": 100,
-                "min_silence_duration_ms": 100,
-                "include_timestamps": "false"
-            }
-            if self.language_code:
-                params_dict["language_code"] = self.language_code
-                logger.info(f"Scribe forced language: {self.language_code} for {self.session_id}")
-            params = urlencode(params_dict)
-            url = f"{self.ws_url}?{params}"
-            
-            async with ws_connect(url, additional_headers={"xi-api-key": self.api_key}) as ws:
-                self.ws = ws
-                logger.info(f"Connected to Scribe for session {self.session_id}")
-                
-                async with asyncio.TaskGroup() as tg:
-                    self.task_group = tg
-                    tg.create_task(self.send_audio_loop())
-                    tg.create_task(self.receive_messages_loop())
-                    
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            log_exception(logger, e, f"Scribe connection error for {self.session_id}")
-        finally:
-            self.is_running = False
-            self.ws = None
+        retry_count = 0
+
+        while self.is_running:
+            if retry_count > _MAX_RECONNECT_RETRIES:
+                logger.error(
+                    f"Scribe: max reconnect attempts ({_MAX_RECONNECT_RETRIES}) "
+                    f"exceeded for {self.session_id}, giving up"
+                )
+                break
+
+            if retry_count > 0:
+                delay = min(
+                    _RECONNECT_BASE_DELAY * (2 ** (retry_count - 1)),
+                    _RECONNECT_MAX_DELAY,
+                )
+                logger.warning(
+                    f"[reconnect] waiting {delay:.1f}s before attempt "
+                    f"{retry_count}/{_MAX_RECONNECT_RETRIES} for {self.session_id}"
+                )
+                should_stop = await self._reconnect_delay(delay)
+                if should_stop or not self.is_running:
+                    break
+                # Discard audio that piled up while we were disconnected.
+                self._drain_audio_queue()
+
+            try:
+                token = await self.get_token()
+                if not token:
+                    logger.error(f"Failed to get Scribe token for {self.session_id}")
+                    retry_count += 1
+                    continue
+
+                params_dict = {
+                    "token": token,
+                    "model_id": "scribe_v2_realtime",
+                    "audio_format": "pcm_16000",
+                    "commit_strategy": "vad",
+                    "vad_silence_threshold_secs": 1,
+                    "vad_threshold": 0.4,
+                    "min_speech_duration_ms": 100,
+                    "min_silence_duration_ms": 100,
+                    "include_timestamps": "false"
+                }
+                if self.language_code:
+                    params_dict["language_code"] = self.language_code
+                    logger.info(f"Scribe forced language: {self.language_code} for {self.session_id}")
+                params = urlencode(params_dict)
+                url = f"{self.ws_url}?{params}"
+
+                async with ws_connect(url, additional_headers={"xi-api-key": self.api_key}) as ws:
+                    self.ws = ws
+                    if retry_count > 0:
+                        logger.info(
+                            f"Reconnected to Scribe for {self.session_id} "
+                            f"(after {retry_count} attempt(s))"
+                        )
+                    else:
+                        logger.info(f"Connected to Scribe for session {self.session_id}")
+                    retry_count = 0  # reset on successful connection
+
+                    async with asyncio.TaskGroup() as tg:
+                        self.task_group = tg
+                        tg.create_task(self.send_audio_loop())
+                        tg.create_task(self.receive_messages_loop())
+
+                # TaskGroup exited — both loops are done.
+                self.ws = None
+                if self.is_running and not self._stop_event.is_set():
+                    retry_count += 1
+                    logger.warning(
+                        f"Scribe WebSocket closed unexpectedly for {self.session_id}"
+                    )
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log_exception(logger, e, f"Scribe connection error for {self.session_id}")
+                self.ws = None
+                retry_count += 1
+
+        self.is_running = False
+        self.ws = None
+        logger.info(f"Scribe session ended for {self.session_id}")
 
     async def stop(self):
         self.is_running = False
+        self._stop_event.set()
         if self.ws:
             try:
                 await self.ws.close()
