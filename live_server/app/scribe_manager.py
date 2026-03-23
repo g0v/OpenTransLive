@@ -18,6 +18,7 @@ _RECONNECT_MAX_DELAY = 60.0
 class ScribeSessionManager:
     _BYTES_PER_SEC = 16000 * 2          # 16kHz 16-bit mono PCM
     _LOG_INTERVAL_BYTES = 30 * 16000 * 2  # log every 30s of audio
+    _AUDIO_QUEUE_MAXSIZE = 1000         # ~30s of audio; drop oldest when full
 
     def __init__(self, session_id, callback, language_code: str = ""):
         self.session_id = session_id
@@ -25,7 +26,7 @@ class ScribeSessionManager:
         # push_audio(), and is_running checks always find these attributes.
         self.ws = None
         self.is_running = False
-        self.audio_queue = asyncio.Queue()
+        self.audio_queue = asyncio.Queue(maxsize=self._AUDIO_QUEUE_MAXSIZE)
         self._stop_event = asyncio.Event()
         self.api_key = REALTIME_SETTINGS.get("ELEVENLABS_API_KEY", '')
         if not self.api_key:
@@ -94,6 +95,16 @@ class ScribeSessionManager:
                     f"duration={duration_secs:.1f}s "
                     f"chunks={self.audio_chunks}"
                 )
+            if self.audio_queue.full():
+                try:
+                    self.audio_queue.get_nowait()
+                    self.audio_queue.task_done()
+                except asyncio.QueueEmpty:
+                    pass
+                logger.warning(
+                    f"[audio_queue] queue full, dropped oldest chunk "
+                    f"for session {self.session_id}"
+                )
             await self.audio_queue.put(base64_audio)
 
     def _drain_audio_queue(self):
@@ -156,6 +167,12 @@ class ScribeSessionManager:
         finally:
             # Signal send_audio_loop to exit so the TaskGroup can complete.
             try:
+                if self.audio_queue.full():
+                    try:
+                        self.audio_queue.get_nowait()
+                        self.audio_queue.task_done()
+                    except asyncio.QueueEmpty:
+                        pass
                 self.audio_queue.put_nowait(None)
             except Exception:
                 pass

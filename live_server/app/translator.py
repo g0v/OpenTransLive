@@ -407,10 +407,12 @@ Previous context for reference: {prev_translation}
     return data
 
 class TranslationQueueManager:
+    _COMMIT_QUEUE_MAXSIZE = 50  # bound commit queue to prevent OOM under slow LLM
+
     def __init__(self, callback):
         self.callback = callback
         self.partial_task = None
-        self.commit_queue = asyncio.Queue()
+        self.commit_queue = asyncio.Queue(maxsize=self._COMMIT_QUEUE_MAXSIZE)
         self.is_running = False
         self.task = None
 
@@ -437,6 +439,16 @@ class TranslationQueueManager:
         else:
             if self.partial_task and not self.partial_task.done():
                 self.partial_task.cancel()
+            if self.commit_queue.full():
+                try:
+                    self.commit_queue.get_nowait()
+                    self.commit_queue.task_done()
+                except asyncio.QueueEmpty:
+                    pass
+                logger.warning(
+                    f"[commit_queue] queue full, dropped oldest item "
+                    f"for session {item[0]}"
+                )
             await self.commit_queue.put(item)
 
     async def _loop(self):
