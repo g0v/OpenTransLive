@@ -664,10 +664,13 @@ async def migrate_to_zset(id, data):
             return
             
         # Add to ZSET
+        zset_key = f"transcription:{id}:list"
         pipe = redis_client.pipeline()
         for seg in data["transcriptions"]:
-            pipe.zadd(f"transcription:{id}:list", {json.dumps(seg): seg["start_time"]})
-        
+            pipe.zadd(zset_key, {json.dumps(seg): seg["start_time"]})
+        # Cap ZSET size by removing oldest entries beyond limit
+        pipe.zremrangebyrank(zset_key, 0, -1001)
+
         # Set Meta
         meta = {"stream_start_time": data.get("stream_start_time")}
         pipe.setex(f"transcription:{id}:meta", 3600, json.dumps(meta))
@@ -688,7 +691,7 @@ async def save_segment_background(sid, segment, stream_start_time):
         await transcription_store_collection.update_one(
             {"sid": sid},
             {
-                "$push": {"transcriptions": segment},
+                "$push": {"transcriptions": {"$each": [segment], "$slice": -30000}},
                 "$set": {
                     "stream_start_time": stream_start_time,
                     "updated_at": datetime.now(timezone.utc)
@@ -944,8 +947,11 @@ async def _process_transcription_update(session_id, sync_data):
         # Atomic ZSET update
         pipe = redis_client.pipeline()
         # Add new segment to ZSET with start_time as score
-        pipe.zadd(f"transcription:{session_id}:list", {json.dumps(sync_data): sync_data["start_time"]})
-        
+        zset_key = f"transcription:{session_id}:list"
+        pipe.zadd(zset_key, {json.dumps(sync_data): sync_data["start_time"]})
+        # Cap ZSET size by removing oldest entries beyond limit
+        pipe.zremrangebyrank(zset_key, 0, -1001)
+
         # Update Meta (expiry and stream_start_time)
         meta = {"stream_start_time": yt_start_time or cached_data.get("stream_start_time")}
         pipe.setex(f"transcription:{session_id}:meta", 3600, json.dumps(meta))
