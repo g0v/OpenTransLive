@@ -430,6 +430,7 @@ class TranslationQueueManager:
         self.callback = callback
         self.partial_task = None
         self.commit_queue = asyncio.Queue(maxsize=self._COMMIT_QUEUE_MAXSIZE)
+        self._commit_in_flight = False
         self.is_running = False
         self.task = None
 
@@ -447,7 +448,8 @@ class TranslationQueueManager:
     async def put(self, session_id, sync_data, cached_data, redis_client):
         item = (session_id, sync_data, cached_data, redis_client)
         if sync_data.get("partial") is True:
-            await self.commit_queue.join()
+            if self._commit_in_flight or not self.commit_queue.empty():
+                return
             if self.partial_task and not self.partial_task.done():
                 print(f"{session_id} partial update too fast, skip it.", flush=True)
                 return
@@ -472,12 +474,15 @@ class TranslationQueueManager:
         while self.is_running:
             try:
                 item = await self.commit_queue.get()
+                self._commit_in_flight = True
                 await self._process(*item)
                 self.commit_queue.task_done()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 log_exception(logger, e, "Queue loop error")
+            finally:
+                self._commit_in_flight = False
             await asyncio.sleep(0.01)
 
     async def _process(self, session_id, sync_data, cached_data, redis_client):
