@@ -337,7 +337,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
             pt_trans = cached_data["partial"].get("result", {}).get("translated", {}).get(language, "")
             if pt_trans:
                 pt_trans = pt_trans[-50:]
-                prev_translation = f"<previous_translation>\n{pt_trans}\n</previous_translation>\n"
+                prev_translation = pt_trans
         json_body = {
             "model": AI_MODEL,
             "max_completion_tokens": 300,
@@ -346,7 +346,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
                 {
                     "role": "developer",
                     "content": f"""Context: This transcription is about {keywords_str}.
-Task: Rewrite the text within <translate_this> into language {language}.
+Task: Translate the text within <translate_this> into language {language}.
 
 Constraints:
 1. Strict Fidelity: Literal meaning only; no stylistic changes or summaries.
@@ -355,7 +355,9 @@ Constraints:
 4. Format: Output ONLY processed text.
 5. Punctuation: Add punctuation marks.
 
-Previous context for reference: {prev_translation}
+<previous_translation>
+{prev_translation}
+</previous_translation>
 """
                 },
                 {"role": "user", "content": f"{(' '.join(context['translated'][language]))[-50:]}\n<translate_this>\n{result['corrected']}\n</translate_this>"}
