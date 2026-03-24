@@ -48,32 +48,47 @@ def get_provider_config():
     provider = REALTIME_SETTINGS.get("AI_PROVIDER", "gemini").lower()
     return _PROVIDER_CONFIG.get(provider, _PROVIDER_CONFIG["gemini"])
 
+_RETRY_DELAYS = [0.5, 1.0, 2.0]
+
 async def async_chat_completion(json_body: dict):
     provider_cfg = get_provider_config()
     api_key = REALTIME_SETTINGS.get(provider_cfg["api_key_setting"])
     if not api_key:
         return None
     json_body['temperature'] = provider_cfg["default_temp"]
-    
+
     if "gpt-4.1" in provider_cfg["default_model"]:
         json_body.pop("reasoning_effort", None)
 
     client = get_async_client()
-    try:
-        response = await client.post(
-            provider_cfg["endpoint"],
-            json=json_body,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-        )
-        if response.status_code != 200:
-            print("response error", response.status_code, response.text, flush=True)
-        return response
-    except Exception as e:
-        log_exception(logger, e, "HTTP request error in async_chat_completion")
-        return None
+    last_response = None
+    for attempt, delay in enumerate([0] + _RETRY_DELAYS):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            response = await client.post(
+                provider_cfg["endpoint"],
+                json=json_body,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                }
+            )
+            if response.status_code == 200:
+                return response
+            last_response = response
+            if response.status_code not in (429, 500, 502, 503, 504):
+                print("response error", response.status_code, response.text, flush=True)
+                return response
+            logger.warning(
+                "async_chat_completion attempt %d got %d, %s",
+                attempt + 1, response.status_code,
+                "retrying" if delay != _RETRY_DELAYS[-1] else "giving up"
+            )
+        except Exception as e:
+            log_exception(logger, e, f"HTTP request error in async_chat_completion (attempt {attempt + 1})")
+            last_response = None
+    return last_response
 
 async def get_session_languages(redis_client, session_id) -> list[str]:
     """Return translate languages for a session, falling back to config."""
