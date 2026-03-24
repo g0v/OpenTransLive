@@ -4,8 +4,10 @@
 # See LICENSE for details.
 
 import asyncio
+import collections
 import json
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -54,6 +56,50 @@ _MANAGER_CACHE_MAX = 512
 
 _MAX_AUDIO_CHUNK_SIZE = 1 * 1024 * 1024  # 1MB in bytes
 _BASE64_RE = re.compile(r'^[A-Za-z0-9+/]*={0,2}$')
+
+# Per-socket rate limits: (max_calls, window_seconds)
+_RATE_LIMITS = {
+    "audio_buffer_append": (100, 1),   # 100 per second
+    "sync":                (20, 1),    # 20 per second
+    "realtime_connect":    (5, 10),    # 5 per 10 seconds
+    "join_session":        (5, 10),    # 5 per 10 seconds
+}
+
+
+class _SocketRateLimiter:
+    """In-memory sliding-window rate limiter for Socket.IO events."""
+
+    def __init__(self):
+        self._timestamps: dict[str, collections.deque] = {}
+
+    def check(self, socket_id: str, event: str, max_calls: int, window: float) -> bool:
+        """Return True if the call is allowed, False if rate-limited."""
+        now = time.monotonic()
+        key = f"{socket_id}:{event}"
+        timestamps = self._timestamps.get(key)
+        if timestamps is None:
+            timestamps = collections.deque()
+            self._timestamps[key] = timestamps
+
+        # Prune expired entries -- O(1) per pop with deque
+        cutoff = now - window
+        while timestamps and timestamps[0] <= cutoff:
+            timestamps.popleft()
+
+        if len(timestamps) >= max_calls:
+            return False
+
+        timestamps.append(now)
+        return True
+
+    def cleanup(self, socket_id: str) -> None:
+        """Remove all tracking data for a disconnected socket."""
+        keys_to_remove = [k for k in self._timestamps if k.startswith(f"{socket_id}:")]
+        for k in keys_to_remove:
+            del self._timestamps[k]
+
+
+_socket_limiter = _SocketRateLimiter()
 
 
 class _ManagerTTLCache(TTLCache):
@@ -906,6 +952,7 @@ async def connect(socket_id, environ, auth):
 @sio.event
 async def disconnect(socket_id):
     """Handle client disconnection"""
+    _socket_limiter.cleanup(socket_id)
     print(f"Client disconnected: {socket_id}")
     # Admin lock is NOT cleared here: socket disconnect fires on page refresh
     # and transient network blips, not only on true tab-close.
@@ -955,14 +1002,14 @@ async def _process_transcription_update(session_id, sync_data):
         # Update Meta (expiry and stream_start_time)
         meta = {"stream_start_time": yt_start_time or cached_data.get("stream_start_time")}
         pipe.setex(f"transcription:{session_id}:meta", 3600, json.dumps(meta))
-        pipe.expire(f"transcription:{session_id}:list", 3600)
-        
+        pipe.expire(zset_key, 3600)
+
         # Clear partial
         pipe.delete(f"transcription:{session_id}:partial")
         await pipe.execute()
-        
+
         # Get the actual last committed after ZADD (to handle potential out-of-order)
-        new_last_json = await redis_client.zrange(f"transcription:{session_id}:list", -1, -1)
+        new_last_json = await redis_client.zrange(zset_key, -1, -1)
         if new_last_json:
             last_committed = json.loads(new_last_json[0])
         
@@ -1003,6 +1050,11 @@ async def _process_transcription_update(session_id, sync_data):
 @sio.event
 async def sync(socket_id, data):
     """Handle WebSocket sync events"""
+    max_calls, window = _RATE_LIMITS["sync"]
+    if not _socket_limiter.check(socket_id, "sync", max_calls, window):
+        await sio.emit('error', {'message': 'Rate limit exceeded for sync'}, to=socket_id)
+        return
+
     session = await sio.get_session(socket_id)
 
     session_id = data.get('id')
@@ -1027,6 +1079,11 @@ async def sync(socket_id, data):
 @sio.event
 async def join_session(socket_id, data):
     """Handle client joining a session room"""
+    max_calls, window = _RATE_LIMITS["join_session"]
+    if not _socket_limiter.check(socket_id, "join_session", max_calls, window):
+        await sio.emit('error', {'message': 'Rate limit exceeded for join_session'}, to=socket_id)
+        return
+
     session_id = data.get('session_id')
     secret_key = data.get('secret_key')
 
@@ -1085,6 +1142,11 @@ async def on_scribe_transcription(session_id, transcription):
 @sio.event
 async def realtime_connect(socket_id, data):
     """Handle client realtime_connect events"""
+    max_calls, window = _RATE_LIMITS["realtime_connect"]
+    if not _socket_limiter.check(socket_id, "realtime_connect", max_calls, window):
+        await sio.emit('error', {'message': 'Rate limit exceeded for realtime_connect'}, to=socket_id)
+        return
+
     session = await sio.get_session(socket_id)
 
     if not session.get('verified'):
@@ -1102,6 +1164,10 @@ async def realtime_connect(socket_id, data):
 @sio.event
 async def audio_buffer_append(socket_id, data):
     """Handle client audio buffer append events"""
+    max_calls, window = _RATE_LIMITS["audio_buffer_append"]
+    if not _socket_limiter.check(socket_id, "audio_buffer_append", max_calls, window):
+        return  # silent drop on hot audio path to avoid flooding errors back
+
     session = await sio.get_session(socket_id)
 
     session_id = session.get('session_id')
