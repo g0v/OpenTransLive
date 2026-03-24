@@ -1033,7 +1033,7 @@ async def _process_transcription_update(session_id, sync_data):
     if is_partial:
         # Cancel any pending broadcast for this session and schedule a fresh one
         # after 75 ms so only the latest partial is sent when updates burst.
-        existing = _partial_debounce_tasks.get(session_id)
+        existing = _partial_debounce_tasks.pop(session_id, None)
         if existing and not existing.done():
             existing.cancel()
 
@@ -1044,7 +1044,10 @@ async def _process_transcription_update(session_id, sync_data):
 
         _partial_debounce_tasks[session_id] = asyncio.create_task(_debounced(payload))
     else:
-        # Committed segments broadcast immediately without debounce
+        # Committed segments broadcast immediately; cancel any pending partial debounce.
+        existing = _partial_debounce_tasks.pop(session_id, None)
+        if existing and not existing.done():
+            existing.cancel()
         await _emit_now(payload)
     
 @sio.event
