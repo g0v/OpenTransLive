@@ -886,6 +886,9 @@ async def heartbeat(request: Request, sid: str):
         update["audio_bytes"] = stats["audio_bytes"]
         update["audio_duration_secs"] = stats["audio_duration_secs"]
         update["audio_chunks"] = stats["audio_chunks"]
+    if manager and manager.is_running:
+        # Refresh the TTL so an active session is never evicted mid-recording.
+        active_scribe_managers[sid] = manager
     await rooms_collection.update_one({"sid": sid}, {"$set": update})
     return {"status": "ok"}
 

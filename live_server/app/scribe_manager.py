@@ -65,10 +65,14 @@ class ScribeSessionManager:
             return None
 
     def restore_usage(self, audio_bytes: int, audio_chunks: int):
-        """Restore usage counters from a previously saved DB value."""
-        self.audio_bytes_total = audio_bytes
-        self.audio_chunks = audio_chunks
-        self._logged_at_bytes = audio_bytes
+        """Restore usage counters from a previously saved DB value.
+
+        Uses += so that any bytes already counted by concurrent push_audio calls
+        during the async DB fetch are preserved rather than overwritten.
+        """
+        self.audio_bytes_total += audio_bytes
+        self.audio_chunks += audio_chunks
+        self._logged_at_bytes = self.audio_bytes_total
 
     def get_usage_stats(self) -> dict:
         """Return audio usage counters for this session."""
