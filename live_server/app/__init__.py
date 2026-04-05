@@ -245,7 +245,7 @@ async def _identifier(request: Request) -> str:
     func_name = request.scope["route"].endpoint.__name__
     return f"{uid}:{func_name}"
 
-async def is_realtime_authorized(session: dict, session_id: str = None) -> bool:
+async def is_realtime_authorized(session: dict, session_id: str | None = None) -> bool:
     """Check if the socket is authorized to use server-side realtime features.
 
     Returns True if:

@@ -13,6 +13,7 @@ logger = setup_logger(__name__)
 _MAX_RECONNECT_RETRIES = 5
 _RECONNECT_BASE_DELAY = 2.0   # seconds; doubles each attempt, capped at 60s
 _RECONNECT_MAX_DELAY = 60.0
+_SEGMENT_START_OFFSET = 0.3   # seconds subtracted from seg_start_time to account for ASR processing latency
 
 
 class ScribeSessionManager:
@@ -181,6 +182,15 @@ class ScribeSessionManager:
             except Exception:
                 pass
 
+    def _build_transcription(self, text: str, partial: bool, end_time: datetime) -> dict:
+        if self.seg_start_time is None: return {}
+        return {
+            "text": text,
+            "partial": partial,
+            "start_time": self.seg_start_time.timestamp() - _SEGMENT_START_OFFSET,
+            "end_time": end_time.timestamp(),
+        }
+
     @staticmethod
     def _is_hallucination(text: str) -> bool:
         """Detect common ASR hallucinations: repetitive patterns or pure digit sequences."""
@@ -223,13 +233,7 @@ class ScribeSessionManager:
             if self.seg_start_time is None:
                 self.seg_start_time = now
 
-            # Match the format expected by sync() event in __init__.py
-            transcription = {
-                "text": transcript,
-                "partial": partial,
-                "start_time": self.seg_start_time.timestamp() - 0.3, # approximate adjust
-                "end_time": now.timestamp()
-            }
+            transcription = self._build_transcription(transcript, partial, now)
 
             if partial:
                 self.last_partial_time = now
@@ -349,3 +353,18 @@ class ScribeSessionManager:
             except Exception:
                 pass
         self.ws = None
+
+        # Commit any pending partial so it is not lost on stop/mic-off.
+        callback = getattr(self, "callback", None)
+        if callback and self.last_partial_text and self.seg_start_time is not None:
+            try:
+                now = datetime.now(timezone.utc)
+                transcription = self._build_transcription(self.last_partial_text, False, now)
+                self.seg_start_time = None
+                logger.info(
+                    f"Committing last partial on stop for {self.session_id}: "
+                    f"{repr(self.last_partial_text)}"
+                )
+                await callback(self.session_id, transcription)
+            except Exception as e:
+                log_exception(logger, e, "Error committing last partial on stop")
