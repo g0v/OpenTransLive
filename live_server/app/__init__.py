@@ -245,17 +245,30 @@ async def _identifier(request: Request) -> str:
     func_name = request.scope["route"].endpoint.__name__
     return f"{uid}:{func_name}"
 
-async def is_realtime_authorized(session: dict) -> bool:
+async def is_realtime_authorized(session: dict, session_id: str = None) -> bool:
     """Check if the socket is authorized to use server-side realtime features.
 
     Returns True if:
     1. The socket is a global admin connection, OR
     2. The user logged in via email and has realtime_enabled=True
+
+    When the socket session has lost its email (e.g. after a reconnect that
+    failed to re-verify), falls back to looking up the room's admin_email
+    from MongoDB so the authoritative realtime_enabled flag is always read
+    from the users collection.
     """
     if session.get('admin'):
         return True
 
     email = session.get('email')
+
+    # Fallback: derive email from the room document when the socket session
+    # lost it (reconnect, worker migration, Redis TTL expiry, etc.).
+    if not email and session_id:
+        room = await rooms_collection.find_one({"sid": session_id}, {"admin_email": 1})
+        if room:
+            email = room.get("admin_email")
+
     if not email:
         return False
 
@@ -389,12 +402,14 @@ async def user_dashboard(request: Request):
         dur = r.get("audio_duration_secs") or 0
         r["audio_pct"] = min(int(dur / max_audio_secs * 100), 100) if max_audio_secs > 0 else 0
     is_realtime_enabled = await is_realtime_authorized(request.session)
-    return templates.TemplateResponse("user_dashboard.html", {
+    response = templates.TemplateResponse("user_dashboard.html", {
         "request": request,
         "rooms": rooms,
         "current_email": email,
         "is_realtime_enabled": is_realtime_enabled,
     })
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 @app.post("/api/users/{email}/realtime", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
@@ -871,7 +886,9 @@ async def panel(request: Request, sid: str):
         user_secret_key = request.session.get("secret_key")
 
     is_realtime_enabled = await is_realtime_authorized(request.session)
-    return templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key, "is_realtime_enabled": is_realtime_enabled, "email": _get_session_email(request)})
+    response = templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key, "is_realtime_enabled": is_realtime_enabled, "email": _get_session_email(request)})
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 @app.post("/heartbeat/{sid}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def heartbeat(request: Request, sid: str):
@@ -1162,7 +1179,7 @@ async def realtime_connect(socket_id, data):
     rooms = sio.rooms(socket_id)
     session_id = next((r for r in rooms if r != socket_id), None)
 
-    if await is_realtime_authorized(session):
+    if await is_realtime_authorized(session, session_id):
         await _create_scribe_manager(session_id)
         _get_or_create_translation_manager(session_id)
 
@@ -1188,7 +1205,7 @@ async def audio_buffer_append(socket_id, data):
         secret_key = session.get('secret_key') or data.get('secret_key')
         if not await _ensure_socket_verified(socket_id, session, secret_key, session_id):
             return
-        if not await is_realtime_authorized(session):
+        if not await is_realtime_authorized(session, session_id):
             await sio.emit('error', {'message': 'Unauthorized: realtime token required'}, to=socket_id)
             return
         session['realtime_authorized'] = True
