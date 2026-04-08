@@ -77,8 +77,8 @@
   </div>
 
   <!-- Single Language View -->
-  <div id="single-view" class="flex-1 overflow-auto">
-    <div id="data-content" class="p-4 rt-text leading-relaxed"></div>
+  <div id="single-view" class="flex-1 overflow-hidden p-2">
+    <div id="single-content" class="overflow-hidden flex flex-col w-full h-full min-h-0 relative rt-text"></div>
   </div>
 
   <!-- Grid Layout View -->
@@ -820,7 +820,7 @@
   }
 
   function refreshSingleView() {
-    const dataContent = document.getElementById('data-content');
+    const dataContent = document.getElementById('single-content');
     const selectedValue = document.getElementById('combined-select').value;
     let selectedLanguage;
     if (selectedValue.startsWith('single-')) {
@@ -830,8 +830,34 @@
       selectedLanguage = Object.keys(lastTrans?.result?.translated || transcriptionsData.partial?.result?.translated || {})[0];
     }
     if (!selectedLanguage) return;
-    if (!dataContent.children.length) dataContent.appendChild(makeContentContainer());
-    const wrapper = dataContent.children[0];
+
+    if (dataContent.dataset.language !== selectedLanguage) {
+      dataContent.innerHTML = '';
+      dataContent.dataset.language = selectedLanguage;
+
+      const btn = document.createElement('button');
+      btn.className = 'icon-btn-sm icon-btn active absolute bottom-2 left-[50%] translate-x-[-50%] opacity-0';
+      btn.setAttribute('aria-label', 'Go to bottom');
+      btn.innerHTML = '<iconify-icon icon="ph:arrow-down" width="14" height="14"></iconify-icon>';
+
+      const card = document.createElement('div');
+      card.className = 'language-card flex-1 overflow-auto px-2 py-1 leading-relaxed';
+      card.appendChild(makeContentContainer());
+      card.addEventListener('scroll', () => {
+        if (card.scrollTop + card.clientHeight >= card.scrollHeight - 100) {
+          btn.classList.add('opacity-0');
+        } else {
+          btn.classList.remove('opacity-0');
+        }
+      });
+
+      btn.addEventListener('click', () => {
+        card.scrollTop = card.scrollHeight;
+      });
+
+      dataContent.appendChild(card);
+      dataContent.appendChild(btn);
+    }
 
     const transcriptions = transcriptionsData.transcriptions || [];
     let historyText = '';
@@ -844,7 +870,9 @@
     }
 
     const partialText = transcriptionsData?.partial?.result?.translated ? (transcriptionsData.partial.result.translated[selectedLanguage] || '') + '\n' : '';
-    updateContent(wrapper, 'single:' + selectedLanguage, historyText, lastText, partialText, document.getElementById('single-view'));
+    const card = dataContent.querySelector('.language-card');
+    const wrapper = card.children[0];
+    updateContent(wrapper, 'single:' + selectedLanguage, historyText, lastText, partialText, card);
   }
 
   function refreshGridView() {
@@ -927,8 +955,6 @@
     languages.forEach(language => {
       const languageBox = gridContent.querySelector(`[data-language="${language}"]`);
       if (!languageBox) return;
-      const card = languageBox.querySelector('.language-card');
-      const wrapper = card.children[0];
       const transcriptions = transcriptionsData.transcriptions || [];
       let historyText = '';
       let lastText = '';
@@ -939,6 +965,8 @@
         else historyText += text + '\n';
       }
       const partialText = transcriptionsData?.partial?.result?.translated ? (transcriptionsData.partial.result.translated[language] || '') + '\n' : '';
+      const card = languageBox.querySelector('.language-card');
+      const wrapper = card.children[0];
       updateContent(wrapper, 'grid:' + language, historyText, lastText, partialText, card);
     });
   }
@@ -954,7 +982,7 @@
       currentLayout = 'single';
       singleView.classList.remove('hidden');
       gridView.classList.add('hidden');
-      const dataContent = document.getElementById('data-content');
+      const dataContent = document.getElementById('single-content');
       dataContent.innerHTML = '';
       for (const k of renderedText.keys()) {
         if (k.startsWith('single:')) renderedText.delete(k);
