@@ -17,7 +17,7 @@ _RECONNECT_MAX_DELAY = 60.0
 _SEGMENT_START_OFFSET = 0.3   # seconds subtracted from seg_start_time to account for ASR processing latency
 _IDLE_TIMEOUT_SECS = 60       # stop session after 1 minute with no audio
 _IDLE_CHECK_INTERVAL = 30     # how often the watchdog checks (seconds)
-
+_MAX_PARTIAL_LENGTH = 50     # maximum length of partial transcript
 
 class ScribeSessionManager:
     _BYTES_PER_SEC = 16000 * 2          # 16kHz 16-bit mono PCM
@@ -46,6 +46,7 @@ class ScribeSessionManager:
         self.last_partial_text = ""
         self.task_group = None
         self.partial_interval = REALTIME_SETTINGS.get('PARTIAL_INTERVAL', 2)
+        self.should_commit = False
         # Usage tracking
         self.audio_bytes_total = 0
         self.audio_chunks = 0
@@ -128,8 +129,9 @@ class ScribeSessionManager:
                     await self.ws.send(
                         '{"message_type":"input_audio_chunk","audio_base_64":"'
                         + base64_audio
-                        + '","sample_rate":16000,"commit":false}'
+                        + '","sample_rate":16000,"commit":' + str(self.should_commit).lower() + '}'
                     )
+                    self.should_commit = False
                 self.audio_queue.task_done()
         except (asyncio.CancelledError, ConnectionClosed, ConnectionClosedOK):
             pass
@@ -153,6 +155,8 @@ class ScribeSessionManager:
                     await self.handle_transcript(data)
                 elif msg_type in ["error", "auth_error", "quota_exceeded_error"]:
                     logger.error(f"Scribe Error: {data.get('error')}")
+                else:
+                    logger.error(f"Scribe Unknown message type: {msg_type}")
         except (asyncio.CancelledError, ConnectionClosed, ConnectionClosedOK):
             pass
         except Exception as e:
@@ -226,9 +230,12 @@ class ScribeSessionManager:
             if partial:
                 self.last_partial_time = now
                 self.last_partial_text = transcript
+                if len(self.last_partial_text) > _MAX_PARTIAL_LENGTH:
+                    self.should_commit = True
                 asyncio.create_task(self.callback(self.session_id, transcription))
             else:
                 self.seg_start_time = None
+                self.should_commit = False
                 asyncio.create_task(self.callback(self.session_id, transcription))
 
         except Exception as e:

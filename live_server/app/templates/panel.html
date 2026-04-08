@@ -746,12 +746,14 @@
       micBtn.addEventListener('click', async () => {
         if (recording) {
           setMicState('busy')
+          socket.emit('mic_off', { session_id: sessionId })
           await stopSession()
           recording = false
           setMicState('off')
         } else {
           setMicState('busy')
           await startSession()
+          socket.emit('mic_on', { session_id: sessionId, secret_key: user_secret_key })
           recording = true
           setMicState('on')
         }

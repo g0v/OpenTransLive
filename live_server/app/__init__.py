@@ -1164,8 +1164,36 @@ async def realtime_connect(socket_id, data):
     session_id = next((r for r in rooms if r != socket_id), None)
 
     if await is_realtime_authorized(session, session_id):
-        await _get_or_create_scribe_manager(session_id)
         _get_or_create_translation_manager(session_id)
+
+
+@sio.event
+async def mic_on(socket_id, data):
+    """Start the scribe session when the panel mic is turned on."""
+    session = await sio.get_session(socket_id)
+    if not session.get('verified'):
+        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        return
+    rooms = sio.rooms(socket_id)
+    session_id = next((r for r in rooms if r != socket_id), None)
+    if session_id and await is_realtime_authorized(session, session_id):
+        await _get_or_create_scribe_manager(session_id)
+
+
+@sio.event
+async def mic_off(socket_id, data):
+    """Stop the scribe session immediately when the panel mic is turned off."""
+    session = await sio.get_session(socket_id)
+    if not session.get('verified'):
+        return
+    rooms = sio.rooms(socket_id)
+    session_id = next((r for r in rooms if r != socket_id), None)
+    if not session_id:
+        return
+    manager: ScribeSessionManager | None = active_scribe_managers.pop(session_id, None)
+    if manager:
+        logger.info(f"mic_off: stopping scribe for {session_id}")
+        await manager.stop()
 
 
 @sio.event

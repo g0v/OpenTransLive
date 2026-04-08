@@ -442,8 +442,16 @@ class TranslationQueueManager:
         self.is_running = False
         if self.partial_task:
             self.partial_task.cancel()
+            try:
+                await self.partial_task
+            except (asyncio.CancelledError, Exception):
+                pass
         if self.task:
             self.task.cancel()
+            try:
+                await self.task
+            except (asyncio.CancelledError, Exception):
+                pass
 
     async def put(self, session_id, sync_data, cached_data, redis_client):
         item = (session_id, sync_data, cached_data, redis_client)
