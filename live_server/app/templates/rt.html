@@ -192,6 +192,17 @@
     </div>
   </div>
 
+  <!-- Footer -->
+  <footer
+    class="shrink-0 border-t border-divider px-4 py-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs opacity-50">
+    <a href="https://github.com/g0v/OpenTransLive" target="_blank" rel="noopener"
+      class="inline-flex items-center gap-1 underline hover:opacity-80">
+      <iconify-icon icon="ph:github-logo" width="12" height="12"></iconify-icon>View on GitHub
+    </a>
+    <span class="opacity-30">·</span>
+    <span>AI-generated content — may contain errors</span>
+  </footer>
+
   <!-- Language order modal -->
   <div id="sort-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="sort-backdrop"></div>
@@ -522,6 +533,7 @@
   let languageOrder = [];
   const statusIndicator = document.getElementById('status-indicator');
   const statusText = document.getElementById('status-text');
+  let initialized = false;
 
   // ------------------------------------------------------------------ //
   // Font size controls                                                  //
@@ -785,7 +797,11 @@
     }
 
     if (changed) {
-      setTimeout(() => { (scrollParent || container).scrollTop = (scrollParent || container).scrollHeight; }, 10);
+      const scroller = scrollParent || container;
+      setTimeout(() => {
+        const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 100;
+        if (atBottom || !initialized) scroller.scrollTop = scroller.scrollHeight;
+      }, 10);
     }
   }
 
@@ -875,26 +891,43 @@
       languages.forEach(lang => renderedText.delete('grid:' + lang));
       languages.forEach(language => {
         const languageBox = document.createElement('div');
-        languageBox.className = 'grid-lang-box overflow-hidden flex flex-col min-h-0';
+        languageBox.className = 'grid-lang-box overflow-hidden flex flex-col min-h-0 relative';
         languageBox.setAttribute('data-language', language);
 
         const label = document.createElement('div');
         label.className = 'grid-lang-label text-xs font-semibold px-2 py-0.5 shrink-0 uppercase tracking-widest';
         label.textContent = language;
 
+        const btn = document.createElement('button');
+        btn.className = 'icon-btn-sm icon-btn active absolute bottom-2 left-[50%] translate-x-[-50%] opacity-0';
+        btn.setAttribute('aria-label', 'Go to bottom');
+        btn.innerHTML = '<iconify-icon icon="ph:arrow-down" width="14" height="14"></iconify-icon>';
+
         const card = document.createElement('div');
-        card.className = 'flex-1 overflow-auto px-2 py-1 leading-relaxed';
+        card.className = 'language-card flex-1 overflow-auto px-2 py-1 leading-relaxed';
         card.appendChild(makeContentContainer());
+        card.addEventListener('scroll', () => {
+          if (card.scrollTop + card.clientHeight >= card.scrollHeight - 100) {
+            btn.classList.add('opacity-0');
+          } else {
+            btn.classList.remove('opacity-0');
+          }
+        });
+
+        btn.addEventListener('click', () => {
+          card.scrollTop = card.scrollHeight;
+        });
 
         languageBox.appendChild(label);
         languageBox.appendChild(card);
+        languageBox.appendChild(btn);
         gridContent.appendChild(languageBox);
       });
     }
     languages.forEach(language => {
       const languageBox = gridContent.querySelector(`[data-language="${language}"]`);
       if (!languageBox) return;
-      const card = languageBox.querySelector('div:last-child');
+      const card = languageBox.querySelector('.language-card');
       const wrapper = card.children[0];
       const transcriptions = transcriptionsData.transcriptions || [];
       let historyText = '';
@@ -934,7 +967,11 @@
   }
 
   document.getElementById('combined-select').addEventListener('change', function () {
+    initialized = false;
     switchLayout(this.value);
+    setTimeout(() => {
+      initialized = true;
+    }, 100);
   });
 
   // ------------------------------------------------------------------ //
