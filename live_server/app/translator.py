@@ -350,10 +350,9 @@ Task: Translate the text within <translate_this> into language {language}.
 
 Constraints:
 1. Strict Fidelity: Literal meaning only; no stylistic changes or summaries.
-2. Original Style: Keep the exact speaking tone.
-3. Minimal Edit: If languages match, only fix typos.
-4. Format: Output ONLY processed text.
-5. Punctuation: Add punctuation marks.
+2. Minimal Edit: If languages match, only fix typos.
+3. Format: Output ONLY processed text.
+4. Punctuation: Add punctuation marks.
 
 <previous_translation>
 {prev_translation}

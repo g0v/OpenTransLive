@@ -133,7 +133,7 @@
     <!-- Flow panel -->
     <div id="flow-panel" class="w-72 flex flex-col bg-gray-900 border-l border-gray-700 shrink-0">
       <div class="px-3 py-2 border-b border-gray-700 flex items-center gap-2">
-        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Flow</span>
+        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Current Flow</span>
         <span id="flow-count" class="text-xs text-gray-600 ml-auto">0 segments</span>
       </div>
       <div id="flow-content" class="flex-1 overflow-y-auto px-3 py-2 space-y-1"></div>
@@ -842,7 +842,7 @@
     const bytes = data.audio_bytes
     const size = bytes < 1024 ? bytes + ' B'
       : bytes < 1024 * 1024 ? (bytes / 1024).toFixed(1) + ' KB'
-      : (bytes / (1024 * 1024)).toFixed(2) + ' MB'
+        : (bytes / (1024 * 1024)).toFixed(2) + ' MB'
     usageDisplay.textContent = 'Audio: ' + duration + ' / ' + size
   }
 </script>
