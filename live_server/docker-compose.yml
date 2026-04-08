@@ -9,7 +9,7 @@ services:
     ports:
       - "${MONGO_PORT:-27017}:27017"
     volumes:
-      - mongo_data:/data/db
+      - ./mongo_data:/data/db
 
   backend:
     build: .
@@ -28,5 +28,3 @@ services:
       - redis
       - mongodb
 
-volumes:
-  mongo_data:
