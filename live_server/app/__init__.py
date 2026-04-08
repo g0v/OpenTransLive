@@ -51,19 +51,11 @@ logger = setup_logger(__name__)
 # Session manager caches: max 512 concurrent sessions, 30-minute inactivity TTL.
 # When a session is evicted by cachetools (TTL expiry or capacity), its manager is
 # stopped so background tasks are cleaned up promptly.
-_MANAGER_CACHE_TTL = 1800   # seconds (30 min)
+_MANAGER_CACHE_TTL = 60   # seconds (1 min)
 _MANAGER_CACHE_MAX = 512
 
 _MAX_AUDIO_CHUNK_SIZE = 1 * 1024 * 1024  # 1MB in bytes
 _BASE64_RE = re.compile(r'^[A-Za-z0-9+/]*={0,2}$')
-
-# Per-socket rate limits: (max_calls, window_seconds)
-_RATE_LIMITS = {
-    "audio_buffer_append": (100, 1),   # 100 per second
-    "sync":                (20, 1),    # 20 per second
-    "realtime_connect":    (5, 10),    # 5 per 10 seconds
-    "join_session":        (5, 10),    # 5 per 10 seconds
-}
 
 
 class _SocketRateLimiter:
@@ -124,25 +116,28 @@ active_translation_managers: TTLCache = _ManagerTTLCache(
 )
 # Pending debounce tasks for partial transcription broadcasts, keyed by session_id.
 _partial_debounce_tasks: dict = {}
-# Audio usage save tracking: session_id -> last saved bytes
+# Per-session locks to prevent concurrent _get_or_create_scribe_manager calls from racing.
+_scribe_create_locks: collections.defaultdict = collections.defaultdict(asyncio.Lock)
 
 
-async def _create_scribe_manager(session_id) -> ScribeSessionManager:
-    """Create, register, and start a new ScribeSessionManager for the session.
-
-    Any previously running manager for the same session is stopped first so
-    there is never more than one active connection per session.
+async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) -> ScribeSessionManager:
+    """Return the existing running ScribeSessionManager for the session, or create a new one.
+    Pass force_new=True to unconditionally restart (e.g. after a language change).
     """
-    old_manager: ScribeSessionManager | None = active_scribe_managers.pop(session_id, None)
-    if old_manager is not None:
-        asyncio.create_task(old_manager.stop())
+    async with _scribe_create_locks[session_id]:
+        existing: ScribeSessionManager | None = active_scribe_managers.get(session_id)
+        if existing and existing.is_running and not force_new:
+            return existing
 
-    from .translator import get_session_scribe_language
-    language_code = await get_session_scribe_language(redis_client, session_id)
-    manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code)
-    active_scribe_managers[session_id] = manager
-    asyncio.create_task(manager.start())
-    return manager
+        if existing is not None:
+            asyncio.create_task(existing.stop())
+
+        from .translator import get_session_scribe_language
+        language_code = await get_session_scribe_language(redis_client, session_id)
+        manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code)
+        active_scribe_managers[session_id] = manager
+        asyncio.create_task(manager.start())
+        return manager
 
 
 def _get_or_create_translation_manager(session_id):
@@ -588,9 +583,8 @@ async def update_session_scribe_language_endpoint(request: Request, sid: str):
     await save_session_scribe_language(redis_client, sid, language)
 
     # Restart the active scribe manager so the new language takes effect immediately.
-    # _create_scribe_manager already stops any existing manager for the session.
     if active_scribe_managers.get(sid):
-        await _create_scribe_manager(sid)
+        await _get_or_create_scribe_manager(sid, force_new=True)
 
     return {"language": language}
 
@@ -897,17 +891,22 @@ async def heartbeat(request: Request, sid: str):
     await _verify_session_admin(request, sid)
     now = datetime.now(timezone.utc)
     update = {"admin_last_heartbeat": now, "updated_at": now}
+    response: dict = {"status": "ok"}
     manager = active_scribe_managers.get(sid)
     if manager and manager.audio_bytes_total > 0:
         stats = manager.get_usage_stats()
-        update["audio_bytes"] = stats["audio_bytes"]
-        update["audio_duration_secs"] = stats["audio_duration_secs"]
-        update["audio_chunks"] = stats["audio_chunks"]
+        audio_fields = {
+            "audio_bytes": stats["audio_bytes"],
+            "audio_duration_secs": stats["audio_duration_secs"],
+            "audio_chunks": stats["audio_chunks"],
+        }
+        update.update(audio_fields)
+        response.update(audio_fields)
     if manager and manager.is_running:
         # Refresh the TTL so an active session is never evicted mid-recording.
         active_scribe_managers[sid] = manager
     await rooms_collection.update_one({"sid": sid}, {"$set": update})
-    return {"status": "ok"}
+    return response
 
 @app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def release_admin(request: Request, sid: str):
@@ -963,17 +962,17 @@ async def connect(socket_id, environ, auth):
     # Create a session-like object for socket.io
     if auth and auth.get('secret_key') == SETTINGS["SECRET_KEY"]:
         await sio.save_session(socket_id, {'verified': True, 'admin': True})
-        print(f"Admin client connected: {socket_id}")
+        logger.info(f"Admin client connected: {socket_id}")
     else:
         await sio.save_session(socket_id, {'verified': False, 'admin': False})
-        print(f"Client connected: {socket_id}")
+        logger.info(f"Client connected: {socket_id}")
     await sio.emit('connected', {'status': 'connected', 'client_id': socket_id}, to=socket_id)
 
 @sio.event
 async def disconnect(socket_id):
     """Handle client disconnection"""
     _socket_limiter.cleanup(socket_id)
-    print(f"Client disconnected: {socket_id}")
+    logger.info(f"Client disconnected: {socket_id}")
     # Admin lock is NOT cleared here: socket disconnect fires on page refresh
     # and transient network blips, not only on true tab-close.
     # Cleanup is handled by:
@@ -1073,11 +1072,6 @@ async def _process_transcription_update(session_id, sync_data):
 @sio.event
 async def sync(socket_id, data):
     """Handle WebSocket sync events"""
-    max_calls, window = _RATE_LIMITS["sync"]
-    if not _socket_limiter.check(socket_id, "sync", max_calls, window):
-        await sio.emit('error', {'message': 'Rate limit exceeded for sync'}, to=socket_id)
-        return
-
     session = await sio.get_session(socket_id)
 
     session_id = data.get('id')
@@ -1102,11 +1096,6 @@ async def sync(socket_id, data):
 @sio.event
 async def join_session(socket_id, data):
     """Handle client joining a session room"""
-    max_calls, window = _RATE_LIMITS["join_session"]
-    if not _socket_limiter.check(socket_id, "join_session", max_calls, window):
-        await sio.emit('error', {'message': 'Rate limit exceeded for join_session'}, to=socket_id)
-        return
-
     session_id = data.get('session_id')
     secret_key = data.get('secret_key')
 
@@ -1165,11 +1154,6 @@ async def on_scribe_transcription(session_id, transcription):
 @sio.event
 async def realtime_connect(socket_id, data):
     """Handle client realtime_connect events"""
-    max_calls, window = _RATE_LIMITS["realtime_connect"]
-    if not _socket_limiter.check(socket_id, "realtime_connect", max_calls, window):
-        await sio.emit('error', {'message': 'Rate limit exceeded for realtime_connect'}, to=socket_id)
-        return
-
     session = await sio.get_session(socket_id)
 
     if not session.get('verified'):
@@ -1180,17 +1164,13 @@ async def realtime_connect(socket_id, data):
     session_id = next((r for r in rooms if r != socket_id), None)
 
     if await is_realtime_authorized(session, session_id):
-        await _create_scribe_manager(session_id)
+        await _get_or_create_scribe_manager(session_id)
         _get_or_create_translation_manager(session_id)
 
 
 @sio.event
 async def audio_buffer_append(socket_id, data):
     """Handle client audio buffer append events"""
-    max_calls, window = _RATE_LIMITS["audio_buffer_append"]
-    if not _socket_limiter.check(socket_id, "audio_buffer_append", max_calls, window):
-        return  # silent drop on hot audio path to avoid flooding errors back
-
     session = await sio.get_session(socket_id)
 
     session_id = session.get('session_id')
@@ -1237,7 +1217,9 @@ async def audio_buffer_append(socket_id, data):
 
     manager = active_scribe_managers.get(session_id)
     if not manager or not manager.is_running:
-        return
+        if not session.get('realtime_authorized') and not await is_realtime_authorized(session, session_id):
+            return
+        manager = await _get_or_create_scribe_manager(session_id)
     # On first audio chunk of a new manager instance, restore previously saved usage from DB
     # so counts survive page refreshes. Flag is set before the await to prevent double-restore.
     if not manager._usage_restored:

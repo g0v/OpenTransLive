@@ -286,15 +286,20 @@
     }
   }
 
-  // Send heartbeat every 10 seconds to maintain admin lock
+  // Send heartbeat every 10 seconds to maintain admin lock.
+  // The response also carries audio-usage stats so we avoid a separate poll.
   let heartbeatInterval = null
   if (user_secret_key) {
     heartbeatInterval = setInterval(async function () {
       try {
-        await fetch(`/heartbeat/${sid}`, {
+        const res = await fetch(`/heartbeat/${sid}`, {
           method: 'POST',
           credentials: 'same-origin'
         })
+        if (res.ok) {
+          const data = await res.json()
+          if (typeof updateAudioUsageDisplay === 'function') updateAudioUsageDisplay(data)
+        }
       } catch (error) {
         console.error('Heartbeat failed:', error)
       }
@@ -820,39 +825,24 @@
 </script>
 {% if is_realtime_enabled %}
 <script>
-    ; (function () {
-      const usageDisplay = document.getElementById('audio-usage-display')
-      if (!usageDisplay) return
-
-      function formatDuration(secs) {
-        const m = Math.floor(secs / 60)
-        const s = Math.floor(secs % 60)
-        return m + ':' + String(s).padStart(2, '0')
-      }
-
-      function formatBytes(bytes) {
-        if (bytes < 1024) return bytes + ' B'
-        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-        return (bytes / (1024 * 1024)).toFixed(2) + ' MB'
-      }
-
-      async function fetchUsage() {
-        try {
-          const res = await fetch('/api/session/' + sid + '/audio-usage', { credentials: 'same-origin' })
-          if (!res.ok) return
-          const data = await res.json()
-          if (data.audio_bytes === 0) {
-            usageDisplay.textContent = 'Audio: --'
-          } else {
-            usageDisplay.textContent = 'Audio: ' + formatDuration(data.audio_duration_secs) + ' / ' + formatBytes(data.audio_bytes)
-          }
-        } catch (e) {
-          // Ignore fetch errors silently
-        }
-      }
-
-      setInterval(fetchUsage, 5000)
-    })()
+  // Audio-usage display is updated from the heartbeat response (no separate poll needed).
+  function updateAudioUsageDisplay(data) {
+    const usageDisplay = document.getElementById('audio-usage-display')
+    if (!usageDisplay) return
+    if (!data.audio_bytes) {
+      usageDisplay.textContent = 'Audio: --'
+      return
+    }
+    const secs = data.audio_duration_secs
+    const m = Math.floor(secs / 60)
+    const s = Math.floor(secs % 60)
+    const duration = m + ':' + String(s).padStart(2, '0')
+    const bytes = data.audio_bytes
+    const size = bytes < 1024 ? bytes + ' B'
+      : bytes < 1024 * 1024 ? (bytes / 1024).toFixed(1) + ' KB'
+      : (bytes / (1024 * 1024)).toFixed(2) + ' MB'
+    usageDisplay.textContent = 'Audio: ' + duration + ' / ' + size
+  }
 </script>
 {% endif %}
 {% endblock %}
