@@ -772,6 +772,8 @@
     const lastEl = container.children[1];
     const partialEl = container.children[2];
     let changed = false;
+    const scroller = scrollParent || container;
+    const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 100;
 
     if (historyEl.textContent !== historyText) {
       historyEl.textContent = historyText;
@@ -797,11 +799,9 @@
     }
 
     if (changed) {
-      const scroller = scrollParent || container;
-      setTimeout(() => {
-        const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 100;
-        if (atBottom || !initialized) scroller.scrollTop = scroller.scrollHeight;
-      }, 10);
+      if (atBottom || !initialized) {
+        setTimeout(() => { scroller.scrollTop = scroller.scrollHeight; }, 10);
+      }
     }
   }
 
