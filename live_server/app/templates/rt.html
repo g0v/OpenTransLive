@@ -841,7 +841,7 @@
       btn.innerHTML = '<iconify-icon icon="ph:arrow-down" width="14" height="14"></iconify-icon>';
 
       const card = document.createElement('div');
-      card.className = 'language-card flex-1 overflow-auto px-2 py-1 leading-relaxed';
+      card.className = 'language-card flex-1 overflow-auto px-2 py-1 leading-relaxed wrap-break-word';
       card.appendChild(makeContentContainer());
       card.addEventListener('scroll', () => {
         if (card.scrollTop + card.clientHeight >= card.scrollHeight - 100) {
@@ -932,7 +932,7 @@
         btn.innerHTML = '<iconify-icon icon="ph:arrow-down" width="14" height="14"></iconify-icon>';
 
         const card = document.createElement('div');
-        card.className = 'language-card flex-1 overflow-auto px-2 py-1 leading-relaxed';
+        card.className = 'language-card flex-1 overflow-auto px-2 py-1 leading-relaxed wrap-break-word';
         card.appendChild(makeContentContainer());
         card.addEventListener('scroll', () => {
           if (card.scrollTop + card.clientHeight >= card.scrollHeight - 100) {
