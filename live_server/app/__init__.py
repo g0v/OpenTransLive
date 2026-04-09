@@ -508,10 +508,10 @@ async def get_session_keywords_endpoint(request: Request, sid: str):
     sid = sanitize_query_param(sid, "session ID")
     await _verify_session_admin(request, sid)
 
-    from .translator import get_current_keywords, get_locked_keywords
-    keywords = await get_current_keywords(redis_client, sid)
-    locked_keywords = await get_locked_keywords(redis_client, sid)
-    return {"keywords": keywords, "locked_keywords": locked_keywords}
+    from .translator import get_keywords_and_locked
+    keywords, locked_keywords = await get_keywords_and_locked(redis_client, sid)
+    sorted_keywords = sorted(keywords, key=lambda k: keywords[k], reverse=True)
+    return {"keywords": sorted_keywords, "locked_keywords": locked_keywords}
 
 
 @app.post("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])

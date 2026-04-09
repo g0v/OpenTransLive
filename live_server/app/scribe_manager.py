@@ -17,7 +17,7 @@ _RECONNECT_MAX_DELAY = 60.0
 _SEGMENT_START_OFFSET = 0.3   # seconds subtracted from seg_start_time to account for ASR processing latency
 _IDLE_TIMEOUT_SECS = 60       # stop session after 1 minute with no audio
 _IDLE_CHECK_INTERVAL = 30     # how often the watchdog checks (seconds)
-_MAX_PARTIAL_LENGTH = 50     # maximum length of partial transcript
+_MAX_PARTIAL_LENGTH = 100     # maximum length of partial transcript
 
 class ScribeSessionManager:
     _BYTES_PER_SEC = 16000 * 2          # 16kHz 16-bit mono PCM

@@ -27,6 +27,9 @@ async def close_async_client():
         await _client.aclose()
         _client = None
 
+_KEYWORD_CAP = 30         # max keywords sent in prompts
+_KEYWORD_STORE_CAP = _KEYWORD_CAP * 2  # store 2x so low-freq words can recover
+_RETRY_DELAYS = [0.5, 1.0, 2.0]
 _PROVIDER_CONFIG = {
     "gemini": {
         "provider": "gemini",
@@ -48,7 +51,6 @@ def get_provider_config():
     provider = REALTIME_SETTINGS.get("AI_PROVIDER", "gemini").lower()
     return _PROVIDER_CONFIG.get(provider, _PROVIDER_CONFIG["gemini"])
 
-_RETRY_DELAYS = [0.5, 1.0, 2.0]
 
 async def async_chat_completion(json_body: dict):
     provider_cfg = get_provider_config()
@@ -133,19 +135,7 @@ async def save_session_scribe_language(redis_client, session_id, language: str):
         log_exception(logger, e, "Redis set scribe_language error")
 
 
-async def get_current_keywords(redis_client, session_id):
-    try:
-        keywords = await redis_client.get(f"keywords:{session_id}")
-        if keywords:
-            return json.loads(keywords)
-    except Exception as e:
-        log_exception(logger, e, "Redis get keywords error")
-
-    common_prompt = REALTIME_SETTINGS.get('COMMON_PROMPT', '')
-    default_keywords = [k.strip() for k in common_prompt.split(',') if k.strip()]
-    return default_keywords
-
-async def save_current_keywords(redis_client, session_id, keywords):
+async def save_current_keywords(redis_client, session_id, keywords: dict[str, int]):
     try:
         await redis_client.set(f"keywords:{session_id}", json.dumps(keywords), ex=86400)
     except Exception as e:
@@ -163,23 +153,28 @@ async def get_locked_keywords(redis_client, session_id) -> list[str]:
     return []
 
 
-async def get_keywords_and_locked(redis_client, session_id) -> tuple[list[str], list[str]]:
+def _default_keywords() -> dict[str, int]:
+    common_prompt = REALTIME_SETTINGS.get('COMMON_PROMPT', '')
+    return {k.strip(): 1 for k in common_prompt.split(',') if k.strip()}
+
+
+async def get_keywords_and_locked(redis_client, session_id) -> tuple[dict[str, int], list[str]]:
     """Fetch current keywords and locked keywords in a single Redis round-trip via mget."""
     try:
         kw_raw, locked_raw = await redis_client.mget(
             f"keywords:{session_id}",
             f"locked_keywords:{session_id}",
         )
-        keywords = json.loads(kw_raw) if kw_raw else None
         locked = json.loads(locked_raw) if locked_raw else []
-        if keywords is None:
-            common_prompt = REALTIME_SETTINGS.get('COMMON_PROMPT', '')
-            keywords = [k.strip() for k in common_prompt.split(',') if k.strip()]
+        if kw_raw:
+            data = json.loads(kw_raw)
+            keywords = data if isinstance(data, dict) else {kw: 1 for kw in data if isinstance(kw, str)}
+        else:
+            keywords = _default_keywords()
         return keywords, locked
     except Exception as e:
         log_exception(logger, e, "Redis mget keywords error")
-        common_prompt = REALTIME_SETTINGS.get('COMMON_PROMPT', '')
-        return [k.strip() for k in common_prompt.split(',') if k.strip()], []
+        return _default_keywords(), []
 
 
 async def save_locked_keywords(redis_client, session_id, locked_keywords: list[str]):
@@ -190,69 +185,55 @@ async def save_locked_keywords(redis_client, session_id, locked_keywords: list[s
         log_exception(logger, e, "Redis set locked_keywords error")
 
 
-async def rerank_keywords(redis_client, session_id, keywords: list[str], recent_text: str):
+async def rerank_keywords(redis_client, session_id, keywords: dict[str, int], locked_list: list[str], recent_text: str):
     """
-    Ask the LLM to re-rank keywords by relevance to the current transcript context.
-    The most relevant keywords are moved to the front so that the prompt cap [:30]
-    always includes the most important terms.
-    Locked keywords are always preserved at the front and excluded from LLM reranking.
+    Extract new special nouns/names from recent_text, then increment/decrement keyword
+    counts by presence in text. Locked keywords are always preserved at the front.
     Runs as a fire-and-forget background task; result is saved to Redis.
     """
-    locked = await get_locked_keywords(redis_client, session_id)
-    locked_set = set(locked)
-    unlocked = [kw for kw in keywords if kw not in locked_set]
-
-    if len(unlocked) < 10:
-        # Not enough unlocked keywords to bother reranking; still preserve locked order
-        if locked:
-            merged = locked + [kw for kw in keywords if kw not in locked_set]
-            await save_current_keywords(redis_client, session_id, merged)
-        return
-
     provider_cfg = get_provider_config()
     api_key = REALTIME_SETTINGS.get(provider_cfg["api_key_setting"])
     if not api_key:
         return
 
     AI_MODEL = REALTIME_SETTINGS.get("AI_MODEL", provider_cfg["default_model"])
-    numbered = "\n".join(f"{i+1}. {kw}" for i, kw in enumerate(unlocked))
-    json_body = {
-        "model": AI_MODEL,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {
-                "role": "developer",
-                "content": (
-                    "You are managing a keyword list for a live transcription session. \n"
-                    "1. Remove similar keywords.\n"
-                    "2. Re-rank the provided keywords from most relevant/important to least, based on the recent transcript excerpt. \n\n"
-                    "Return only JSON: {\"keywords\": [<ordered list of keyword strings>]}"
-                )
-            },
-            {
-                "role": "user",
-                "content": f"Recent transcript:\n{recent_text[-200:]}\n\nKeywords to rank:\n{numbered}"
-            }
-        ]
-    }
-    try:
-        response = await async_chat_completion(json_body)
-        if response and response.status_code == 200:
-            try:
-                content = response.json()["choices"][0]["message"]["content"]
-                data = json.loads(content)
-                reranked = data.get("keywords", [])
-            except (json.JSONDecodeError, KeyError):
-                logger.error(f"Failed to parse re-ranked keywords from LLM response: {response.text}")
-                return
+    locked_set = set(locked_list)
 
-            if isinstance(reranked, list) and len(reranked) > 0:
-                # Locked keywords go first (in original locked order), then reranked unlocked ones
-                final = locked + [kw for kw in reranked if kw not in locked_set]
-                await save_current_keywords(redis_client, session_id, final)
-                logger.debug(f"Keywords re-ranked for session {session_id}: {final}")
+    try:
+        extract_body = {
+            "model": AI_MODEL,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "developer",
+                 "content": "If there are special nouns or names in the provided text, add them to the special_keywords list.\nReturn in json format:\n{\"special_keywords\": []}"},
+                {"role": "user", "content": f"reference keywords: {', '.join(keywords.keys())}\n\nText:\n{recent_text}"}
+            ]
+        }
+        response = await async_chat_completion(extract_body)
+        if response and response.status_code == 200:
+            new_kws = json.loads(response.json()["choices"][0]["message"]["content"]).get("special_keywords", [])
+            for kw in new_kws:
+                if isinstance(kw, str) and kw not in keywords:
+                    keywords[kw] = 1
     except Exception as e:
-        log_exception(logger, e, "Keyword re-ranking error")
+        log_exception(logger, e, "Keyword extraction error")
+
+    recent_lower = recent_text.lower()
+    for kw in list(keywords.keys()):
+        if kw.lower() in recent_lower:
+            keywords[kw] += 1
+        else:
+            keywords[kw] -= 1
+
+    locked_kws = {kw: keywords[kw] for kw in keywords if kw in locked_set}
+    unlocked_kws = {kw: v for kw, v in keywords.items() if kw not in locked_set and v > 0}
+    final = {
+        **dict(sorted(locked_kws.items(), key=lambda x: x[1], reverse=True)),
+        **dict(sorted(unlocked_kws.items(), key=lambda x: x[1], reverse=True)),
+    }
+    trimmed_final = dict(list(final.items())[:_KEYWORD_STORE_CAP])
+    await save_current_keywords(redis_client, session_id, trimmed_final)
+    logger.debug(f"Keywords re-ranked for session {session_id}: {list(trimmed_final.keys())[:10]}")
 
 
 async def translate_transcription(session_id, data: dict, cached_data: dict, redis_client, skip_correction=False):
@@ -275,14 +256,12 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         return data
 
     AI_MODEL = REALTIME_SETTINGS.get("AI_MODEL", provider_cfg["default_model"])
-    # Single round-trip: fetch keywords and locked keywords together.
     current_keywords, locked_list = await get_keywords_and_locked(redis_client, session_id)
-    # Cap keywords to avoid unbounded prompt growth.
-    # Pinned keywords are always included first; remaining slots go to unpinned ones.
-    _KEYWORD_CAP = 30
+    # Pinned keywords always fill first; unpinned capped to remaining slots.
     locked_set = set(locked_list)
-    pinned_kws = [kw for kw in current_keywords if kw in locked_set]
-    unpinned_kws = [kw for kw in current_keywords if kw not in locked_set]
+    sorted_kws = sorted(current_keywords, key=lambda k: current_keywords[k], reverse=True)
+    pinned_kws = [kw for kw in sorted_kws if kw in locked_set]
+    unpinned_kws = [kw for kw in sorted_kws if kw not in locked_set]
     keywords_str = ', '.join(pinned_kws + unpinned_kws[:max(0, _KEYWORD_CAP - len(pinned_kws))])
 
     context = {
@@ -301,7 +280,6 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
 
     result = {
         "corrected": text,
-        "special_keywords": [],
     }
     
     # Correction and Keyword extraction (if not partial) can actually start together if keywords are from raw text, 
@@ -359,7 +337,7 @@ Constraints:
 </previous_translation>
 """
                 },
-                {"role": "user", "content": f"{(' '.join(context['translated'][language]))[-50:]}\n<translate_this>\n{result['corrected']}\n</translate_this>"}
+                {"role": "user", "content": f"{(' '.join(context['translated'][language]))[-25:]}\n<translate_this>\n{result['corrected']}\n</translate_this>"}
             ]
         }
         try:
@@ -375,50 +353,15 @@ Constraints:
             log_exception(logger, e, f"Translation error for {language}")
             translated[language] = result['corrected']
 
-    async def _keyword_worker():
-        json_body = {
-            "model": AI_MODEL,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "developer", 
-                 "content": "If there are special nouns or names in the provide text, add them to the special_keywords list.\nreturn in json format:\n{\"special_keywords\": []}"},
-                {"role": "user", "content": result["corrected"] }
-            ]
-        }
-        try:
-            response = await async_chat_completion(json_body)
-            if response and response.status_code == 200:
-                result["special_keywords"] = json.loads(response.json()["choices"][0]["message"]["content"]).get("special_keywords", [])
-        except Exception as e:
-            log_exception(logger, e, "Keywords extraction error")
-
     atasks = [_translation_worker(lang) for lang in languages]
-    if not partial:
-        atasks.append(_keyword_worker())
-    
     if atasks:
         await asyncio.gather(*atasks)
+
+    if not partial and languages:
+        first_translation = translated.get(languages[0], result["corrected"])
+        asyncio.create_task(rerank_keywords(redis_client, session_id, dict(current_keywords), locked_list, first_translation))
         
     result["translated"] = translated
-    
-    if not partial:
-        keywords = result.get("special_keywords", [])
-        new_keywords_added = False
-        for keyword in keywords:
-            if isinstance(keyword, str) and keyword not in current_keywords:
-                current_keywords.append(keyword)
-                new_keywords_added = True
-
-        if new_keywords_added:
-            await save_current_keywords(redis_client, session_id, current_keywords)
-        
-        # Re-rank in background if list is substantial, keeping top[:30] relevant
-        if len(current_keywords) >= 10:
-            history_context = " ".join(context["corrected"] + [result["corrected"]])
-            asyncio.create_task(
-                rerank_keywords(redis_client, session_id, current_keywords, history_context)
-            )
-
     data["result"] = result
     return data
 
