@@ -226,14 +226,14 @@ async def rerank_keywords(redis_client, session_id, keywords: dict[str, int], lo
             keywords[kw] -= 1
 
     locked_kws = {kw: keywords[kw] for kw in keywords if kw in locked_set}
-    unlocked_kws = {kw: v for kw, v in keywords.items() if kw not in locked_set and v > 0}
+    unlocked_kws = {kw: v for kw, v in keywords.items() if kw not in locked_set}
     final = {
         **dict(sorted(locked_kws.items(), key=lambda x: x[1], reverse=True)),
         **dict(sorted(unlocked_kws.items(), key=lambda x: x[1], reverse=True)),
     }
     trimmed_final = dict(list(final.items())[:_KEYWORD_STORE_CAP])
     await save_current_keywords(redis_client, session_id, trimmed_final)
-    logger.debug(f"Keywords re-ranked for session {session_id}: {list(trimmed_final.keys())[:10]}")
+    print("keywords saved: ", trimmed_final)
 
 
 async def translate_transcription(session_id, data: dict, cached_data: dict, redis_client, skip_correction=False):
