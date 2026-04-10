@@ -1,10 +1,10 @@
 services:
   redis:
-    image: redis:latest
+    image: redis:${REDIS_VERSION:-latest}
     container_name: opentranslive-redis
 
   mongodb:
-    image: mongo:latest
+    image: mongo:${MONGODB_VERSION:-latest}
     container_name: opentranslive-db
     ports:
       - "127.0.0.1:${MONGO_PORT:-27017}:27017"
