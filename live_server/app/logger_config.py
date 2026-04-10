@@ -6,7 +6,16 @@
 import logging
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+_TW_TZ = timezone(timedelta(hours=8))
+
+
+class _TaiwanFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        dt = datetime.fromtimestamp(record.created, tz=_TW_TZ)
+        return dt.strftime(datefmt) if datefmt else dt.isoformat()
+
 
 def setup_logger(name: str = __name__, log_file: str | Path | None = None, level: int = logging.INFO) -> logging.Logger:
     """
@@ -35,7 +44,7 @@ def setup_logger(name: str = __name__, log_file: str | Path | None = None, level
         log_file = log_dir / f"opentranslive_{datetime.now().strftime('%Y%m%d')}.log"
 
     # File handler - logs everything including sensitive details
-    file_formatter = logging.Formatter(
+    file_formatter = _TaiwanFormatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
@@ -45,7 +54,7 @@ def setup_logger(name: str = __name__, log_file: str | Path | None = None, level
     logger.addHandler(file_handler)
 
     # Console handler - logs only non-sensitive info
-    console_formatter = logging.Formatter(
+    console_formatter = _TaiwanFormatter(
         '%(asctime)s - %(levelname)s - %(message)s',
         datefmt='%H:%M:%S'
     )
