@@ -1,12 +1,7 @@
-from ast import Delete
-import os
 import json
-import copy
-import logging
 import re
 import asyncio
 import httpx
-from datetime import datetime
 from .config import REALTIME_SETTINGS
 from .logger_config import setup_logger, log_exception
 
@@ -141,16 +136,6 @@ async def save_current_keywords(redis_client, session_id, keywords: dict[str, in
     except Exception as e:
         log_exception(logger, e, "Redis set keywords error")
 
-
-async def get_locked_keywords(redis_client, session_id) -> list[str]:
-    """Return the list of locked (pinned) keywords for a session."""
-    try:
-        raw = await redis_client.get(f"locked_keywords:{session_id}")
-        if raw:
-            return json.loads(raw)
-    except Exception as e:
-        log_exception(logger, e, "Redis get locked_keywords error")
-    return []
 
 
 def _default_keywords() -> dict[str, int]:
@@ -307,15 +292,11 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     except Exception as e:
         log_exception(logger, e, "Correction error")
 
-    # 2. Parallel: Translation + Keyword Extraction
+    # 2. Parallel: Translation
     translated = {}
     async def _translation_worker(language):
-        prev_translation = ""
-        if cached_data.get("partial"):
-            pt_trans = cached_data["partial"].get("result", {}).get("translated", {}).get(language, "")
-            if pt_trans:
-                pt_trans = pt_trans[-50:]
-                prev_translation = pt_trans
+        pt_trans = cached_data.get("partial", {}).get("result", {}).get("translated", {}).get(language, "")
+        prev_translation = pt_trans[-50:] if pt_trans else ""
         json_body = {
             "model": AI_MODEL,
             "max_completion_tokens": 300,
@@ -353,13 +334,10 @@ Constraints:
             log_exception(logger, e, f"Translation error for {language}")
             translated[language] = result['corrected']
 
-    atasks = [_translation_worker(lang) for lang in languages]
-    if atasks:
-        await asyncio.gather(*atasks)
+    await asyncio.gather(*[_translation_worker(lang) for lang in languages])
 
     if not partial and languages:
-        first_translation = translated.get(languages[0], result["corrected"])
-        asyncio.create_task(rerank_keywords(redis_client, session_id, dict(current_keywords), locked_list, first_translation))
+        asyncio.create_task(rerank_keywords(redis_client, session_id, dict(current_keywords), locked_list, result["corrected"]))
         
     result["translated"] = translated
     data["result"] = result

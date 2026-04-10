@@ -531,8 +531,10 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
             raise HTTPException(status_code=400, detail=f"Invalid keyword value: {kw}")
     keywords = [kw.strip() for kw in keywords]
 
-    from .translator import save_current_keywords, save_locked_keywords
-    await save_current_keywords(redis_client, sid, keywords)
+    from .translator import save_current_keywords, save_locked_keywords, get_keywords_and_locked
+    existing_keywords, _ = await get_keywords_and_locked(redis_client, sid)
+    keywords_dict = {kw: existing_keywords.get(kw, 1) for kw in keywords}
+    await save_current_keywords(redis_client, sid, keywords_dict)
 
     if "locked_keywords" in body:
         locked_keywords = body.get("locked_keywords")
@@ -548,7 +550,7 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
     else:
         locked_keywords = None
 
-    result = {"keywords": keywords}
+    result = {"keywords": list(keywords_dict.keys())}
     if locked_keywords is not None:
         result["locked_keywords"] = locked_keywords
     return result
