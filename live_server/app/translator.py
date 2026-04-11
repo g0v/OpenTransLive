@@ -211,7 +211,7 @@ async def rerank_keywords(redis_client, session_id, keywords: dict[str, int], lo
             keywords[kw] -= 1
 
     locked_kws = {kw: keywords[kw] for kw in keywords if kw in locked_set}
-    unlocked_kws = {kw: v for kw, v in keywords.items() if kw not in locked_set}
+    unlocked_kws = {kw: v for kw, v in keywords.items() if kw not in locked_set and v > -100}
     final = {
         **dict(sorted(locked_kws.items(), key=lambda x: x[1], reverse=True)),
         **dict(sorted(unlocked_kws.items(), key=lambda x: x[1], reverse=True)),

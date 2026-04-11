@@ -765,6 +765,7 @@
 <script>
     // Flow panel — shows corrected transcriptions in real-time
     ; (function () {
+      const MAX_FLOW_ITEMS = 150
       const flowContent = document.getElementById('flow-content')
       const flowCountEl = document.getElementById('flow-count')
       const renderedStartTimes = new Set()
@@ -787,6 +788,14 @@
         p.textContent = text
         flowContent.appendChild(p)
         segmentCount++
+        // Remove oldest items to keep DOM size bounded
+        while (flowContent.children.length > MAX_FLOW_ITEMS) {
+          flowContent.removeChild(flowContent.firstChild)
+        }
+        // Prevent the dedup Set from growing unboundedly
+        if (renderedStartTimes.size > MAX_FLOW_ITEMS * 2) {
+          renderedStartTimes.clear()
+        }
         updateCount()
         scrollToBottom()
       }

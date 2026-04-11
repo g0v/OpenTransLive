@@ -800,7 +800,7 @@
 
     if (changed) {
       if (atBottom || !initialized) {
-        setTimeout(() => { scroller.scrollTop = scroller.scrollHeight; }, 10);
+        setTimeout(() => { scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' }); }, 10);
       }
     }
   }
