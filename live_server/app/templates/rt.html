@@ -205,6 +205,23 @@
     <span>AI-generated content — may contain errors</span>
   </footer>
 
+  <!-- Mobile language picker modal -->
+  <div id="mobile-lang-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="mobile-lang-backdrop"></div>
+    <div class="relative z-10 rounded-2xl shadow-2xl border max-w-sm w-full mx-4 info-modal-bg overflow-hidden">
+      <div class="px-5 pt-5 pb-2">
+        <h2 class="text-base font-semibold">Choose a language</h2>
+        <p class="text-xs opacity-50 mt-0.5">Select which language to display</p>
+      </div>
+      <div class="px-4 py-3 space-y-2 max-h-[60vh] overflow-y-auto" id="mobile-lang-list"></div>
+      <div class="px-4 pb-4">
+        <button id="mobile-lang-all" class="mobile-lang-btn w-full text-sm px-4 py-2.5 rounded-xl font-medium opacity-60">
+          Show all languages
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Language order modal -->
   <div id="sort-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="sort-backdrop"></div>
@@ -332,6 +349,19 @@
     border-radius: 0.5rem;
   }
 
+  .mobile-lang-btn {
+    background-color: #f3f4f6;
+    color: #111827;
+    border: 1px solid #e5e7eb;
+    transition: background-color 0.12s;
+  }
+
+  .mobile-lang-btn:hover, .mobile-lang-btn:active {
+    background-color: #dbeafe;
+    border-color: #93c5fd;
+    color: #1d4ed8;
+  }
+
   /* ------------------------------------------------------------------ */
   /* Dark theme                                                          */
   /* ------------------------------------------------------------------ */
@@ -414,6 +444,18 @@
   #app-root.theme-dark .sort-lang-item {
     background-color: #0f172a;
     border-color: #334155;
+  }
+
+  #app-root.theme-dark .mobile-lang-btn {
+    background-color: #1e293b;
+    color: #e2e8f0;
+    border-color: #334155;
+  }
+
+  #app-root.theme-dark .mobile-lang-btn:hover, #app-root.theme-dark .mobile-lang-btn:active {
+    background-color: #1e3a5f;
+    border-color: #3b82f6;
+    color: #60a5fa;
   }
 
   /* ------------------------------------------------------------------ */
@@ -501,6 +543,18 @@
   #app-root.theme-high-contrast .sort-lang-item {
     background-color: #111;
     border-color: #555;
+  }
+
+  #app-root.theme-high-contrast .mobile-lang-btn {
+    background-color: #111;
+    color: #ffffff;
+    border-color: #555;
+  }
+
+  #app-root.theme-high-contrast .mobile-lang-btn:hover, #app-root.theme-high-contrast .mobile-lang-btn:active {
+    background-color: #333;
+    border-color: #ffff00;
+    color: #ffff00;
   }
 
   /* ------------------------------------------------------------------ */
@@ -735,6 +789,46 @@
   document.getElementById('sort-backdrop').addEventListener('click', () => sortModal.classList.add('hidden'));
 
   // ------------------------------------------------------------------ //
+  // Mobile language picker                                              //
+  // ------------------------------------------------------------------ //
+  let mobilePickerShown = false;
+  const mobileLangModal = document.getElementById('mobile-lang-modal');
+
+  function maybeShowMobilePicker(languages) {
+    if (mobilePickerShown) return;
+    if (window.innerWidth >= 768) return;           // desktop — skip
+    if (currentLayout !== 'grid') return;            // already on single view
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('layout')) return;               // explicit URL param — respect it
+    if (languages.length === 0) return;
+
+    mobilePickerShown = true;
+    const list = document.getElementById('mobile-lang-list');
+    list.innerHTML = '';
+    languages.forEach(lang => {
+      const btn = document.createElement('button');
+      btn.className = 'mobile-lang-btn w-full text-sm px-4 py-2.5 rounded-xl font-medium';
+      btn.textContent = lang;
+      btn.addEventListener('click', () => {
+        mobileLangModal.classList.add('hidden');
+        const sel = document.getElementById('combined-select');
+        sel.value = 'single-' + lang;
+        sel.dispatchEvent(new Event('change'));
+      });
+      list.appendChild(btn);
+    });
+    mobileLangModal.classList.remove('hidden');
+  }
+
+  document.getElementById('mobile-lang-all').addEventListener('click', () => {
+    mobileLangModal.classList.add('hidden');
+  });
+
+  document.getElementById('mobile-lang-backdrop').addEventListener('click', () => {
+    mobileLangModal.classList.add('hidden');
+  });
+
+  // ------------------------------------------------------------------ //
   // View / layout                                                       //
   // ------------------------------------------------------------------ //
   function populateCombinedSelect() {
@@ -763,6 +857,7 @@
     });
     combinedSelect.value = currentSelect;
     combinedSelect.dispatchEvent(new Event('change'));
+    maybeShowMobilePicker(currentLanguages);
   }
 
   function refreshView() {
