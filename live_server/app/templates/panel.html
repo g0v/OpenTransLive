@@ -599,6 +599,8 @@
 
   // Merge server keywords into the local list without overwriting user edits.
   // New keywords added server-side (by auto-extraction) are appended locally.
+  // Keywords removed server-side (e.g. evicted due to low score) are dropped
+  // locally unless they are pinned.
   // Skipped while a save is in flight to avoid a race where the server still
   // holds a pre-deletion snapshot and re-adds a keyword the user just removed.
   async function syncKeywords() {
@@ -608,13 +610,20 @@
       if (!res.ok) return
       const data = await res.json()
       const serverKeywords = data.keywords
+      const serverSet = new Set(serverKeywords)
+      const currentSet = new Set(currentKeywords)
       let changed = false
+      // Add new server-side keywords
       for (const kw of serverKeywords) {
-        if (!currentKeywords.includes(kw)) {
+        if (!currentSet.has(kw)) {
           currentKeywords.push(kw)
           changed = true
         }
       }
+      // Remove keywords that the server dropped and are not pinned
+      const filtered = currentKeywords.filter(kw => serverSet.has(kw) || lockedKeywords.has(kw))
+      if (filtered.length !== currentKeywords.length) changed = true
+      currentKeywords = filtered
       if (changed) {
         updateKeywordLabel()
         renderKeywordList()
@@ -683,6 +692,7 @@
       if (!kw) return
       if (!currentKeywords.includes(kw)) {
         currentKeywords.push(kw)
+        lockedKeywords.add(kw)
         updateKeywordLabel()
         renderKeywordList()
         saveKeywords()
