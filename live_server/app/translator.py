@@ -3,6 +3,7 @@ import re
 import asyncio
 import httpx
 from .config import REALTIME_SETTINGS
+from .database import rooms_collection
 from .logger_config import setup_logger, log_exception
 
 logger = setup_logger(__name__)
@@ -87,8 +88,15 @@ async def async_chat_completion(json_body: dict):
             last_response = None
     return last_response
 
+async def _save_room_field_to_mongo(session_id: str, field: str, value):
+    try:
+        await rooms_collection.update_one({"sid": session_id}, {"$set": {field: value}})
+    except Exception as e:
+        log_exception(logger, e, f"MongoDB set {field} error")
+
+
 async def get_session_languages(redis_client, session_id) -> list[str]:
-    """Return translate languages for a session, falling back to config."""
+    """Return translate languages for a session, falling back to MongoDB then config."""
     try:
         raw = await redis_client.get(f"languages:{session_id}")
         if raw:
@@ -96,16 +104,26 @@ async def get_session_languages(redis_client, session_id) -> list[str]:
     except Exception as e:
         log_exception(logger, e, "Redis get languages error")
 
+    try:
+        room = await rooms_collection.find_one({"sid": session_id}, {"languages": 1})
+        if room and room.get("languages"):
+            langs = room["languages"]
+            await redis_client.set(f"languages:{session_id}", json.dumps(langs), ex=86400)
+            return langs
+    except Exception as e:
+        log_exception(logger, e, "MongoDB get languages error")
+
     languages_env = REALTIME_SETTINGS.get('TRANSLATE_LANGUAGES', '')
     return [lang.strip() for lang in languages_env.split(',') if lang.strip()]
 
 
 async def save_session_languages(redis_client, session_id, languages: list[str]):
-    """Persist translate languages for a session in Redis."""
+    """Persist translate languages for a session in Redis and MongoDB."""
     try:
         await redis_client.set(f"languages:{session_id}", json.dumps(languages), ex=86400)
     except Exception as e:
         log_exception(logger, e, "Redis set languages error")
+    asyncio.create_task(_save_room_field_to_mongo(session_id, "languages", languages))
 
 
 async def get_session_scribe_language(redis_client, session_id) -> str:
@@ -116,11 +134,21 @@ async def get_session_scribe_language(redis_client, session_id) -> str:
             return raw.decode() if isinstance(raw, bytes) else raw
     except Exception as e:
         log_exception(logger, e, "Redis get scribe_language error")
+
+    try:
+        room = await rooms_collection.find_one({"sid": session_id}, {"scribe_language": 1})
+        if room and room.get("scribe_language"):
+            lang = room["scribe_language"]
+            await redis_client.set(f"scribe_language:{session_id}", lang, ex=86400)
+            return lang
+    except Exception as e:
+        log_exception(logger, e, "MongoDB get scribe_language error")
+
     return ""
 
 
 async def save_session_scribe_language(redis_client, session_id, language: str):
-    """Persist forced detect language for Scribe in Redis."""
+    """Persist forced detect language for Scribe in Redis and MongoDB."""
     try:
         if language:
             await redis_client.set(f"scribe_language:{session_id}", language, ex=86400)
@@ -128,6 +156,7 @@ async def save_session_scribe_language(redis_client, session_id, language: str):
             await redis_client.delete(f"scribe_language:{session_id}")
     except Exception as e:
         log_exception(logger, e, "Redis set scribe_language error")
+    asyncio.create_task(_save_room_field_to_mongo(session_id, "scribe_language", language))
 
 
 async def save_current_keywords(redis_client, session_id, keywords: dict[str, int]):
@@ -135,7 +164,7 @@ async def save_current_keywords(redis_client, session_id, keywords: dict[str, in
         await redis_client.set(f"keywords:{session_id}", json.dumps(keywords), ex=86400)
     except Exception as e:
         log_exception(logger, e, "Redis set keywords error")
-
+    asyncio.create_task(_save_room_field_to_mongo(session_id, "keywords", keywords))
 
 
 def _default_keywords() -> dict[str, int]:
@@ -150,16 +179,34 @@ async def get_keywords_and_locked(redis_client, session_id) -> tuple[dict[str, i
             f"keywords:{session_id}",
             f"locked_keywords:{session_id}",
         )
-        locked = json.loads(locked_raw) if locked_raw else []
-        if kw_raw:
-            data = json.loads(kw_raw)
-            keywords = data if isinstance(data, dict) else {kw: 1 for kw in data if isinstance(kw, str)}
-        else:
-            keywords = _default_keywords()
-        return keywords, locked
+        if kw_raw or locked_raw:
+            locked = json.loads(locked_raw) if locked_raw else []
+            if kw_raw:
+                data = json.loads(kw_raw)
+                keywords = data if isinstance(data, dict) else {kw: 1 for kw in data if isinstance(kw, str)}
+            else:
+                keywords = _default_keywords()
+            return keywords, locked
     except Exception as e:
         log_exception(logger, e, "Redis mget keywords error")
-        return _default_keywords(), []
+
+    try:
+        room = await rooms_collection.find_one({"sid": session_id}, {"keywords": 1, "locked_keywords": 1})
+        if room and (room.get("keywords") or room.get("locked_keywords")):
+            keywords_raw = room.get("keywords") or {}
+            keywords = keywords_raw if isinstance(keywords_raw, dict) else {kw: 1 for kw in keywords_raw if isinstance(kw, str)}
+            locked = room.get("locked_keywords") or []
+            await redis_client.mset({
+                f"keywords:{session_id}": json.dumps(keywords),
+                f"locked_keywords:{session_id}": json.dumps(locked),
+            })
+            await redis_client.expire(f"keywords:{session_id}", 86400)
+            await redis_client.expire(f"locked_keywords:{session_id}", 86400)
+            return keywords, locked
+    except Exception as e:
+        log_exception(logger, e, "MongoDB get keywords error")
+
+    return _default_keywords(), []
 
 
 async def save_locked_keywords(redis_client, session_id, locked_keywords: list[str]):
@@ -168,6 +215,7 @@ async def save_locked_keywords(redis_client, session_id, locked_keywords: list[s
         await redis_client.set(f"locked_keywords:{session_id}", json.dumps(locked_keywords), ex=86400)
     except Exception as e:
         log_exception(logger, e, "Redis set locked_keywords error")
+    asyncio.create_task(_save_room_field_to_mongo(session_id, "locked_keywords", locked_keywords))
 
 
 async def rerank_keywords(redis_client, session_id, keywords: dict[str, int], locked_list: list[str], recent_text: str):
@@ -304,19 +352,22 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
             "messages": [
                 {
                     "role": "developer",
-                    "content": f"""Context: This transcription is about {keywords_str}.
-Task: Translate the text within <translate_this> into language {language}.
+                    "content": f"""Translate <translate_this> to {language}.
 
-Constraints:
-1. Strict Fidelity: Literal meaning only; no stylistic changes or summaries.
-2. Minimal Edit: If languages match, only fix typos.
-3. Format: Output ONLY processed text.
-4. Punctuation: Add punctuation marks.
+Rules:
+1. Literal only; no styling/summaries.
+2. Match <previous_translation> to minimize changes.
+3. If same language, fix typos only.
+4. Add punctuation. Remove all timecodes.
+5. Output ONLY the processed translated text.
+
+<context>
+{keywords_str}
+</context>
 
 <previous_translation>
 {prev_translation}
-</previous_translation>
-"""
+</previous_translation>"""
                 },
                 {"role": "user", "content": f"{(' '.join(context['translated'][language]))[-25:]}\n<translate_this>\n{result['corrected']}\n</translate_this>"}
             ]
