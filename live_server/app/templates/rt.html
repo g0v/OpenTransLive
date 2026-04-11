@@ -195,6 +195,8 @@
   <!-- Footer -->
   <footer
     class="shrink-0 border-t border-divider px-4 py-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs opacity-50">
+    <span>OpenTransLive</span>
+    <span class="opacity-30">·</span>
     <a href="https://github.com/g0v/OpenTransLive" target="_blank" rel="noopener"
       class="inline-flex items-center gap-1 underline hover:opacity-80">
       <iconify-icon icon="ph:github-logo" width="12" height="12"></iconify-icon>View on GitHub
@@ -541,6 +543,7 @@
   const FONT_STEP = 0.125;
   const FONT_MIN = 0.5;
   const FONT_MAX = 5;
+  const MAX_HISTORY = 60; // cap displayed transcription history to prevent lag
 
   function applyFontSize(rem) {
     currentFontSizeRem = Math.min(FONT_MAX, Math.max(FONT_MIN, rem));
@@ -860,12 +863,13 @@
     }
 
     const transcriptions = transcriptionsData.transcriptions || [];
+    const cropped = transcriptions.slice(-MAX_HISTORY);
     let historyText = '';
     let lastText = '';
-    for (let i = 0; i < transcriptions.length; i++) {
-      const text = transcriptions[i].result.translated[selectedLanguage];
+    for (let i = 0; i < cropped.length; i++) {
+      const text = cropped[i].result.translated[selectedLanguage];
       if (!text) continue;
-      if (i === transcriptions.length - 1) lastText = text + '\n';
+      if (i === cropped.length - 1) lastText = text + '\n';
       else historyText += text + '\n';
     }
 
@@ -956,12 +960,13 @@
       const languageBox = gridContent.querySelector(`[data-language="${language}"]`);
       if (!languageBox) return;
       const transcriptions = transcriptionsData.transcriptions || [];
+      const cropped = transcriptions.slice(-MAX_HISTORY);
       let historyText = '';
       let lastText = '';
-      for (let i = 0; i < transcriptions.length; i++) {
-        const text = transcriptions[i].result?.translated[language];
+      for (let i = 0; i < cropped.length; i++) {
+        const text = cropped[i].result?.translated[language];
         if (!text) continue;
-        if (i === transcriptions.length - 1) lastText = text + '\n';
+        if (i === cropped.length - 1) lastText = text + '\n';
         else historyText += text + '\n';
       }
       const partialText = transcriptionsData?.partial?.result?.translated ? (transcriptionsData.partial.result.translated[language] || '') + '\n' : '';
