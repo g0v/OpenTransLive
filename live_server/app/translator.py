@@ -83,6 +83,11 @@ async def async_chat_completion(json_body: dict):
                 attempt + 1, response.status_code,
                 "retrying" if delay != _RETRY_DELAYS[-1] else "giving up"
             )
+        except (httpx.ConnectTimeout, httpx.ConnectError, httpx.RemoteProtocolError) as e:
+            log_exception(logger, e, f"HTTP request error in async_chat_completion (attempt {attempt + 1})")
+            last_response = None
+            await close_async_client()
+            client = get_async_client()
         except Exception as e:
             log_exception(logger, e, f"HTTP request error in async_chat_completion (attempt {attempt + 1})")
             last_response = None

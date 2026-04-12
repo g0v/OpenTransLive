@@ -520,6 +520,7 @@
   let currentKeywords = []
   let lockedKeywords = new Set()  // keywords that survive auto-rerank/removal
   let keywordSavePending = false  // true while a save is in flight; blocks sync
+  let keywordSaveTimer = null     // debounce timer for saveKeywords
 
   function updateKeywordLabel() {
     const label = document.getElementById('kw-dropdown-label')
@@ -569,14 +570,14 @@
         }
         updateKeywordLabel()
         renderKeywordList()
-        saveKeywords()
+        debouncedSaveKeywords()
       })
       row.querySelector('.kw-remove-btn').addEventListener('click', function () {
         currentKeywords = currentKeywords.filter(function (k) { return k !== kw })
         lockedKeywords.delete(kw)
         updateKeywordLabel()
         renderKeywordList()
-        saveKeywords()
+        debouncedSaveKeywords()
       })
       list.appendChild(row)
     })
@@ -631,6 +632,13 @@
     } catch (e) {
       // Silently ignore sync errors to avoid spamming console during normal operation
     }
+  }
+
+  function debouncedSaveKeywords() {
+    const statusEl = document.getElementById('keyword-status')
+    statusEl.textContent = 'Saving...'
+    clearTimeout(keywordSaveTimer)
+    keywordSaveTimer = setTimeout(saveKeywords, 1000)
   }
 
   async function saveKeywords() {

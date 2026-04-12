@@ -6,7 +6,9 @@
 
     <!-- View select -->
     <div class="flex items-center gap-1.5 shrink-0">
-      <span class="text-xs font-medium opacity-60 hidden sm:inline">View</span>
+      <span class="text-xs font-medium opacity-60 inline-flex items-center">
+        <iconify-icon icon="ph:globe" width="20" height="20"></iconify-icon>
+      </span>
       <select id="combined-select"
         class="text-xs border rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 select-ctrl">
       </select>
@@ -51,12 +53,6 @@
             <div class="text-xs mt-2 opacity-50 text-center max-w-40 truncate" id="qr-url-text"></div>
           </div>
         </div>
-
-        <!-- JSON download -->
-        <a href="/download/{{ id }}" target="_blank" class="icon-btn icon-btn-sm" aria-label="Download JSON"
-          title="Download JSON">
-          <iconify-icon icon="ph:download-simple" width="15" height="15"></iconify-icon>
-        </a>
 
         <!-- Info / help button -->
         <button id="info-btn" class="icon-btn icon-btn-sm" aria-label="URL parameters help" title="URL parameters">
@@ -215,7 +211,8 @@
       </div>
       <div class="px-4 py-3 space-y-2 max-h-[60vh] overflow-y-auto" id="mobile-lang-list"></div>
       <div class="px-4 pb-4">
-        <button id="mobile-lang-all" class="mobile-lang-btn w-full text-sm px-4 py-2.5 rounded-xl font-medium opacity-60">
+        <button id="mobile-lang-all"
+          class="mobile-lang-btn w-full text-sm px-4 py-2.5 rounded-xl font-medium opacity-60">
           Show all languages
         </button>
       </div>
@@ -356,7 +353,8 @@
     transition: background-color 0.12s;
   }
 
-  .mobile-lang-btn:hover, .mobile-lang-btn:active {
+  .mobile-lang-btn:hover,
+  .mobile-lang-btn:active {
     background-color: #dbeafe;
     border-color: #93c5fd;
     color: #1d4ed8;
@@ -452,7 +450,8 @@
     border-color: #334155;
   }
 
-  #app-root.theme-dark .mobile-lang-btn:hover, #app-root.theme-dark .mobile-lang-btn:active {
+  #app-root.theme-dark .mobile-lang-btn:hover,
+  #app-root.theme-dark .mobile-lang-btn:active {
     background-color: #1e3a5f;
     border-color: #3b82f6;
     color: #60a5fa;
@@ -551,7 +550,8 @@
     border-color: #555;
   }
 
-  #app-root.theme-high-contrast .mobile-lang-btn:hover, #app-root.theme-high-contrast .mobile-lang-btn:active {
+  #app-root.theme-high-contrast .mobile-lang-btn:hover,
+  #app-root.theme-high-contrast .mobile-lang-btn:active {
     background-color: #333;
     border-color: #ffff00;
     color: #ffff00;
