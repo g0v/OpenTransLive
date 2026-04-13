@@ -161,9 +161,9 @@ async def lifespan(app: FastAPI):
     # Shutdown
     print("Shutting down resources...")
     await FastAPILimiter.close()
-    # Close shared translator client
-    from .translator import close_async_client
-    await close_async_client()
+    # Close translator and shared HTTP client
+    from .translators import close_translator
+    await close_translator()
 
     # Stop all active scribe managers (snapshot first to avoid mutation during iteration)
     for manager in list(active_scribe_managers.values()):
