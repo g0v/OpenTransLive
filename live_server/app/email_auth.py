@@ -1,4 +1,4 @@
-# This file is part of g0v/realtime_transcribe.
+# This file is part of g0v/OpenTransLive.
 # Copyright (c) 2025 Sean Gau
 # Licensed under the GNU AGPL v3.0
 # See LICENSE for details.
