@@ -132,7 +132,7 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
         if existing is not None:
             asyncio.create_task(existing.stop())
 
-        from .translator import get_session_scribe_language
+        from .translation_service import get_session_scribe_language
         language_code = await get_session_scribe_language(redis_client, session_id)
         manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code)
         active_scribe_managers[session_id] = manager
@@ -144,7 +144,7 @@ def _get_or_create_translation_manager(session_id):
     """Return existing TranslationQueueManager or create and start a new one."""
     manager = active_translation_managers.get(session_id)
     if not manager:
-        from .translator import TranslationQueueManager
+        from .translation_service import TranslationQueueManager
         manager = TranslationQueueManager(on_translation_completed)
         active_translation_managers[session_id] = manager
         asyncio.create_task(manager.start())
@@ -493,7 +493,7 @@ async def get_session_languages_endpoint(request: Request, sid: str):
     sid = sanitize_query_param(sid, "session ID")
     await _verify_session_admin(request, sid)
 
-    from .translator import get_session_languages
+    from .translation_service import get_session_languages
     languages = await get_session_languages(redis_client, sid)
     return {"languages": languages}
 
@@ -515,7 +515,7 @@ async def update_session_languages_endpoint(request: Request, sid: str):
             raise HTTPException(status_code=400, detail=f"Invalid language value: {lang}")
     languages = [lang.strip() for lang in languages]
 
-    from .translator import save_session_languages
+    from .translation_service import save_session_languages
     await save_session_languages(redis_client, sid, languages)
     return {"languages": languages}
 
@@ -526,7 +526,7 @@ async def get_session_keywords_endpoint(request: Request, sid: str):
     sid = sanitize_query_param(sid, "session ID")
     await _verify_session_admin(request, sid)
 
-    from .translator import get_keywords_and_locked
+    from .translation_service import get_keywords_and_locked
     keywords, locked_keywords = await get_keywords_and_locked(redis_client, sid)
     sorted_keywords = sorted(keywords, key=lambda k: keywords[k], reverse=True)
     return {"keywords": sorted_keywords, "locked_keywords": locked_keywords}
@@ -549,7 +549,7 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
             raise HTTPException(status_code=400, detail=f"Invalid keyword value: {kw}")
     keywords = [kw.strip() for kw in keywords]
 
-    from .translator import save_current_keywords, save_locked_keywords, get_keywords_and_locked
+    from .translation_service import save_current_keywords, save_locked_keywords, get_keywords_and_locked
     existing_keywords, _ = await get_keywords_and_locked(redis_client, sid)
     keywords_dict = {kw: existing_keywords.get(kw, 1) for kw in keywords}
     await save_current_keywords(redis_client, sid, keywords_dict)
@@ -580,7 +580,7 @@ async def get_session_scribe_language_endpoint(request: Request, sid: str):
     sid = sanitize_query_param(sid, "session ID")
     await _verify_session_admin(request, sid)
 
-    from .translator import get_session_scribe_language
+    from .translation_service import get_session_scribe_language
     language = await get_session_scribe_language(redis_client, sid)
     return {"language": language}
 
@@ -599,7 +599,7 @@ async def update_session_scribe_language_endpoint(request: Request, sid: str):
     if language and not re.fullmatch(r'[a-z]{2,3}', language):
         raise HTTPException(status_code=400, detail="language must be an ISO 639-1 (2-char) or ISO 639-3 (3-char) code")
 
-    from .translator import save_session_scribe_language
+    from .translation_service import save_session_scribe_language
     await save_session_scribe_language(redis_client, sid, language)
 
     # Restart the active scribe manager so the new language takes effect immediately.
@@ -643,7 +643,7 @@ async def get_youtube_start_time(video_id: str) -> float | None:
             'key': api_key
         }
         try:
-            from .translator import get_async_client
+            from .translation_service import get_async_client
             client = get_async_client()
             response = await client.get(url, params=params, timeout=10.0)
             response.raise_for_status()
