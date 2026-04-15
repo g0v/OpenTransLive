@@ -71,18 +71,16 @@ class GeminiTranslator(BaseTranslator):
                 {
                     "role": "developer",
                     "content": (
-                        f"Correct the text in <correct_this>.\n\n"
-                        "Rules:\n"
-                        "1. Literal only; no styling/summaries.\n"
-                        "2. Output ONLY the corrected text.\n\n"
-                        f"<context>\n{keywords}\n</context>"
+                        "Correct the user's text literally. No styling/summaries. "
+                        "Output ONLY the corrected text.\n\n"
+                        f"Context: {keywords}"
                     ),
                 },
                 {
                     "role": "user",
-                    "content": f"<correct_this>\n{text}\n</correct_this>",
+                    "content": text,
                 },
-            ],
+            ]
         }
         result = await self._chat(body)
         if result:

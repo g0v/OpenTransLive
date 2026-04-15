@@ -700,11 +700,11 @@
       if (!kw) return
       if (!currentKeywords.includes(kw)) {
         currentKeywords.push(kw)
-        lockedKeywords.add(kw)
-        updateKeywordLabel()
-        renderKeywordList()
-        saveKeywords()
       }
+      lockedKeywords.add(kw)
+      updateKeywordLabel()
+      renderKeywordList()
+      saveKeywords()
       input.value = ''
     })
     document.getElementById('kw-custom-input').addEventListener('keydown', function (e) {
