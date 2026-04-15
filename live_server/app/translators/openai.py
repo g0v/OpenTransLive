@@ -70,14 +70,13 @@ class OpenAITranslator(BaseTranslator):
                         f"Correct the text in <correct_this>.\n\n"
                         "Rules:\n"
                         "1. Literal only; no styling/summaries.\n"
-                        "2. Add punctuation. Remove all timecodes.\n"
-                        "3. Output ONLY the corrected text.\n\n"
+                        "2. Output ONLY the corrected text.\n\n"
                         f"<context>\n{keywords}\n</context>"
                     ),
                 },
                 {
                     "role": "user",
-                    "content": f"{context[-25:]}\n<correct_this>\n{text}\n</correct_this>",
+                    "content": f"<correct_this>\n{text}\n</correct_this>",
                 },
             ],
         }
