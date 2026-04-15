@@ -33,8 +33,12 @@ REALTIME_SETTINGS = {
   'GEMINI_API_KEY': "",
   'OPENAI_API_KEY': "",
 
-  # AI translation provider: "gemini" or "openai"
+  # AI provider default: "gemini" or "openai"
+  # Override per-operation with CORRECT_PROVIDER / TRANSLATE_PROVIDER.
+  # If both are unset they fall back to AI_PROVIDER.
   'AI_PROVIDER': "openai",
+  # 'CORRECT_PROVIDER':   "gemini",   # provider used for ASR correction
+  # 'TRANSLATE_PROVIDER': "openai",   # provider used for translation
 
   # Translation settings
   'TRANSLATE_LANGUAGES': "zh-Hant-TW,en-US",

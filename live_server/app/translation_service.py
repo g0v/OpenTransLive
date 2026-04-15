@@ -294,6 +294,7 @@ class TranslationQueueManager:
     def __init__(self, callback):
         self.callback = callback
         self.partial_task = None
+        self._pending_partial = None  # latest partial waiting for in-flight to finish
         self.commit_queue = asyncio.Queue(maxsize=self._COMMIT_QUEUE_MAXSIZE)
         self._commit_in_flight = False
         self.is_running = False
@@ -305,6 +306,7 @@ class TranslationQueueManager:
 
     async def stop(self):
         self.is_running = False
+        self._pending_partial = None
         if self.partial_task:
             self.partial_task.cancel()
             try:
@@ -324,13 +326,15 @@ class TranslationQueueManager:
             if self._commit_in_flight or not self.commit_queue.empty():
                 return
             if self.partial_task and not self.partial_task.done():
-                print(f"{session_id} partial update too fast, skip it.", flush=True)
-                return
+                # Replace pending slot with the latest partial; it will be
+                # dispatched as soon as the in-flight translation finishes.
+                self._pending_partial = item
             else:
-                self.partial_task = asyncio.create_task(self._process(*item))
+                self.partial_task = asyncio.create_task(self._process_partial(*item))
         else:
             if self.partial_task and not self.partial_task.done():
                 self.partial_task.cancel()
+            self._pending_partial = None  # commit supersedes any pending partial
             if self.commit_queue.full():
                 try:
                     self.commit_queue.get_nowait()
@@ -358,11 +362,26 @@ class TranslationQueueManager:
                 self._commit_in_flight = False
             await asyncio.sleep(0.01)
 
+    async def _process_partial(self, session_id, sync_data, cached_data, redis_client):
+        await self._process(session_id, sync_data, cached_data, redis_client)
+        # Dispatch the next queued partial if one arrived while we were in-flight
+        # and no commit has since taken priority.
+        if self._pending_partial and not self._commit_in_flight and self.commit_queue.empty():
+            item = self._pending_partial
+            self.partial_task = asyncio.create_task(self._process_partial(*item))
+        self._pending_partial = None
+
     async def _process(self, session_id, sync_data, cached_data, redis_client):
         try:
             result_data = await translate_transcription(
                 session_id, sync_data, cached_data, redis_client, skip_correction=REALTIME_SETTINGS.get('SKIP_CORRECTION', False)
             )
+            if not sync_data.get("partial"):
+                # Eagerly clear the partial key so the next partial's prev_translation is clean.
+                try:
+                    await redis_client.delete(f"transcription:{session_id}:partial")
+                except Exception as e:
+                    log_exception(logger, e, f"Failed to clear partial after commit for {session_id}")
             asyncio.create_task(self.callback(session_id, result_data))
         except asyncio.CancelledError:
             logger.debug(f"Translation task cancelled for session {session_id}")
