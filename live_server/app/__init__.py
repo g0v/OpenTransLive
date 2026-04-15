@@ -33,7 +33,7 @@ try:
     from .config import EMAIL_SETTINGS
 except ImportError:
     EMAIL_SETTINGS = {}
-from .database import rooms_collection, transcription_store_collection, users_collection, init_indexes
+from .database import rooms_collection, transcription_store_collection, transcription_segments_collection, users_collection, init_indexes
 from .logger_config import setup_logger, log_exception
 from .scribe_manager import ScribeSessionManager
 from .email_auth import (
@@ -712,13 +712,12 @@ async def get_cached_transcription(id) -> Any:
 
         # Final fallback to DB if no data in Redis
         if data is None:
-            store = await transcription_store_collection.find_one({"sid": id})
-            if store:
+            segments, store = await _load_segments_from_db(id, limit=1000)
+            if segments:
                 data = {
-                    "transcriptions": store.get("transcriptions", []),
-                    "stream_start_time": store.get("stream_start_time")
+                    "transcriptions": segments,
+                    "stream_start_time": store.get("stream_start_time") if store else None
                 }
-                # Backfill Redis
                 asyncio.create_task(migrate_to_zset(id, data))
             else:
                 data = {"transcriptions": []}
@@ -760,18 +759,34 @@ async def migrate_to_zset(id, data):
         log_exception(logger, e, f"Migration error for {id}")
 
 
+async def _load_segments_from_db(sid: str, limit: int | None = None) -> tuple[list, dict | None]:
+    """Fetch committed segments and session metadata from DB in parallel.
+    Falls back to the legacy transcription_store embedded array if the segments
+    collection has no data (for sessions written before the migration).
+    """
+    query = transcription_segments_collection.find(
+        {"sid": sid, "partial": {"$ne": True}},
+        {"_id": 0, "sid": 0, "created_at": 0}
+    ).sort("start_time", 1)
+    if limit:
+        query = query.limit(limit)
+    segments, store = await asyncio.gather(
+        query.to_list(length=limit),
+        transcription_store_collection.find_one({"sid": sid})
+    )
+    if not segments and store and store.get("transcriptions"):
+        segments = store.get("transcriptions", [])
+    return segments, store
+
+
 async def save_segment_background(sid, segment, stream_start_time):
-    """Push segment to MongoDB in background"""
+    """Save segment to MongoDB transcription_segments collection"""
     try:
+        now = datetime.now(timezone.utc)
+        await transcription_segments_collection.insert_one({**segment, "sid": sid, "created_at": now})
         await transcription_store_collection.update_one(
             {"sid": sid},
-            {
-                "$push": {"transcriptions": {"$each": [segment], "$slice": -30000}},
-                "$set": {
-                    "stream_start_time": stream_start_time,
-                    "updated_at": datetime.now(timezone.utc)
-                }
-            },
+            {"$set": {"stream_start_time": stream_start_time, "updated_at": now}},
             upsert=True
         )
     except Exception as e:
@@ -788,20 +803,22 @@ async def download(request: Request, id: str):
     # Sanitize id parameter to prevent NoSQL injection
     id = sanitize_query_param(id, "session ID")
 
-    room, data = await asyncio.gather(
+    room, (segments, meta) = await asyncio.gather(
         rooms_collection.find_one({"sid": id}, {"admin_email": 1, "admin_uid": 1}),
-        transcription_store_collection.find_one({"sid": id}, {"_id": 0}),
+        _load_segments_from_db(id),
     )
     if room:
         await _require_room_owner(request, room)
-    if not data or not data.get("transcriptions"):
+    if not segments:
         raise HTTPException(status_code=404, detail="Session not found")
-    
-    # Ensure all fields are JSON serializable
-    if "updated_at" in data and isinstance(data["updated_at"], datetime):
-        data["updated_at"] = data["updated_at"].isoformat()
 
-    # Return as JSON
+    data = {
+        "sid": id,
+        "transcriptions": segments,
+        "stream_start_time": meta.get("stream_start_time") if meta else None,
+        "updated_at": meta.get("updated_at").isoformat() if meta and isinstance(meta.get("updated_at"), datetime) else None,
+    }
+
     content = json.dumps(data, ensure_ascii=False, indent=2)
     return Response(content=content, media_type="application/json")
 

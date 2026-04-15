@@ -8,11 +8,13 @@ db = client[MONGODB_SETTINGS.get('db', 'opentranslive-db')]
 
 rooms_collection = db['room']
 transcription_store_collection = db['transcription_store']
+transcription_segments_collection = db['transcription_segments']
 users_collection = db['users']
 
 
 async def init_indexes():
     await rooms_collection.create_index([("sid", ASCENDING)], unique=True)
     await transcription_store_collection.create_index([("sid", ASCENDING), ("created_at", DESCENDING)])
+    await transcription_segments_collection.create_index([("sid", ASCENDING), ("start_time", ASCENDING)])
     await users_collection.create_index([("email", ASCENDING)], unique=True)
     await users_collection.create_index([("user_uid", ASCENDING)])
