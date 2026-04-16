@@ -33,6 +33,7 @@ from ..logger_config import setup_logger
 from .base import BaseTranslator
 from .composite import CompositeTranslator
 from .gemini import GeminiTranslator
+from .groq import GroqTranslator
 from .openai import OpenAITranslator
 
 logger = setup_logger(__name__)
@@ -40,6 +41,7 @@ logger = setup_logger(__name__)
 # Registry: provider name → class
 _BACKENDS: dict[str, Callable[[dict], BaseTranslator]] = {
     "gemini": GeminiTranslator,
+    "groq": GroqTranslator,
     "openai": OpenAITranslator,
     # "anthropic": AnthropicTranslator,
 }

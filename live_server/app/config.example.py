@@ -29,16 +29,17 @@ REALTIME_SETTINGS = {
   # ElevenLabs Scribe (speech-to-text)
   'ELEVENLABS_API_KEY': "",
 
-  # Gemini or OpenAI (Correction and translate)
+  # AI provider API keys (Correction and translation)
   'GEMINI_API_KEY': "",
   'OPENAI_API_KEY': "",
+  'GROQ_API_KEY': "",
 
-  # AI provider default: "gemini" or "openai"
+  # AI provider default: "gemini", "openai", or "groq"
   # Override per-operation with CORRECT_PROVIDER / TRANSLATE_PROVIDER.
   # If both are unset they fall back to AI_PROVIDER.
   'AI_PROVIDER': "openai",
   # 'CORRECT_PROVIDER':   "gemini",   # provider used for ASR correction
-  # 'TRANSLATE_PROVIDER': "openai",   # provider used for translation
+  # 'TRANSLATE_PROVIDER': "groq",     # provider used for translation
 
   # Translation settings
   'TRANSLATE_LANGUAGES': "zh-Hant-TW,en-US",
