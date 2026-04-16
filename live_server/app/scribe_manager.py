@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from opencc import OpenCC
 from urllib.parse import urlencode
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
@@ -9,6 +10,7 @@ from .config import REALTIME_SETTINGS
 from .translation_service import get_async_client
 from .logger_config import setup_logger, log_exception
 
+cc = OpenCC('s2twp')
 logger = setup_logger(__name__)
 
 _MAX_RECONNECT_RETRIES = 5
@@ -211,7 +213,9 @@ class ScribeSessionManager:
             now = datetime.now(timezone.utc)
 
             # Efficiently strip specific punctuation
-            transcript = transcript.rstrip(",.。，")
+            transcript = transcript.rstrip(",.。，").strip()
+            if(self.language_code == "zho"):
+                transcript = cc.convert(transcript)
 
             if self._is_hallucination(transcript):
                 logger.warning(f"Hallucination detected, dropping: {repr(transcript)}")
@@ -301,12 +305,13 @@ class ScribeSessionManager:
                         "model_id": "scribe_v2_realtime",
                         "audio_format": "pcm_16000",
                         "commit_strategy": "vad",
-                        "vad_silence_threshold_secs": 0.3,
+                        "vad_silence_threshold_secs": 0.5,
                         "vad_threshold": 0.4,
                         "min_speech_duration_ms": 100,
                         "min_silence_duration_ms": 100,
                         "include_timestamps": "false",
-                        "enable_logging": "false"
+                        "enable_logging": "false",
+                        "disable_logging": "true"
                     }
                     if self.language_code:
                         params_dict["language_code"] = self.language_code

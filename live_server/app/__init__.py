@@ -925,9 +925,9 @@ async def heartbeat(request: Request, sid: str):
     now = datetime.now(timezone.utc)
     update = {"admin_last_heartbeat": now, "updated_at": now}
     response: dict = {"status": "ok"}
-    manager = active_scribe_managers.get(sid)
-    if manager and manager.audio_bytes_total > 0:
-        stats = manager.get_usage_stats()
+    scribe_manager = active_scribe_managers.get(sid)
+    if scribe_manager and scribe_manager.audio_bytes_total > 0:
+        stats = scribe_manager.get_usage_stats()
         audio_fields = {
             "audio_bytes": stats["audio_bytes"],
             "audio_duration_secs": stats["audio_duration_secs"],
@@ -935,9 +935,15 @@ async def heartbeat(request: Request, sid: str):
         }
         update.update(audio_fields)
         response.update(audio_fields)
-    if manager and manager.is_running:
+    if scribe_manager and scribe_manager.is_running:
         # Refresh the TTL so an active session is never evicted mid-recording.
-        active_scribe_managers[sid] = manager
+        active_scribe_managers[sid] = scribe_manager
+    translation_manager = active_translation_managers.get(sid)
+    if translation_manager:
+        # Refresh translation manager TTL alongside scribe manager to prevent
+        # the 60s default expiry from evicting it mid-commit and silently
+        # dropping committed translations.
+        active_translation_managers[sid] = translation_manager
     await rooms_collection.update_one({"sid": sid}, {"$set": update})
     return response
 
@@ -1072,7 +1078,7 @@ async def _process_transcription_update(session_id, sync_data):
     is_partial = sync_data.get("partial", False) is True
 
     async def _emit_now(p):
-        log_msg = f"sync {sync_data['start_time']}"
+        log_msg = f"sync {sync_data['start_time']} {sync_data['partial']}"
         if "result" in sync_data and "corrected" in sync_data["result"]:
             log_msg += f" {sync_data['result']['corrected']}"
         print(log_msg, flush=True)

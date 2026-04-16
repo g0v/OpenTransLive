@@ -597,6 +597,20 @@ wheels = [
 ]
 
 [[package]]
+name = "opencc"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/92/92f4519221b833801be1d037cde747f04c4e29e33bd7574b36b898d9e2bf/opencc-1.2.0.tar.gz", hash = "sha256:2bb913c7ed388466b26d38af4c8c4bb419ddb503235d070f0ee1b24998ef8bca", size = 3420630, upload-time = "2026-01-22T09:23:12.382Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/f9/9c70995ba3b9839b5754bd3fe4b7bad46b252a343601e17bcac21d86ce6a/opencc-1.2.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:696fc0fd0fe4ee1d678c4783af07733425299bc1ed70e55595275d15087006dd", size = 1376952, upload-time = "2026-01-22T09:23:01.865Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/e9/fa3308bae32fd4f2c5539703a96500aee8006cfcfa975a77106c0fd1e553/opencc-1.2.0-cp311-cp311-manylinux2014_x86_64.whl", hash = "sha256:6ab92dc34be23a710e98162347287d152bb8ac2ed62fc646dc70a1ab44e2540f", size = 1656415, upload-time = "2026-01-22T09:23:02.726Z" },
+    { url = "https://files.pythonhosted.org/packages/21/d2/d25fce5e58204fbe7722684b49cfd896bd01e11f1a31cec417c19b39bea5/opencc-1.2.0-cp311-cp311-win_amd64.whl", hash = "sha256:f6b631419fae0a1d590eb605699c0507d7f3e43b4e601555d12bf59043dc34d1", size = 1763274, upload-time = "2026-01-22T09:53:12.551Z" },
+    { url = "https://files.pythonhosted.org/packages/f2/89/c3654977ae86211342356c5f455a26d93dd47222c2444e945aab6a4f91cc/opencc-1.2.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:c9851a7b7d50e4c5d52c71972cedbb618542a342ed57ce396be8988bfefdf040", size = 1376098, upload-time = "2026-01-22T09:23:04.052Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/f8/fc8c5f25243a886dcf15329060e3596e4ab967ee2e277920e4feb6067211/opencc-1.2.0-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:1f105a05fc76c29a1090cb613996aef26b60525e745e8471dc4485dfe17f2e08", size = 1655493, upload-time = "2026-01-22T09:23:05.387Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/f6/0900195298326bd038469f3db571afd73b893a30fe92648f6418162a4cb8/opencc-1.2.0-cp312-cp312-win_amd64.whl", hash = "sha256:76cf42a9666ac5402478f7fad2f603d253096aa5c41199b173e08d49a9af8046", size = 1763621, upload-time = "2026-01-22T09:53:13.748Z" },
+]
+
+[[package]]
 name = "opentranslive-server"
 version = "0.1.0"
 source = { virtual = "." }
@@ -609,6 +623,7 @@ dependencies = [
     { name = "fastapi-limiter" },
     { name = "httpx" },
     { name = "itsdangerous" },
+    { name = "opencc" },
     { name = "pymongo" },
     { name = "python-socketio" },
     { name = "redis" },
@@ -627,6 +642,7 @@ requires-dist = [
     { name = "fastapi-limiter", specifier = "==0.1.6" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "itsdangerous", specifier = ">=2.2.0" },
+    { name = "opencc", specifier = ">=1.2.0" },
     { name = "pymongo", specifier = ">=4.15.5" },
     { name = "python-socketio", specifier = ">=5.15.1" },
     { name = "redis", specifier = ">=7.1.0" },
