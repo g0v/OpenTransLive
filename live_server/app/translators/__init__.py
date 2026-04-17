@@ -10,9 +10,10 @@ Usage
 
 Adding a new backend
 --------------------
-1. Create e.g. ``translators/anthropic.py`` subclassing ``BaseTranslator``.
+1. Create a subclass of ``ChatCompletionTranslator`` (for OpenAI-compatible APIs)
+   or ``BaseTranslator`` directly (for other shapes) in ``providers.py``.
 2. Add an entry to ``_BACKENDS`` below.
-3. Set ``AI_PROVIDER=anthropic`` (or whatever key you choose) in your config.
+3. Set ``AI_PROVIDER=<key>`` in your config.
 
 Per-operation providers
 -----------------------
@@ -27,26 +28,51 @@ Example — Gemini for correction, OpenAI for translation::
     'TRANSLATE_PROVIDER': "openai",
 """
 
+import asyncio
 from typing import Callable
 
 from ..logger_config import setup_logger
 from .base import BaseTranslator
-from .composite import CompositeTranslator
-from .gemini import GeminiTranslator
-from .groq import GroqTranslator
-from .openai import OpenAITranslator
+from .providers import GeminiTranslator, GroqTranslator, OpenAITranslator
 
 logger = setup_logger(__name__)
 
-# Registry: provider name → class
 _BACKENDS: dict[str, Callable[[dict], BaseTranslator]] = {
     "gemini": GeminiTranslator,
     "groq": GroqTranslator,
     "openai": OpenAITranslator,
-    # "anthropic": AnthropicTranslator,
 }
 
 _instance: BaseTranslator | None = None
+
+
+class _CompositeTranslator(BaseTranslator):
+    """Routes correct/extract_keywords to one backend and translate to another."""
+
+    def __init__(self, correct_backend: BaseTranslator, translate_backend: BaseTranslator):
+        self._correct = correct_backend
+        self._translate = translate_backend
+
+    async def correct(self, text: str, context: str, keywords: str) -> str:
+        return await self._correct.correct(text, context, keywords)
+
+    async def translate(
+        self,
+        text: str,
+        language: str,
+        context: str,
+        prev_translation: str,
+        keywords: str,
+    ) -> str:
+        return await self._translate.translate(text, language, context, prev_translation, keywords)
+
+    async def extract_keywords(
+        self, text: str, existing_keywords: dict[str, int]
+    ) -> list[str]:
+        return await self._correct.extract_keywords(text, existing_keywords)
+
+    async def close(self) -> None:
+        await asyncio.gather(self._correct.close(), self._translate.close())
 
 
 def _resolve_backend(provider: str) -> Callable[[dict], BaseTranslator]:
@@ -61,7 +87,7 @@ def get_translator() -> BaseTranslator:
     """Return the singleton translator.
 
     When ``CORRECT_PROVIDER`` and ``TRANSLATE_PROVIDER`` differ, returns a
-    ``CompositeTranslator`` that routes each operation to the right backend.
+    composite translator that routes each operation to the right backend.
     """
     global _instance
     if _instance is None:
@@ -77,7 +103,7 @@ def get_translator() -> BaseTranslator:
         if correct_provider == translate_provider:
             _instance = correct_cls(REALTIME_SETTINGS)
         else:
-            _instance = CompositeTranslator(
+            _instance = _CompositeTranslator(
                 correct_backend=correct_cls(REALTIME_SETTINGS),
                 translate_backend=translate_cls(REALTIME_SETTINGS),
             )
