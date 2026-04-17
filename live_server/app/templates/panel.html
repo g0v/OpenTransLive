@@ -127,15 +127,16 @@
   </header>
 
   <div class="flex-1 flex min-h-0">
-    <div class="flex-1 relative bg-white min-w-0">
+    <div id="viewer-wrap" class="flex-1 relative bg-white min-w-0">
       <iframe src="/rt/{{ sid }}?theme=dark" class="w-full h-full border-0" allow="autoplay; fullscreen"></iframe>
     </div>
-    <!-- Flow panel -->
+    <!-- Flow panel (side column on desktop, bottom drawer on mobile) -->
     <div id="flow-panel" class="w-72 flex flex-col bg-gray-900 border-l border-gray-700 shrink-0">
-      <div class="px-3 py-2 border-b border-gray-700 flex items-center gap-2">
+      <button id="flow-toggle" type="button" class="flow-header px-3 py-2 border-b border-gray-700 flex items-center gap-2 text-left w-full">
         <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Current Flow</span>
         <span id="flow-count" class="text-xs text-gray-600 ml-auto">0 segments</span>
-      </div>
+        <iconify-icon id="flow-chevron" icon="mdi:chevron-up" width="16" height="16" class="flow-chevron text-gray-500"></iconify-icon>
+      </button>
       <div id="flow-content" class="flex-1 overflow-y-auto px-3 py-2 space-y-1"></div>
     </div>
   </div>
@@ -246,6 +247,54 @@
     font-style: italic;
     padding: 0.2rem 0.4rem;
     border-radius: 3px;
+  }
+
+  /* Desktop: flow panel is a static side column; hide the drawer chevron. */
+  .flow-chevron {
+    display: none;
+  }
+
+  /* Mobile: turn the flow panel into a bottom drawer that collapses to
+     just its header, and slides up when opened. */
+  @media (max-width: 767px) {
+    #flow-panel {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: auto;
+      height: 60vh;
+      max-height: 60vh;
+      border-left: none;
+      border-top: 1px solid #374151;
+      transform: translateY(calc(100% - 2.5rem));
+      transition: transform 0.25s ease;
+      z-index: 40;
+      box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.4);
+    }
+
+    #flow-panel.flow-open {
+      transform: translateY(0);
+    }
+
+    #flow-panel .flow-header {
+      cursor: pointer;
+    }
+
+    .flow-chevron {
+      display: inline-flex;
+      transition: transform 0.25s ease;
+    }
+
+    #flow-panel.flow-open .flow-chevron {
+      transform: rotate(180deg);
+    }
+
+    /* Leave space at the bottom of the viewer so the collapsed drawer
+       header doesn't cover iframe content. */
+    #viewer-wrap {
+      padding-bottom: 2.5rem;
+    }
   }
 </style>
 <script>
@@ -760,6 +809,16 @@
         setTimeout(() => { element.style.backgroundColor = origBg }, 200)
       })
     })
+    // Flow drawer toggle (only active on mobile via CSS; button is a no-op
+     // on desktop since the panel is statically visible).
+    const flowPanel = document.getElementById('flow-panel')
+    const flowToggle = document.getElementById('flow-toggle')
+    if (flowPanel && flowToggle) {
+      flowToggle.addEventListener('click', function () {
+        flowPanel.classList.toggle('flow-open')
+      })
+    }
+
     if (micBtn) {
       micBtn.addEventListener('click', async () => {
         if (recording) {

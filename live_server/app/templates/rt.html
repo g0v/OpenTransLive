@@ -871,7 +871,6 @@
     const partialEl = container.children[2];
     let changed = false;
     const scroller = scrollParent || container;
-    const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 100;
 
     if (historyEl.textContent !== historyText) {
       historyEl.textContent = historyText;
@@ -897,7 +896,8 @@
     }
 
     if (changed) {
-      if (atBottom || !initialized) {
+      const following = scroller.dataset.followingBottom !== '0';
+      if (following || !initialized) {
         setTimeout(() => { scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' }); }, 10);
       }
     }
@@ -917,6 +917,48 @@
     return wrapper;
   }
 
+  function makeLanguageCard() {
+    const card = document.createElement('div');
+    card.className = 'language-card flex-1 overflow-auto px-2 py-1 leading-relaxed wrap-break-word';
+    // Disable browser scroll anchoring — when textContent replaces the
+    // history/last/partial spans, the anchor can become invalid and the
+    // browser may snap scrollTop to the bottom on its own.
+    card.style.overflowAnchor = 'none';
+    card.dataset.followingBottom = '1';
+    card.appendChild(makeContentContainer());
+
+    const btn = document.createElement('button');
+    btn.className = 'icon-btn-sm icon-btn active absolute bottom-2 left-[50%] translate-x-[-50%] opacity-0';
+    btn.setAttribute('aria-label', 'Go to bottom');
+    btn.innerHTML = '<iconify-icon icon="ph:arrow-down" width="14" height="14"></iconify-icon>';
+
+    // Only user-initiated scrolls should flip the follow flag; programmatic
+    // smooth scrolls fire intermediate scroll events that would otherwise
+    // falsely mark the card as "scrolled away from bottom".
+    let lastUserScrollAt = 0;
+    const markUserScroll = () => { lastUserScrollAt = Date.now(); };
+    card.addEventListener('wheel', markUserScroll, { passive: true });
+    card.addEventListener('touchstart', markUserScroll, { passive: true });
+    card.addEventListener('keydown', markUserScroll);
+
+    card.addEventListener('scroll', () => {
+      const nearBottom = card.scrollTop + card.clientHeight >= card.scrollHeight - 100;
+      if (Date.now() - lastUserScrollAt < 1000) {
+        card.dataset.followingBottom = nearBottom ? '1' : '0';
+      }
+      if (card.dataset.followingBottom === '1') btn.classList.add('opacity-0');
+      else btn.classList.remove('opacity-0');
+    });
+
+    btn.addEventListener('click', () => {
+      card.dataset.followingBottom = '1';
+      btn.classList.add('opacity-0');
+      card.scrollTo({ top: card.scrollHeight, behavior: 'smooth' });
+    });
+
+    return { card, btn };
+  }
+
   function refreshSingleView() {
     const dataContent = document.getElementById('single-content');
     const selectedValue = document.getElementById('combined-select').value;
@@ -932,27 +974,7 @@
     if (dataContent.dataset.language !== selectedLanguage) {
       dataContent.innerHTML = '';
       dataContent.dataset.language = selectedLanguage;
-
-      const btn = document.createElement('button');
-      btn.className = 'icon-btn-sm icon-btn active absolute bottom-2 left-[50%] translate-x-[-50%] opacity-0';
-      btn.setAttribute('aria-label', 'Go to bottom');
-      btn.innerHTML = '<iconify-icon icon="ph:arrow-down" width="14" height="14"></iconify-icon>';
-
-      const card = document.createElement('div');
-      card.className = 'language-card flex-1 overflow-auto px-2 py-1 leading-relaxed wrap-break-word';
-      card.appendChild(makeContentContainer());
-      card.addEventListener('scroll', () => {
-        if (card.scrollTop + card.clientHeight >= card.scrollHeight - 100) {
-          btn.classList.add('opacity-0');
-        } else {
-          btn.classList.remove('opacity-0');
-        }
-      });
-
-      btn.addEventListener('click', () => {
-        card.scrollTop = card.scrollHeight;
-      });
-
+      const { card, btn } = makeLanguageCard();
       dataContent.appendChild(card);
       dataContent.appendChild(btn);
     }
@@ -1025,25 +1047,7 @@
         label.className = 'grid-lang-label text-xs font-semibold px-2 py-0.5 shrink-0 uppercase tracking-widest';
         label.textContent = language;
 
-        const btn = document.createElement('button');
-        btn.className = 'icon-btn-sm icon-btn active absolute bottom-2 left-[50%] translate-x-[-50%] opacity-0';
-        btn.setAttribute('aria-label', 'Go to bottom');
-        btn.innerHTML = '<iconify-icon icon="ph:arrow-down" width="14" height="14"></iconify-icon>';
-
-        const card = document.createElement('div');
-        card.className = 'language-card flex-1 overflow-auto px-2 py-1 leading-relaxed wrap-break-word';
-        card.appendChild(makeContentContainer());
-        card.addEventListener('scroll', () => {
-          if (card.scrollTop + card.clientHeight >= card.scrollHeight - 100) {
-            btn.classList.add('opacity-0');
-          } else {
-            btn.classList.remove('opacity-0');
-          }
-        });
-
-        btn.addEventListener('click', () => {
-          card.scrollTop = card.scrollHeight;
-        });
+        const { card, btn } = makeLanguageCard();
 
         languageBox.appendChild(label);
         languageBox.appendChild(card);
