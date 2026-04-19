@@ -1104,6 +1104,8 @@ async def _process_transcription_update(session_id, sync_data):
 @sio.event
 async def sync(socket_id, data):
     """Handle WebSocket sync events"""
+    if not _socket_limiter.check(socket_id, 'sync', 20, 1.0):
+        return
     session = await sio.get_session(socket_id)
 
     session_id = data.get('id')
@@ -1128,6 +1130,9 @@ async def sync(socket_id, data):
 @sio.event
 async def join_session(socket_id, data):
     """Handle client joining a session room"""
+    if not _socket_limiter.check(socket_id, 'join_session', 5, 10.0):
+        await sio.emit('error', {'message': 'Rate limit exceeded'}, to=socket_id)
+        return
     session_id = data.get('session_id')
     secret_key = data.get('secret_key')
 
@@ -1223,6 +1228,8 @@ async def mic_off(socket_id, data):
 @sio.event
 async def audio_buffer_append(socket_id, data):
     """Handle client audio buffer append events"""
+    if not _socket_limiter.check(socket_id, 'audio_buffer_append', 30, 1.0):
+        return
     session = await sio.get_session(socket_id)
 
     session_id = session.get('session_id')
