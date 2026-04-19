@@ -6,6 +6,7 @@
 import asyncio
 import collections
 import json
+import os
 import re
 import time
 import uuid
@@ -183,8 +184,17 @@ async def lifespan(app: FastAPI):
 # Initialize FastAPI app with lifespan
 app = FastAPI(lifespan=lifespan)
 
-# Add session middleware
-app.add_middleware(SessionMiddleware, secret_key=SETTINGS["SECRET_KEY"])
+# Add session middleware.
+# SameSite=Lax blocks cross-site POST/DELETE cookie attachment — the main CSRF
+# mitigation for /api/session/{sid}/..., /heartbeat, /release-admin. Secure is
+# enabled in production so the cookie is never sent over plain HTTP.
+_IS_PRODUCTION = os.environ.get("ENVIRONMENT", "development").lower() == "production"
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SETTINGS["SECRET_KEY"],
+    same_site="lax",
+    https_only=_IS_PRODUCTION,
+)
 
 # Setup templates
 timestamp = datetime.now(timezone.utc).timestamp()

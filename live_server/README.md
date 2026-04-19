@@ -125,6 +125,7 @@ live_server/
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
 | `SECRET_KEY` | Session encryption key | Random UUID | Yes |
+| `ENVIRONMENT` | Set to `production` to mark session cookies as Secure (HTTPS-only) | `development` | No |
 | `HOST` | Server bind address | `0.0.0.0` | No |
 | `PORT` | Server port | `5000` | No |
 | `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017` | Yes |
