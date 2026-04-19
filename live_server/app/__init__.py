@@ -33,6 +33,13 @@ try:
     from .config import EMAIL_SETTINGS
 except ImportError:
     EMAIL_SETTINGS = {}
+
+if not SETTINGS.get("SECRET_KEY"):
+    raise RuntimeError(
+        "SECRET_KEY must be set in config/env. Refusing to start with an "
+        "ephemeral fallback — that silently invalidates every session cookie "
+        "on restart."
+    )
 from .database import rooms_collection, transcription_store_collection, transcription_segments_collection, users_collection, init_indexes
 from .logger_config import setup_logger, log_exception
 from .scribe_manager import ScribeSessionManager
@@ -177,7 +184,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # Add session middleware
-app.add_middleware(SessionMiddleware, secret_key=SETTINGS.get("SECRET_KEY", str(uuid.uuid4())))
+app.add_middleware(SessionMiddleware, secret_key=SETTINGS["SECRET_KEY"])
 
 # Setup templates
 timestamp = datetime.now(timezone.utc).timestamp()
@@ -243,18 +250,13 @@ async def _identifier(request: Request) -> str:
 async def is_realtime_authorized(session: dict, session_id: str | None = None) -> bool:
     """Check if the socket is authorized to use server-side realtime features.
 
-    Returns True if:
-    1. The socket is a global admin connection, OR
-    2. The user logged in via email and has realtime_enabled=True
+    Returns True if the user logged in via email and has realtime_enabled=True.
 
     When the socket session has lost its email (e.g. after a reconnect that
     failed to re-verify), falls back to looking up the room's admin_email
     from MongoDB so the authoritative realtime_enabled flag is always read
     from the users collection.
     """
-    if session.get('admin'):
-        return True
-
     email = session.get('email')
 
     # Fallback: derive email from the room document when the socket session
@@ -994,13 +996,8 @@ async def delete_session(request: Request, sid: str):
 @sio.event
 async def connect(socket_id, environ, auth):
     """Handle client connection"""
-    # Create a session-like object for socket.io
-    if auth and auth.get('secret_key') == SETTINGS["SECRET_KEY"]:
-        await sio.save_session(socket_id, {'verified': True, 'admin': True})
-        logger.info(f"Admin client connected: {socket_id}")
-    else:
-        await sio.save_session(socket_id, {'verified': False, 'admin': False})
-        logger.info(f"Client connected: {socket_id}")
+    await sio.save_session(socket_id, {'verified': False})
+    logger.info(f"Client connected: {socket_id}")
     await sio.emit('connected', {'status': 'connected', 'client_id': socket_id}, to=socket_id)
 
 @sio.event
