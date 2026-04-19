@@ -33,11 +33,12 @@ from typing import Callable
 
 from ..logger_config import setup_logger
 from .base import BaseTranslator
-from .providers import GeminiTranslator, GroqTranslator, OpenAITranslator
+from .providers import CerebrasTranslator, GeminiTranslator, GroqTranslator, OpenAITranslator
 
 logger = setup_logger(__name__)
 
 _BACKENDS: dict[str, Callable[[dict], BaseTranslator]] = {
+    "cerebras": CerebrasTranslator,
     "gemini": GeminiTranslator,
     "groq": GroqTranslator,
     "openai": OpenAITranslator,

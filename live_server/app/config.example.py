@@ -33,8 +33,9 @@ REALTIME_SETTINGS = {
   'GEMINI_API_KEY': "",
   'OPENAI_API_KEY': "",
   'GROQ_API_KEY': "",
+  'CEREBRAS_API_KEY': "",
 
-  # AI provider default: "gemini", "openai", or "groq"
+  # AI provider default: "gemini", "openai", "groq", or "cerebras"
   # Override per-operation with CORRECT_PROVIDER / TRANSLATE_PROVIDER.
   # If both are unset they fall back to AI_PROVIDER.
   'AI_PROVIDER': "openai",

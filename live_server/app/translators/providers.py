@@ -1,9 +1,9 @@
 """OpenAI-compatible chat-completion backends.
 
-All three providers (Gemini, OpenAI, Groq) expose the same ``/chat/completions``
-shape, so ``ChatCompletionTranslator`` implements the shared transport, retry,
-and prompt logic once; concrete subclasses only pin the endpoint, auth, and
-per-operation request params.
+All providers (Gemini, OpenAI, Groq, Cerebras) expose the same
+``/chat/completions`` shape, so ``ChatCompletionTranslator`` implements the
+shared transport, retry, and prompt logic once; concrete subclasses only pin
+the endpoint, auth, and per-operation request params.
 """
 import asyncio
 import json
@@ -19,7 +19,8 @@ _RETRY_DELAYS = [0.5, 1.0, 2.0]
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 _CORRECT_PROMPT = (
-    "Correct the user's text literally. No styling/summaries. "
+    "Correct the user's text literally. No styling/summaries. \n"
+    "Remove timecodes. Remove umms, ahs, and other filler words. \n"
     "Output ONLY the corrected text.\n\n"
     "Context: {keywords}"
 )
@@ -30,7 +31,7 @@ _TRANSLATE_PROMPT = (
     "1. Literal only; no styling/summaries.\n"
     "2. Match <previous_translation> to minimize changes.\n"
     "3. If same language, fix typos only.\n"
-    "4. Add punctuation. Remove all timecodes.\n"
+    "4. Add punctuation.\n"
     "5. Output ONLY the processed translated text.\n\n"
     "<context>\n{keywords}\n</context>\n\n"
     "<previous_translation>\n{prev_translation}\n</previous_translation>"
@@ -195,13 +196,11 @@ class GeminiTranslator(ChatCompletionTranslator):
     _MODEL = "gemini-3.1-flash-lite-preview"
     correct_params = {
         "model": _MODEL,
-        "max_completion_tokens": 300,
         "reasoning_effort": "minimal",
         "temperature": 0,
     }
     translate_params = {
         "model": _MODEL,
-        "max_completion_tokens": 300,
         "reasoning_effort": "minimal",
         "temperature": 0,
     }
@@ -241,12 +240,30 @@ class GroqTranslator(ChatCompletionTranslator):
     _MODEL = "openai/gpt-oss-120b"
     correct_params = {
         "model": _MODEL,
-        "max_tokens": 500,
         "reasoning_effort": "low",
     }
     translate_params = {
         "model": _MODEL,
-        "max_tokens": 500,
+        "reasoning_effort": "low",
+    }
+    extract_params = {
+        "model": _MODEL,
+        "response_format": {"type": "json_object"},
+    }
+
+
+class CerebrasTranslator(ChatCompletionTranslator):
+    endpoint = "https://api.cerebras.ai/v1/chat/completions"
+    api_key_setting = "CEREBRAS_API_KEY"
+    system_role = "system"
+
+    _MODEL = "gpt-oss-120b"
+    correct_params = {
+        "model": _MODEL,
+        "reasoning_effort": "low",
+    }
+    translate_params = {
+        "model": _MODEL,
         "reasoning_effort": "low",
     }
     extract_params = {
