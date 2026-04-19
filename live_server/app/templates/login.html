@@ -23,10 +23,10 @@
     <!-- Step 2: OTP input (hidden initially) -->
     <div id="step-otp" class="auth-card hidden">
       <div>
-        <p class="text-sm font-semibold text-gray-300">Enter the 4-digit code</p>
+        <p class="text-sm font-semibold text-gray-300">Enter the 6-digit code</p>
         <p id="otp-hint" class="mt-1 text-xs text-gray-500"></p>
       </div>
-      <input id="otp-input" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="0000"
+      <input id="otp-input" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000"
         class="auth-input text-2xl font-mono tracking-widest text-center py-3 placeholder-gray-700" />
       <div id="otp-error" class="hidden text-xs text-red-400"></div>
       <button id="verify-otp-btn" class="auth-btn">
@@ -86,7 +86,7 @@
         return
       }
       currentEmail = email
-      otpHint.textContent = `A 4-digit code was sent to ${email}.`
+      otpHint.textContent = `A 6-digit code was sent to ${email}.`
       stepEmail.classList.add('hidden')
       stepOtp.classList.remove('hidden')
       otpInput.focus()
@@ -105,8 +105,8 @@
   verifyOtpBtn.addEventListener('click', async () => {
     hideError(otpError)
     const otp = otpInput.value.trim()
-    if (!/^\d{4}$/.test(otp)) {
-      showError(otpError, 'Please enter the 4-digit code.')
+    if (!/^\d{6}$/.test(otp)) {
+      showError(otpError, 'Please enter the 6-digit code.')
       return
     }
     verifyOtpBtn.disabled = true

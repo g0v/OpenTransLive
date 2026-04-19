@@ -247,6 +247,20 @@ async def _identifier(request: Request) -> str:
     func_name = request.scope["route"].endpoint.__name__
     return f"{uid}:{func_name}"
 
+
+async def _otp_email_identifier(request: Request) -> str:
+    """Rate-limit OTP endpoints by submitted email so an attacker cannot
+    multiply their quota by opening many connections / rotating cookies."""
+    try:
+        body = await request.json()
+        email = (body.get("email") or "").strip().lower()
+    except Exception:
+        email = ""
+    func_name = request.scope["route"].endpoint.__name__
+    if email and validate_email_format(email):
+        return f"otp:{email}:{func_name}"
+    return await _identifier(request)
+
 async def is_realtime_authorized(session: dict, session_id: str | None = None) -> bool:
     """Check if the socket is authorized to use server-side realtime features.
 
@@ -448,7 +462,7 @@ async def set_user_realtime(request: Request, email: str):
     return {"email": result["email"], "realtime_enabled": result["realtime_enabled"]}
 
 
-@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_identifier))])
+@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=3, seconds=60, identifier=_otp_email_identifier))])
 async def send_otp(request: Request):
     body = await request.json()
     email = body.get("email", "").strip()
@@ -465,14 +479,14 @@ async def send_otp(request: Request):
     return {"status": "sent"}
 
 
-@app.post("/auth/verify-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_identifier))])
+@app.post("/auth/verify-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_otp_email_identifier))])
 async def verify_otp_endpoint(request: Request):
     body = await request.json()
     email = body.get("email", "").strip()
     otp = body.get("otp", "").strip()
     if not validate_email_format(email):
         raise HTTPException(status_code=400, detail="Invalid email address")
-    if not otp or not re.match(r'^\d{4}$', otp):
+    if not otp or not re.match(r'^\d{6}$', otp):
         raise HTTPException(status_code=400, detail="Invalid OTP format")
 
     if not await verify_otp(redis_client, email, otp):

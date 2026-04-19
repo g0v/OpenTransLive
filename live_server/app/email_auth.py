@@ -3,8 +3,8 @@
 # Licensed under the GNU AGPL v3.0
 # See LICENSE for details.
 
-import random
 import re
+import secrets
 from datetime import datetime, timezone
 
 from pymongo import ReturnDocument
@@ -16,6 +16,7 @@ logger = setup_logger(__name__)
 _EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
 
 OTP_TTL = 600  # seconds (10 minutes)
+OTP_MAX_ATTEMPTS = 5
 
 
 def validate_email_format(email: str) -> bool:
@@ -25,22 +26,43 @@ def validate_email_format(email: str) -> bool:
 
 
 def generate_otp() -> str:
-    return f"{random.randint(0, 9999):04d}"
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def _otp_keys(email: str) -> tuple[str, str]:
+    key_email = email.lower()
+    return f"auth:otp:{key_email}", f"auth:otp:{key_email}:attempts"
 
 
 async def store_otp(redis_client, email: str, otp: str) -> None:
-    key = f"auth:otp:{email.lower()}"
-    await redis_client.setex(key, OTP_TTL, otp)
+    otp_key, attempts_key = _otp_keys(email)
+    pipe = redis_client.pipeline()
+    pipe.setex(otp_key, OTP_TTL, otp)
+    pipe.delete(attempts_key)
+    await pipe.execute()
 
 
 async def verify_otp(redis_client, email: str, otp: str) -> bool:
-    key = f"auth:otp:{email.lower()}"
-    stored = await redis_client.get(key)
+    """Verify OTP. Burns the code after OTP_MAX_ATTEMPTS wrong guesses so an
+    attacker cannot brute-force the 10-minute TTL across concurrent connections."""
+    otp_key, attempts_key = _otp_keys(email)
+    stored = await redis_client.get(otp_key)
     if stored is None:
         return False
     if stored != otp:
+        attempts = await redis_client.incr(attempts_key)
+        if attempts == 1:
+            await redis_client.expire(attempts_key, OTP_TTL)
+        if attempts >= OTP_MAX_ATTEMPTS:
+            pipe = redis_client.pipeline()
+            pipe.delete(otp_key)
+            pipe.delete(attempts_key)
+            await pipe.execute()
         return False
-    await redis_client.delete(key)
+    pipe = redis_client.pipeline()
+    pipe.delete(otp_key)
+    pipe.delete(attempts_key)
+    await pipe.execute()
     return True
 
 
