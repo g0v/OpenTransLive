@@ -568,7 +568,7 @@
   // ── Keywords panel ────────────────────────────────────────────────────────
   let currentKeywords = []
   let lockedKeywords = new Set()  // keywords that survive auto-rerank/removal
-  let keywordSavePending = false  // true while a save is in flight; blocks sync
+  let keywordSavePending = false  // true while debouncing or saving; blocks sync
   let keywordSaveTimer = null     // debounce timer for saveKeywords
 
   function updateKeywordLabel() {
@@ -686,6 +686,7 @@
   function debouncedSaveKeywords() {
     const statusEl = document.getElementById('keyword-status')
     statusEl.textContent = 'Saving...'
+    keywordSavePending = true
     clearTimeout(keywordSaveTimer)
     keywordSaveTimer = setTimeout(saveKeywords, 1000)
   }
@@ -712,6 +713,7 @@
       console.error('Failed to save keywords:', e)
     } finally {
       keywordSavePending = false
+      keywordSaveQueued = false
     }
   }
 
