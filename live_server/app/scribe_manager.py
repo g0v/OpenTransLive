@@ -42,6 +42,7 @@ class ScribeSessionManager:
         self.language_code = language_code
         self.ws_url = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
         self.seg_start_time = None
+        self.yt_start_time: float | None = None
         now = datetime.now(timezone.utc)
         self.init_time = now
         self.last_partial_time = now

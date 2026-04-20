@@ -143,6 +143,7 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
         from .translation_service import get_session_scribe_language
         language_code = await get_session_scribe_language(redis_client, session_id)
         manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code)
+        manager.yt_start_time = await get_youtube_start_time(session_id)
         active_scribe_managers[session_id] = manager
         asyncio.create_task(manager.start())
         return manager
@@ -838,11 +839,12 @@ async def download(request: Request, id: str):
     if not segments:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    updated_at = meta.get("updated_at") if meta else None
     data = {
         "sid": id,
         "transcriptions": segments,
         "stream_start_time": meta.get("stream_start_time") if meta else None,
-        "updated_at": meta.get("updated_at").isoformat() if meta and isinstance(meta.get("updated_at"), datetime) else None,
+        "updated_at": updated_at.isoformat() if isinstance(updated_at, datetime) else None,
     }
 
     content = json.dumps(data, ensure_ascii=False, indent=2)
@@ -1039,9 +1041,10 @@ async def _process_transcription_update(session_id, sync_data):
     """Internal helper to process transcription updates (cache, DB, and broadcast)"""
     # Fetch cached transcription data (Redis or DB)
     cached_data = await get_cached_transcription(session_id)
-    
-    # Add stream start time
-    yt_start_time = await get_youtube_start_time(session_id)
+
+    # Add stream start time (fetched once at manager start; fall back if no manager)
+    manager = active_scribe_managers.get(session_id)
+    yt_start_time = manager.yt_start_time if manager else await get_youtube_start_time(session_id)
     if yt_start_time:
          cached_data["stream_start_time"] = yt_start_time
     
