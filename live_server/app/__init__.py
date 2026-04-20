@@ -10,6 +10,7 @@ import os
 import re
 import time
 import uuid
+import weakref
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -129,14 +130,22 @@ active_translation_managers: TTLCache = _ManagerTTLCache(
 # Pending debounce tasks for partial transcription broadcasts, keyed by session_id.
 _partial_debounce_tasks: dict = {}
 # Per-session locks to prevent concurrent _get_or_create_scribe_manager calls from racing.
-_scribe_create_locks: collections.defaultdict = collections.defaultdict(asyncio.Lock)
+# WeakValueDictionary so entries vanish once no caller is holding / waiting on the lock;
+# otherwise every session_id ever seen would leak an asyncio.Lock for the life of the process.
+_scribe_create_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 
 
 async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) -> ScribeSessionManager:
     """Return the existing running ScribeSessionManager for the session, or create a new one.
     Pass force_new=True to unconditionally restart (e.g. after a language change).
     """
-    async with _scribe_create_locks[session_id]:
+    # Atomic in asyncio: no await between .get() and the assignment, so two concurrent
+    # callers cannot each install a separate Lock.
+    lock = _scribe_create_locks.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _scribe_create_locks[session_id] = lock
+    async with lock:
         existing: ScribeSessionManager | None = active_scribe_managers.get(session_id)
         if existing and existing.is_running and not force_new:
             return existing
