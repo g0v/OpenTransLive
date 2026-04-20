@@ -710,19 +710,24 @@ async def get_youtube_start_time(video_id: str) -> float | None:
             return datetime.fromisoformat(live_details['scheduledStartTime']).timestamp()
     return None
 
-async def get_cached_transcription(id) -> Any:
+async def get_cached_transcription(id, num_committed: int = 10) -> Any:
     # Try fetching committed transcriptions (ZSET) and partial from Redis
     try:
-        # ZSET for committed transcriptions, stored as JSON strings with start_time as score
-        # Fetch only the latest 10 entries to limit data transfer; translation context needs only the last 3
-        committed_json_list = await redis_client.zrevrangebyscore(
-            f"transcription:{id}:list", "+inf", "-inf", start=0, num=10
-        )
-        committed_json_list = list(reversed(committed_json_list))
-        meta_json = await redis_client.get(f"transcription:{id}:meta")
-        partial_json = await redis_client.get(f"transcription:{id}:partial")
-
         REDIS_TTL = 3600
+
+        # One pipeline = one round trip: fetch all keys and refresh sliding TTL together.
+        # EXPIRE on missing keys is a harmless no-op, so we issue them unconditionally.
+        pipe = redis_client.pipeline()
+        pipe.zrevrangebyscore(
+            f"transcription:{id}:list", "+inf", "-inf", start=0, num=num_committed
+        )
+        pipe.get(f"transcription:{id}:meta")
+        pipe.get(f"transcription:{id}:partial")
+        pipe.expire(f"transcription:{id}:list", REDIS_TTL)
+        pipe.expire(f"transcription:{id}:meta", REDIS_TTL)
+        pipe.expire(f"transcription:{id}:partial", REDIS_TTL)
+        committed_json_list, meta_json, partial_json, *_ = await pipe.execute()
+        committed_json_list = list(reversed(committed_json_list))
 
         data = None
         if committed_json_list:
@@ -733,14 +738,6 @@ async def get_cached_transcription(id) -> Any:
             if meta_json:
                 meta = json.loads(meta_json)
                 data["stream_start_time"] = meta.get("stream_start_time")
-
-            # Sliding expiry: reset TTL on each read so active sessions stay warm
-            pipe = redis_client.pipeline()
-            pipe.expire(f"transcription:{id}:list", REDIS_TTL)
-            pipe.expire(f"transcription:{id}:meta", REDIS_TTL)
-            if partial_json:
-                pipe.expire(f"transcription:{id}:partial", REDIS_TTL)
-            await pipe.execute()
 
         # Migration/Fallback: Check if old String-style cache exists
         if data is None:
@@ -1213,8 +1210,8 @@ async def on_translation_completed(session_id, sync_data):
 
 async def on_scribe_transcription(session_id, transcription):
     """Callback for Scribe transcription"""
-    # Prepare context
-    cached_data = await get_cached_transcription(session_id)
+    # Hot path (>10 Hz on partials); translator only needs the last 3 committed segments.
+    cached_data = await get_cached_transcription(session_id, num_committed=3)
     sync_data = transcription.copy()
     
     manager = _get_or_create_translation_manager(session_id)
