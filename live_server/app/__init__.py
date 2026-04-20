@@ -56,11 +56,15 @@ from .email_auth import (
 # Setup logger
 logger = setup_logger(__name__)
 
-# Session manager caches: max 512 concurrent sessions, 30-minute inactivity TTL.
+# Session manager caches: max 512 concurrent sessions.
 # When a session is evicted by cachetools (TTL expiry or capacity), its manager is
 # stopped so background tasks are cleaned up promptly.
-_MANAGER_CACHE_TTL = 60   # seconds (1 min)
+# TTL is refreshed by every heartbeat (30s) and every audio chunk, so it only
+# fires when a session is truly idle. 300s gives plenty of slack for network
+# jitter that drops a heartbeat or two without tearing down the ElevenLabs WS.
+_MANAGER_CACHE_TTL = 300  # seconds (5 min)
 _MANAGER_CACHE_MAX = 512
+_YOUTUBE_CACHE_TTL = 60   # seconds; unrelated to manager lifecycle
 
 _MAX_AUDIO_CHUNK_SIZE = 1 * 1024 * 1024  # 1MB in bytes
 _BASE64_RE = re.compile(r'^[A-Za-z0-9+/]*={0,2}$')
@@ -220,7 +224,7 @@ sio = socketio.AsyncServer(
 # Wrap with ASGI application
 socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
-youtube_data_cache: TTLCache = TTLCache(maxsize=256, ttl=_MANAGER_CACHE_TTL)
+youtube_data_cache: TTLCache = TTLCache(maxsize=256, ttl=_YOUTUBE_CACHE_TTL)
 
 redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -1306,6 +1310,13 @@ async def audio_buffer_append(socket_id, data):
         if not session.get('realtime_authorized') and not await is_realtime_authorized(session, session_id):
             return
         manager = await _get_or_create_scribe_manager(session_id)
+    else:
+        # Refresh TTL so a session with continuous audio is never evicted mid-stream.
+        # cachetools' .get() does not reset TTL — only __setitem__ does.
+        active_scribe_managers[session_id] = manager
+        translation_manager = active_translation_managers.get(session_id)
+        if translation_manager:
+            active_translation_managers[session_id] = translation_manager
     # On first audio chunk of a new manager instance, restore previously saved usage from DB
     # so counts survive page refreshes. Flag is set before the await to prevent double-restore.
     if not manager._usage_restored:
