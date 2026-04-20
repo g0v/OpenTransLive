@@ -1088,6 +1088,7 @@
       gridView.classList.add('hidden');
       const dataContent = document.getElementById('single-content');
       dataContent.innerHTML = '';
+      delete dataContent.dataset.language;
       for (const k of renderedText.keys()) {
         if (k.startsWith('single:')) renderedText.delete(k);
       }
