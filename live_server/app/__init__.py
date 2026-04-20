@@ -325,9 +325,26 @@ async def verify_socket_auth(socket_id: str, session_id: str, secret_key: str) -
     return room is not None
 
 
-async def _ensure_socket_verified(socket_id, session, secret_key, session_id) -> bool:
-    """Try to verify an unverified socket. Returns True if now verified, False otherwise.
-    Emits an error to the socket on failure."""
+async def _check_socket_already_verified(socket_id, session, *, silent: bool = False) -> bool:
+    """Guard for socket events that require a previously verified session.
+
+    Returns True if session['verified'] is already set (in-memory, no DB hit).
+    When not verified, emits an 'Unauthorized' error unless silent=True.
+    """
+    if session.get('verified'):
+        return True
+    if not silent:
+        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+    return False
+
+
+async def _verify_socket_credentials(socket_id, session, secret_key, session_id) -> bool:
+    """Verify an unverified socket against the DB, upgrading the session on success.
+
+    Short-circuits when session['verified'] is already set. Emits an error on failure.
+    Used by handlers (e.g. `sync`) that can receive `secret_key` in the event payload
+    and should attempt to verify on the fly rather than require a prior `join_session`.
+    """
     if session.get('verified'):
         return True
     if not secret_key:
@@ -1157,7 +1174,7 @@ async def sync(socket_id, data):
         return
 
     secret_key = session.get('secret_key') or data.get('secret_key')
-    if not await _ensure_socket_verified(socket_id, session, secret_key, session_id):
+    if not await _verify_socket_credentials(socket_id, session, secret_key, session_id):
         return
 
     sync_data = data.copy()
@@ -1221,9 +1238,7 @@ async def on_scribe_transcription(session_id, transcription):
 async def realtime_connect(socket_id, data):
     """Handle client realtime_connect events"""
     session = await sio.get_session(socket_id)
-
-    if not session.get('verified'):
-        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+    if not await _check_socket_already_verified(socket_id, session):
         return
 
     rooms = sio.rooms(socket_id)
@@ -1237,8 +1252,7 @@ async def realtime_connect(socket_id, data):
 async def mic_on(socket_id, data):
     """Start the scribe session when the panel mic is turned on."""
     session = await sio.get_session(socket_id)
-    if not session.get('verified'):
-        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+    if not await _check_socket_already_verified(socket_id, session):
         return
     rooms = sio.rooms(socket_id)
     session_id = next((r for r in rooms if r != socket_id), None)
@@ -1250,7 +1264,7 @@ async def mic_on(socket_id, data):
 async def mic_off(socket_id, data):
     """Stop the scribe session immediately when the panel mic is turned off."""
     session = await sio.get_session(socket_id)
-    if not session.get('verified'):
+    if not await _check_socket_already_verified(socket_id, session, silent=True):
         return
     rooms = sio.rooms(socket_id)
     session_id = next((r for r in rooms if r != socket_id), None)
@@ -1279,7 +1293,7 @@ async def audio_buffer_append(socket_id, data):
     # being True already implies verified is True (set together on first chunk).
     if not session.get('realtime_authorized'):
         secret_key = session.get('secret_key') or data.get('secret_key')
-        if not await _ensure_socket_verified(socket_id, session, secret_key, session_id):
+        if not await _verify_socket_credentials(socket_id, session, secret_key, session_id):
             return
         if not await is_realtime_authorized(session, session_id):
             await sio.emit('error', {'message': 'Unauthorized: realtime token required'}, to=socket_id)
@@ -1313,8 +1327,6 @@ async def audio_buffer_append(socket_id, data):
 
     manager = active_scribe_managers.get(session_id)
     if not manager or not manager.is_running:
-        if not session.get('realtime_authorized') and not await is_realtime_authorized(session, session_id):
-            return
         manager = await _get_or_create_scribe_manager(session_id)
     else:
         # Refresh TTL so a session with continuous audio is never evicted mid-stream.

@@ -28,7 +28,7 @@ _CORRECT_PROMPT = (
 _TRANSLATE_PROMPT = (
     "Translate <translate_this> to {language}.\n\n"
     "Rules:\n"
-    "1. Literal only; no styling/summaries.\n"
+    "1. Literal only; no styling/summaries; Keep the same tone.\n"
     "2. Match <previous_translation> to minimize changes.\n"
     "3. If same language, fix typos only.\n"
     "4. Add punctuation.\n"
