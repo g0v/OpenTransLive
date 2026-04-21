@@ -222,11 +222,51 @@ if static_dir.exists():
 
 mgr = socketio.AsyncRedisManager(REDIS_URL)
 
+
+def _parse_socket_cors_origins() -> list[str] | str:
+    """Resolve the Socket.IO CORS allowlist from SOCKET_CORS_ALLOWED_ORIGINS.
+
+    Production: the env var is required, must be a comma-separated list of
+    explicit origins, and rejects '*' outright. Development: if unset, falls
+    back to common localhost origins; '*' is allowed so frontend devs can
+    point arbitrary tools at a local server.
+    """
+    raw = os.environ.get("SOCKET_CORS_ALLOWED_ORIGINS", "").strip()
+
+    if _IS_PRODUCTION:
+        if not raw:
+            raise RuntimeError(
+                "SOCKET_CORS_ALLOWED_ORIGINS must be set in production. "
+                "Provide a comma-separated allowlist of origins "
+                "(e.g. 'https://example.com,https://app.example.com'). "
+                "Wildcard '*' is not accepted in production."
+            )
+        origins = [o.strip() for o in raw.split(",") if o.strip()]
+        if not origins or any(o == "*" for o in origins):
+            raise RuntimeError(
+                "SOCKET_CORS_ALLOWED_ORIGINS must not contain '*' in production."
+            )
+        return origins
+
+    if not raw:
+        return [
+            "http://localhost:5000",
+            "http://127.0.0.1:5000",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]
+    if raw == "*":
+        return "*"
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+_SOCKET_CORS_ORIGINS = _parse_socket_cors_origins()
+
 # Initialize Socket.IO with ASGI support
 sio = socketio.AsyncServer(
     async_mode='asgi',
     client_manager=mgr,
-    cors_allowed_origins='*',
+    cors_allowed_origins=_SOCKET_CORS_ORIGINS,
     logger=False
 )
 

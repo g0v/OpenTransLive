@@ -66,6 +66,8 @@ live_server/
    SECRET_KEY=your-secret-key-here
    HOST=0.0.0.0
    PORT=5000
+   # ENVIRONMENT=production                       # required for production hardening
+   # SOCKET_CORS_ALLOWED_ORIGINS=https://example.com,https://app.example.com
 
    # MongoDB Configuration
    MONGODB_URI=mongodb://localhost:27017
@@ -125,7 +127,8 @@ live_server/
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
 | `SECRET_KEY` | Session encryption key | Random UUID | Yes |
-| `ENVIRONMENT` | Set to `production` to mark session cookies as Secure (HTTPS-only) | `development` | No |
+| `ENVIRONMENT` | Set to `production` to mark session cookies as Secure (HTTPS-only) and enforce the Socket.IO CORS allowlist | `development` | No |
+| `SOCKET_CORS_ALLOWED_ORIGINS` | Comma-separated allowlist of origins permitted to open Socket.IO connections (e.g. `https://example.com,https://app.example.com`). **Required in production**; `*` is rejected. In development, defaults to `http://localhost:5000,http://127.0.0.1:5000,http://localhost:3000,http://127.0.0.1:3000` and `*` is allowed. | localhost allowlist (dev) | Yes in production |
 | `HOST` | Server bind address | `0.0.0.0` | No |
 | `PORT` | Server port | `5000` | No |
 | `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017` | Yes |
