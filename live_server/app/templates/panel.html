@@ -859,12 +859,16 @@
         flowContent.scrollTop = flowContent.scrollHeight
       }
 
-      function appendCommitted(text) {
+      function appendCommitted(segment) {
+        const text = segment.result?.corrected || segment.text || ''
         if (!text) return
         if (partialEl) { partialEl.remove(); partialEl = null }
         const p = document.createElement('p')
-        p.className = 'flow-item'
-        p.textContent = text
+        p.className = 'flow-item flex justify-between items-start group'
+        
+        const latency = (Date.now() / 1000) - segment.end_time
+        p.innerHTML = `<span class="flex-1">${escapeHtml(text)}</span><span class="text-[10px] text-gray-600 ml-2 tabular-nums">${latency.toFixed(2)}s</span>`
+        
         flowContent.appendChild(p)
         segmentCount++
         // Remove oldest items to keep DOM size bounded
@@ -879,17 +883,23 @@
         scrollToBottom()
       }
 
-      function updatePartial(text) {
+      function updatePartial(segment) {
+        if (!segment) {
+          if (partialEl) { partialEl.remove(); partialEl = null }
+          return
+        }
+        const text = segment.result?.corrected || segment.text || ''
         if (!text) {
           if (partialEl) { partialEl.remove(); partialEl = null }
           return
         }
         if (!partialEl) {
           partialEl = document.createElement('p')
-          partialEl.className = 'flow-item-partial'
+          partialEl.className = 'flow-item-partial flex justify-between items-start'
           flowContent.appendChild(partialEl)
         }
-        partialEl.textContent = text
+        const latency = (Date.now() / 1000) - segment.end_time
+        partialEl.innerHTML = `<span class="flex-1">${escapeHtml(text)}</span><iconify-icon icon="mdi:loading" class="animate-spin text-gray-600 mt-0.5 ml-1" width="10"></iconify-icon><span class="text-[10px] text-gray-700 ml-1 tabular-nums">${latency.toFixed(2)}s</span>`
         scrollToBottom()
       }
 
@@ -898,16 +908,16 @@
           const lc = data.last_committed
           if (!renderedStartTimes.has(lc.start_time)) {
             renderedStartTimes.add(lc.start_time)
-            appendCommitted(lc.result?.corrected || lc.text || '')
+            appendCommitted(lc)
           }
         }
         if (data.partial) {
-          updatePartial(data.result?.corrected || data.text || '')
+          updatePartial(data)
         } else {
           updatePartial(null)
           if (!renderedStartTimes.has(data.start_time)) {
             renderedStartTimes.add(data.start_time)
-            appendCommitted(data.result?.corrected || data.text || '')
+            appendCommitted(data)
           }
         }
       })
