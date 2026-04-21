@@ -20,7 +20,7 @@
   </div>
   {% endif %}
 
-  <main class="max-w-4xl mx-auto px-4 py-8">
+  <main class="container py-8">
 
     <div class="mb-6 flex items-center justify-between">
       <div>
@@ -92,13 +92,9 @@
                   class="px-3 py-1 rounded text-xs font-semibold bg-indigo-700 hover:bg-indigo-600 text-indigo-100 transition-colors">
                   Panel
                 </a>
-                <a href="/rt/{{ room.sid }}" target="_blank"
+                <a href="/edit/{{ room.sid }}"
                   class="px-3 py-1 rounded text-xs font-semibold bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors">
-                  View
-                </a>
-                <a href="/download/{{ room.sid }}" target="_blank"
-                  class="px-3 py-1 rounded text-xs font-semibold bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors">
-                  Download
+                  Edit
                 </a>
                 <button onclick="deleteSession('{{ room.sid }}', this)"
                   class="px-3 py-1 rounded text-xs font-semibold bg-red-900 hover:bg-red-800 text-red-200 transition-colors">

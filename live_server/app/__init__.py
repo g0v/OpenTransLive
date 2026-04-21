@@ -678,6 +678,130 @@ async def get_session_audio_usage_endpoint(request: Request, sid: str):
     return manager.get_usage_stats()
 
 
+async def _require_session_owner(request: Request, sid: str) -> tuple[str, dict]:
+    """Owner gate for editor endpoints. Returns (email, room) or raises."""
+    email, _ = _require_logged_in(request)
+    if not email:
+        raise HTTPException(status_code=401, detail="Not logged in")
+    room = await rooms_collection.find_one({"sid": sid})
+    if not room:
+        raise HTTPException(status_code=404, detail="Session not found")
+    owner_email = await _get_room_owner_email(room)
+    if not owner_email or owner_email.lower() != email.lower():
+        raise HTTPException(status_code=403, detail="You do not own this session")
+    return email, room
+
+
+@app.get("/edit/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+async def edit_transcriptions_page(request: Request, sid: str):
+    """Owner-only editor: load saved segments and let the owner correct translations."""
+    sid = sanitize_query_param(sid, "session ID")
+    if not _get_session_email(request):
+        return RedirectResponse(url="/login", status_code=302)
+    email, _ = await _require_session_owner(request, sid)
+    segments, _ = await _load_segments_from_db(sid, limit=10000)
+    response = templates.TemplateResponse("edit_transcriptions.html", {
+        "request": request,
+        "sid": sid,
+        "segments": segments,
+        "current_email": email,
+    })
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+@app.put("/api/session/{sid}/segments", dependencies=[Depends(RateLimiter(times=30, seconds=10, identifier=_identifier))])
+async def update_session_segment_endpoint(request: Request, sid: str):
+    """Update a saved committed segment's corrected text and/or per-language translations.
+    Identified by start_time. Owner-only. Refreshes the Redis cache so future viewers
+    see the edit; currently-connected viewers must reload."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _require_session_owner(request, sid)
+
+    body = await request.json()
+    start_time = body.get("start_time")
+    if not isinstance(start_time, (int, float)) or isinstance(start_time, bool):
+        raise HTTPException(status_code=400, detail="start_time must be a number")
+
+    corrected = body.get("corrected")
+    if corrected is not None:
+        if not isinstance(corrected, str) or len(corrected) > 5000:
+            raise HTTPException(status_code=400, detail="Invalid corrected text")
+
+    translated = body.get("translated")
+    if translated is not None:
+        if not isinstance(translated, dict):
+            raise HTTPException(status_code=400, detail="translated must be an object")
+        for k, v in translated.items():
+            if not isinstance(k, str) or not k.strip() or '$' in k or '.' in k or len(k) > 32:
+                raise HTTPException(status_code=400, detail=f"Invalid language code: {k}")
+            if not isinstance(v, str) or len(v) > 5000:
+                raise HTTPException(status_code=400, detail=f"Invalid translation for {k}")
+
+    if corrected is None and translated is None:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    seg = await transcription_segments_collection.find_one(
+        {"sid": sid, "start_time": start_time, "partial": {"$ne": True}}
+    )
+    if not seg:
+        raise HTTPException(status_code=404, detail="Segment not found")
+
+    set_fields: dict = {}
+    if corrected is not None:
+        set_fields["result.corrected"] = corrected
+    merged_translated = None
+    if translated is not None:
+        existing = (seg.get("result") or {}).get("translated") or {}
+        merged_translated = {**existing, **translated}
+        set_fields["result.translated"] = merged_translated
+
+    await transcription_segments_collection.update_one(
+        {"_id": seg["_id"]},
+        {"$set": set_fields}
+    )
+
+    # Build the segment shape that mirrors what's stored in Redis (no _id/sid/created_at).
+    new_seg = {k: v for k, v in seg.items() if k not in {"_id", "sid", "created_at"}}
+    new_seg.setdefault("result", {})
+    if corrected is not None:
+        new_seg["result"]["corrected"] = corrected
+    if merged_translated is not None:
+        new_seg["result"]["translated"] = merged_translated
+
+    # Only refresh the cache if it already exists; otherwise we'd seed a partial cache
+    # that's missing every other segment.
+    zset_key = f"transcription:{sid}:list"
+    if await redis_client.exists(zset_key):
+        pipe = redis_client.pipeline()
+        pipe.zremrangebyscore(zset_key, start_time, start_time)
+        pipe.zadd(zset_key, {json.dumps(new_seg): start_time})
+        pipe.expire(zset_key, 3600)
+        await pipe.execute()
+
+    return {"status": "ok", "segment": new_seg}
+
+
+@app.delete("/api/session/{sid}/segments", dependencies=[Depends(RateLimiter(times=30, seconds=10, identifier=_identifier))])
+async def delete_session_segment_endpoint(request: Request, sid: str, start_time: float):
+    """Delete a saved committed segment identified by start_time. Owner-only.
+    Also removes the segment from the Redis cache if present."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _require_session_owner(request, sid)
+
+    result = await transcription_segments_collection.delete_one(
+        {"sid": sid, "start_time": start_time, "partial": {"$ne": True}}
+    )
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Segment not found")
+
+    zset_key = f"transcription:{sid}:list"
+    if await redis_client.exists(zset_key):
+        await redis_client.zremrangebyscore(zset_key, start_time, start_time)
+
+    return {"status": "deleted"}
+
+
 async def get_youtube_start_time(video_id: str) -> float | None:
     """
     Get the actual stream start time for a YouTube video using YouTube Data API v3.
@@ -1030,15 +1154,7 @@ async def delete_session(request: Request, sid: str):
     """Release session ownership, removing it from the owner's My Sessions list.
     Once deleted, anyone can claim the session again."""
     sid = sanitize_query_param(sid, "session ID")
-    email, user_uid = _require_logged_in(request)
-    if not email or not user_uid:
-        raise HTTPException(status_code=401, detail="Not logged in")
-    room = await rooms_collection.find_one({"sid": sid})
-    if not room:
-        raise HTTPException(status_code=404, detail="Session not found")
-    room_admin_email = await _get_room_owner_email(room)
-    if not room_admin_email or room_admin_email.lower() != email.lower():
-        raise HTTPException(status_code=403, detail="You do not own this session")
+    await _require_session_owner(request, sid)
     await rooms_collection.update_one(
         {"sid": sid},
         {"$set": {"admin_uid": None, "admin_email": None, "secret_key": None, "admin_last_heartbeat": None, "updated_at": datetime.now(timezone.utc)}}

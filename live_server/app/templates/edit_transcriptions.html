@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}OpenTransLive - Edit Translations{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-900 text-gray-100 font-sans">
+
+  <header class="bg-gray-800 border-b border-gray-700 px-6 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3 min-w-0">
+      <span class="font-bold text-gray-100 tracking-tight">Edit Translations</span>
+      <span class="text-xs font-mono text-gray-500 truncate">{{ sid }}</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="text-xs text-gray-500 hidden sm:inline">{{ current_email }}</span>
+      <a href="/logout" class="nav-link">Logout</a>
+    </div>
+  </header>
+
+  <main class="container py-8">
+
+    <div class="mb-4 flex items-center justify-between gap-3">
+      <a href="/user-dashboard" class="text-xs text-gray-500 hover:text-gray-300 whitespace-nowrap flex items-center gap-1">
+        <iconify-icon icon="mdi:arrow-left" width="16" height="16"></iconify-icon> My Sessions</a>
+      <a href="/download/{{ sid }}" target="_blank" class="nav-link">Download</a>
+    </div>
+
+    {% if not segments %}
+    <div class="dark-card px-6 py-10 text-center text-sm text-gray-500">
+      No saved transcriptions yet for this session.
+    </div>
+    {% else %}
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+      <p class="text-xs text-gray-500">
+        {{ segments|length }} segment(s). Edits save to the database; reload viewers to see changes.
+      </p>
+      <div id="status" class="text-xs min-h-4 text-gray-500"></div>
+    </div>
+
+    <div class="dark-card divide-y divide-gray-700">
+      {% for seg in segments %}
+      <div class="px-4 py-3 segment-row" data-start-time="{{ seg.start_time }}">
+        <div class="flex flex-wrap items-center gap-1 mb-2 text-xs text-gray-500 font-mono">
+          <span>{{ "%.2f"|format(seg.start_time) }}s</span>
+          {% if seg.end_time %}
+          <iconify-icon icon="mdi:arrow-right" width="12" height="12"></iconify-icon>
+          <span>{{ "%.2f"|format(seg.end_time) }}s</span>
+          {% endif %}
+        </div>
+        <div class="grid grid-cols-[88px_1fr] gap-y-2 gap-x-3">
+          <label class="text-xs text-gray-400 self-start pt-1.5">corrected</label>
+          <textarea data-field="corrected" rows="1"
+            class="seg-input w-full bg-gray-900 border border-gray-700 text-gray-100 text-sm rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none resize-y">{{ (seg.result or {}).corrected or '' }}</textarea>
+          {% set translated = (seg.result or {}).translated or {} %}
+          {% for lang, text in translated.items() %}
+          <label class="text-xs text-gray-500 font-mono self-start pt-1.5 break-all">{{ lang }}</label>
+          <textarea data-field="translated" data-lang="{{ lang }}" rows="1"
+            class="seg-input w-full bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none resize-y">{{ text }}</textarea>
+          {% endfor %}
+        </div>
+        <div class="mt-2 flex items-center justify-end gap-2">
+          <span class="row-status text-xs text-gray-500"></span>
+          <button class="delete-btn px-3 py-1 rounded text-xs font-semibold bg-red-800 hover:bg-red-700 text-red-100 transition-colors">Delete</button>
+          <button class="reset-btn px-3 py-1 rounded text-xs font-semibold bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors">Reset</button>
+          <button class="save-btn px-3 py-1 rounded text-xs font-semibold bg-indigo-700 hover:bg-indigo-600 text-indigo-100 transition-colors">Save</button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </main>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const sid = {{ sid | tojson }};
+
+  function autosize(el) {
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + 'px';
+  }
+
+  function setRowStatus(row, msg, isError) {
+    const el = row.querySelector('.row-status');
+    el.textContent = msg;
+    el.style.color = isError ? '#f87171' : '#9ca3af';
+  }
+
+  function snapshotOriginals(row) {
+    row.querySelectorAll('textarea').forEach(t => { t.dataset.original = t.value; });
+  }
+
+  document.querySelectorAll('.segment-row').forEach(row => {
+    snapshotOriginals(row);
+    row.querySelectorAll('textarea').forEach(t => {
+      autosize(t);
+      t.addEventListener('input', () => autosize(t));
+    });
+  });
+
+  document.querySelectorAll('.reset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = btn.closest('.segment-row');
+      row.querySelectorAll('textarea').forEach(t => {
+        t.value = t.dataset.original || '';
+        autosize(t);
+      });
+      setRowStatus(row, '', false);
+    });
+  });
+
+  document.querySelectorAll('.delete-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('.segment-row');
+      const startTime = parseFloat(row.dataset.startTime);
+      if (!confirm(`Delete segment at ${startTime.toFixed(2)}s? This cannot be undone.`)) return;
+
+      const siblings = row.querySelectorAll('button');
+      siblings.forEach(b => { b.disabled = true; });
+      setRowStatus(row, 'Deleting…', false);
+      try {
+        const res = await fetch(`/api/session/${encodeURIComponent(sid)}/segments?start_time=${encodeURIComponent(startTime)}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setRowStatus(row, data.detail || ('Error: ' + res.status), true);
+          siblings.forEach(b => { b.disabled = false; });
+          return;
+        }
+        row.remove();
+      } catch (e) {
+        setRowStatus(row, 'Network error', true);
+        siblings.forEach(b => { b.disabled = false; });
+      }
+    });
+  });
+
+  document.querySelectorAll('.save-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('.segment-row');
+      const startTime = parseFloat(row.dataset.startTime);
+      const correctedEl = row.querySelector('[data-field="corrected"]');
+      const corrected = correctedEl ? correctedEl.value : null;
+      const translated = {};
+      row.querySelectorAll('[data-field="translated"]').forEach(t => {
+        translated[t.dataset.lang] = t.value;
+      });
+
+      btn.disabled = true;
+      const prev = btn.textContent;
+      btn.textContent = '...';
+      setRowStatus(row, 'Saving…', false);
+      try {
+        const payload = { start_time: startTime, corrected };
+        if (Object.keys(translated).length) payload.translated = translated;
+        const res = await fetch(`/api/session/${encodeURIComponent(sid)}/segments`, {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setRowStatus(row, data.detail || ('Error: ' + res.status), true);
+          return;
+        }
+        snapshotOriginals(row);
+        setRowStatus(row, 'Saved', false);
+      } catch (e) {
+        setRowStatus(row, 'Network error', true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prev;
+      }
+    });
+  });
+</script>
+{% endblock %}
