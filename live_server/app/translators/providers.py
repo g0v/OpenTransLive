@@ -38,8 +38,8 @@ _TRANSLATE_PROMPT = (
 )
 
 _EXTRACT_KEYWORDS_PROMPT = (
-    "If there are special nouns or names in the provided text, "
-    "add them to the special_keywords list.\n"
+    "If there are special nouns or names in the provided text, add them to the special_keywords list.\n"
+    "Exclude time, numbers, and common words.\n"
     'Return in json format:\n{"special_keywords": []}'
 )
 
@@ -237,17 +237,16 @@ class GroqTranslator(ChatCompletionTranslator):
     api_key_setting = "GROQ_API_KEY"
     system_role = "system"
 
-    _MODEL = "openai/gpt-oss-120b"
     correct_params = {
-        "model": _MODEL,
+        "model": "openai/gpt-oss-20b",
         "reasoning_effort": "low",
     }
     translate_params = {
-        "model": _MODEL,
+        "model": "openai/gpt-oss-120b",
         "reasoning_effort": "low",
     }
     extract_params = {
-        "model": _MODEL,
+        "model": "openai/gpt-oss-120b",
         "response_format": {"type": "json_object"},
     }
 
