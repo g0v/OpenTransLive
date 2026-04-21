@@ -45,6 +45,10 @@ if not SETTINGS.get("SECRET_KEY"):
 from .database import rooms_collection, transcription_store_collection, transcription_segments_collection, users_collection, init_indexes
 from .logger_config import setup_logger, log_exception
 from .scribe_manager import ScribeSessionManager
+from .socket_schema import (
+    validate_sync_payload,
+    validate_audio_buffer_append_payload,
+)
 from .email_auth import (
     validate_email_format,
     generate_otp,
@@ -66,9 +70,6 @@ logger = setup_logger(__name__)
 _MANAGER_CACHE_TTL = 300  # seconds (5 min)
 _MANAGER_CACHE_MAX = 512
 _YOUTUBE_CACHE_TTL = 60   # seconds; unrelated to manager lifecycle
-
-_MAX_AUDIO_CHUNK_SIZE = 1 * 1024 * 1024  # 1MB in bytes
-_BASE64_RE = re.compile(r'^[A-Za-z0-9+/]*={0,2}$')
 
 
 class _SocketRateLimiter:
@@ -1285,7 +1286,8 @@ async def _process_transcription_update(session_id, sync_data):
     is_partial = sync_data.get("partial", False) is True
 
     async def _emit_now(p):
-        log_msg = f"sync {sync_data['start_time']} {sync_data['partial']}"
+        latency = datetime.now(timezone.utc).timestamp() - sync_data['end_time']
+        log_msg = f"sync {sync_data['start_time']} latency:[{latency:.3f}s] {sync_data.get('partial', False)}"
         if "result" in sync_data and "corrected" in sync_data["result"]:
             log_msg += f" {sync_data['result']['corrected']}"
         print(log_msg, flush=True)
@@ -1316,17 +1318,20 @@ async def sync(socket_id, data):
     """Handle WebSocket sync events"""
     if not _socket_limiter.check(socket_id, 'sync', 20, 1.0):
         return
-    session = await sio.get_session(socket_id)
 
-    session_id = data.get('id')
-    if not session_id:
-        await sio.emit('error', {'message': 'Session ID is required'}, to=socket_id)
+    ok, schema_err = validate_sync_payload(data)
+    if not ok:
+        logger.warning(f"sync: invalid payload from {socket_id}: {schema_err}")
+        await sio.emit('error', {'code': 'invalid_payload', 'message': schema_err}, to=socket_id)
         return
 
-    # Validate session_id to prevent NoSQL injection
+    session = await sio.get_session(socket_id)
+    session_id = data['id']
+
+    # Validate session_id against the stricter identifier rules (alnum/_/-).
     is_valid, error_msg = validate_query_param(session_id, "session ID")
     if not is_valid:
-        await sio.emit('error', {'message': error_msg}, to=socket_id)
+        await sio.emit('error', {'code': 'invalid_payload', 'message': error_msg}, to=socket_id)
         return
 
     secret_key = session.get('secret_key') or data.get('secret_key')
@@ -1437,12 +1442,19 @@ async def audio_buffer_append(socket_id, data):
     """Handle client audio buffer append events"""
     if not _socket_limiter.check(socket_id, 'audio_buffer_append', 30, 1.0):
         return
+
+    ok, schema_err = validate_audio_buffer_append_payload(data)
+    if not ok:
+        logger.warning(f"audio_buffer_append: invalid payload from {socket_id}: {schema_err}")
+        await sio.emit('error', {'code': 'invalid_payload', 'message': schema_err}, to=socket_id)
+        return
+
     session = await sio.get_session(socket_id)
 
     session_id = session.get('session_id')
 
     if not session_id:
-        print("No session ID found for socket ID:", socket_id, flush=True)
+        logger.debug(f"audio_buffer_append: no session for socket {socket_id}")
         return
 
     # On every chunk after the first, skip all auth awaits: realtime_authorized
@@ -1457,29 +1469,7 @@ async def audio_buffer_append(socket_id, data):
         session['realtime_authorized'] = True
         await sio.save_session(socket_id, session)
 
-    base64_audio = data.get("audio")
-    if not base64_audio:
-        print("No audio data found in request", flush=True)
-        return
-
-    # Validate audio data type
-    if not isinstance(base64_audio, str):
-        await sio.emit('error', {'message': 'Invalid audio data format: must be string'}, to=socket_id)
-        return
-
-    # Validate size limit (max 1MB per chunk)
-    # Base64 encoding increases size by ~33%, so 1MB limit = ~750KB of actual data
-    if len(base64_audio) > _MAX_AUDIO_CHUNK_SIZE:
-        await sio.emit('error', {'message': f'Audio chunk too large: maximum {_MAX_AUDIO_CHUNK_SIZE} bytes allowed'}, to=socket_id)
-        return
-
-    # Lightweight base64 format check: validate length is a multiple of 4
-    # and that the first 16 characters match the base64 character set.
-    # Full decoding a 1MB chunk just for validation is CPU-intensive at scale.
-    if len(base64_audio) % 4 != 0 or not _BASE64_RE.match(base64_audio[:16]):
-        await sio.emit('error', {'message': 'Invalid base64 audio data'}, to=socket_id)
-        logger.warning(f"Invalid base64 audio data from socket {socket_id}")
-        return
+    base64_audio = data["audio"]
 
     manager = active_scribe_managers.get(session_id)
     if not manager or not manager.is_running:
