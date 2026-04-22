@@ -984,7 +984,7 @@
     let historyText = '';
     let lastText = '';
     for (let i = 0; i < cropped.length; i++) {
-      const text = cropped[i].result.translated[selectedLanguage];
+      const text = cropped[i]?.result?.translated?.[selectedLanguage];
       if (!text) continue;
       if (i === cropped.length - 1) lastText = text + '\n';
       else historyText += text + '\n';
@@ -1063,7 +1063,7 @@
       let historyText = '';
       let lastText = '';
       for (let i = 0; i < cropped.length; i++) {
-        const text = cropped[i].result?.translated[language];
+        const text = cropped[i]?.result?.translated?.[language];
         if (!text) continue;
         if (i === cropped.length - 1) lastText = text + '\n';
         else historyText += text + '\n';
