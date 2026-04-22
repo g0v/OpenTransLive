@@ -278,6 +278,8 @@ youtube_data_cache: TTLCache = TTLCache(maxsize=256, ttl=_YOUTUBE_CACHE_TTL)
 
 redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
+TRANSCRIPTION_TTL = 3600
+
 def validate_query_param(value: str, param_name: str = "parameter") -> tuple[bool, str]:
     """Validate user input to prevent NoSQL injection. Returns (is_valid, error_message)."""
     if not isinstance(value, str):
@@ -895,8 +897,6 @@ async def get_youtube_start_time(video_id: str) -> float | None:
 async def get_cached_transcription(id, num_committed: int = 10) -> Any:
     # Try fetching committed transcriptions (ZSET) and partial from Redis
     try:
-        REDIS_TTL = 3600
-
         # One pipeline = one round trip: fetch all keys and refresh sliding TTL together.
         # EXPIRE on missing keys is a harmless no-op, so we issue them unconditionally.
         pipe = redis_client.pipeline()
@@ -905,9 +905,9 @@ async def get_cached_transcription(id, num_committed: int = 10) -> Any:
         )
         pipe.get(f"transcription:{id}:meta")
         pipe.get(f"transcription:{id}:partial")
-        pipe.expire(f"transcription:{id}:list", REDIS_TTL)
-        pipe.expire(f"transcription:{id}:meta", REDIS_TTL)
-        pipe.expire(f"transcription:{id}:partial", REDIS_TTL)
+        pipe.expire(f"transcription:{id}:list", TRANSCRIPTION_TTL)
+        pipe.expire(f"transcription:{id}:meta", TRANSCRIPTION_TTL)
+        pipe.expire(f"transcription:{id}:partial", TRANSCRIPTION_TTL)
         committed_json_list, meta_json, partial_json, *_ = await pipe.execute()
         committed_json_list = list(reversed(committed_json_list))
 
@@ -1222,72 +1222,87 @@ async def disconnect(socket_id):
     #   2. The 30-second heartbeat timeout checked on every /panel/{sid} request
 
 async def _process_transcription_update(session_id, sync_data):
-    """Internal helper to process transcription updates (cache, DB, and broadcast)"""
-    # Fetch cached transcription data (Redis or DB)
-    cached_data = await get_cached_transcription(session_id)
+    """Process a transcription update: cache, persist, broadcast. Hot path."""
+    proc_start = time.perf_counter()
+    redis_rtts = 0
+    is_partial = sync_data.get("partial") is True
 
-    # Add stream start time (fetched once at manager start; fall back if no manager)
+    list_key = f"transcription:{session_id}:list"
+    meta_key = f"transcription:{session_id}:meta"
+    partial_key = f"transcription:{session_id}:partial"
+
     manager = active_scribe_managers.get(session_id)
     yt_start_time = manager.yt_start_time if manager else await get_youtube_start_time(session_id)
-    if yt_start_time:
-         cached_data["stream_start_time"] = yt_start_time
-    
-    # Get last committed segment if available
-    last_committed = None
-    last_committed_json = await redis_client.zrange(f"transcription:{session_id}:list", -1, -1)
-    if last_committed_json:
-        last_committed = json.loads(last_committed_json[0])
-    
-    if sync_data.get("partial", False) == True:
-        # Skip if partial data is older than the last committed one
+
+    pipe = redis_client.pipeline()
+    pipe.zrange(list_key, -1, -1)
+    pipe.get(meta_key)
+    pipe.get(partial_key)
+    pipe.expire(list_key, TRANSCRIPTION_TTL)
+    pipe.expire(meta_key, TRANSCRIPTION_TTL)
+    try:
+        last_json, meta_json, partial_json, *_ = await pipe.execute()
+        redis_rtts += 1
+    except Exception as e:
+        log_exception(logger, e, "Redis pipeline error in _process_transcription_update (read)")
+        last_json, meta_json, partial_json = [], None, None
+
+    last_committed = json.loads(last_json[0]) if last_json else None
+    stream_start_time = yt_start_time
+    if not stream_start_time and meta_json:
+        try:
+            stream_start_time = json.loads(meta_json).get("stream_start_time")
+        except (TypeError, ValueError):
+            pass
+
+    if is_partial:
         if last_committed and sync_data["start_time"] < last_committed["start_time"]:
             print(f"skip older partial: {sync_data['start_time']} < {last_committed['start_time']}", flush=True)
             return
 
-        # Update Redis Partial Only - Atomically
-        if sync_data.get("flow_only"):
-            last_partial = await redis_client.get(f"transcription:{session_id}:partial")
-            if last_partial:
-                last_partial = json.loads(last_partial)
+        if sync_data.get("flow_only") and partial_json:
+            try:
+                last_partial = json.loads(partial_json)
                 sync_data["result"]["translated"] = last_partial["result"]["translated"]
-                
-        await redis_client.setex(f"transcription:{session_id}:partial", 3600, json.dumps(sync_data))
+            except (KeyError, TypeError, ValueError):
+                pass
+
+        await redis_client.setex(partial_key, TRANSCRIPTION_TTL, json.dumps(sync_data))
+        redis_rtts += 1
     else:
-        # Atomic ZSET update
         pipe = redis_client.pipeline()
-        # Add new segment to ZSET with start_time as score
-        zset_key = f"transcription:{session_id}:list"
-        pipe.zadd(zset_key, {json.dumps(sync_data): sync_data["start_time"]})
-        # Cap ZSET size by removing oldest entries beyond limit
-        pipe.zremrangebyrank(zset_key, 0, -1001)
+        pipe.zadd(list_key, {json.dumps(sync_data): sync_data["start_time"]})
+        pipe.zremrangebyrank(list_key, 0, -1001)
+        pipe.expire(list_key, TRANSCRIPTION_TTL)
+        # Skip meta write when we have no stream_start_time so a transient read
+        # failure (which zeroes stream_start_time) doesn't stomp good meta.
+        if stream_start_time is not None:
+            pipe.setex(meta_key, TRANSCRIPTION_TTL, json.dumps({"stream_start_time": stream_start_time}))
+        pipe.delete(partial_key)
+        pipe.zrange(list_key, -1, -1)
+        try:
+            results = await pipe.execute()
+            redis_rtts += 1
+            new_last_json = results[-1]
+            if new_last_json:
+                last_committed = json.loads(new_last_json[0])
+        except Exception as e:
+            log_exception(logger, e, "Redis pipeline error in _process_transcription_update (write)")
+            # sync_data shares the ZSET member shape — safe to use as last_committed.
+            if not last_committed or sync_data["start_time"] >= last_committed["start_time"]:
+                last_committed = sync_data
 
-        # Update Meta (expiry and stream_start_time)
-        meta = {"stream_start_time": yt_start_time or cached_data.get("stream_start_time")}
-        pipe.setex(f"transcription:{session_id}:meta", 3600, json.dumps(meta))
-        pipe.expire(zset_key, 3600)
+        asyncio.create_task(save_segment_background(session_id, sync_data, stream_start_time))
 
-        # Clear partial
-        pipe.delete(f"transcription:{session_id}:partial")
-        await pipe.execute()
-
-        # Get the actual last committed after ZADD (to handle potential out-of-order)
-        new_last_json = await redis_client.zrange(zset_key, -1, -1)
-        if new_last_json:
-            last_committed = json.loads(new_last_json[0])
-        
-        # Save to MongoDB in background
-        asyncio.create_task(save_segment_background(session_id, sync_data, meta["stream_start_time"]))
-    
-    # Build the broadcast payload
     payload = sync_data.copy()
     if last_committed:
         payload["last_committed"] = last_committed
 
-    is_partial = sync_data.get("partial", False) is True
+    proc_elapsed_ms = (time.perf_counter() - proc_start) * 1000
 
     async def _emit_now(p):
         latency = datetime.now(timezone.utc).timestamp() - sync_data['end_time']
-        log_msg = f"sync {sync_data['start_time']} latency:[{latency:.3f}s] {sync_data.get('partial', False)}"
+        log_msg = f"sync {sync_data['start_time']} latency:[{latency:.3f}s] {is_partial} redis:{redis_rtts} proc:{proc_elapsed_ms:.1f}ms"
         if "result" in sync_data and "corrected" in sync_data["result"]:
             log_msg += f" {sync_data['result']['corrected']}"
         print(log_msg, flush=True)
