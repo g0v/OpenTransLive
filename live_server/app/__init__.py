@@ -70,6 +70,11 @@ logger = setup_logger(__name__)
 _MANAGER_CACHE_TTL = 300  # seconds (5 min)
 _MANAGER_CACHE_MAX = 512
 _YOUTUBE_CACHE_TTL = 60   # seconds; unrelated to manager lifecycle
+_SEGMENT_WRITE_WORKERS = max(1, int(os.getenv("SEGMENT_WRITE_WORKERS", "2")))
+_SEGMENT_WRITE_QUEUE_MAXSIZE = max(1, int(os.getenv("SEGMENT_WRITE_QUEUE_MAXSIZE", "500")))
+_SEGMENT_WRITE_METRICS_LOG_INTERVAL = max(
+    1.0, float(os.getenv("SEGMENT_WRITE_METRICS_LOG_INTERVAL_SEC", "10"))
+)
 
 
 class _SocketRateLimiter:
@@ -136,6 +141,120 @@ _partial_debounce_tasks: dict = {}
 _scribe_create_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 
 
+class SegmentWriteQueue:
+    """Bounded Mongo write queue with fixed workers and basic backpressure metrics."""
+
+    def __init__(self, *, workers: int, maxsize: int, metrics_log_interval: float):
+        self.queue: asyncio.Queue[tuple[str, dict, Any] | None] = asyncio.Queue(maxsize=maxsize)
+        self.workers = workers
+        self.metrics_log_interval = metrics_log_interval
+        self._tasks: list[asyncio.Task] = []
+        self._enqueued = 0
+        self._processed = 0
+        self._dropped = 0
+        self._failed = 0
+        self._write_latency_total_ms = 0.0
+        self._last_metrics_log = time.monotonic()
+
+    def start(self) -> None:
+        if self._tasks:
+            return
+        self._tasks = [
+            asyncio.create_task(self._worker_loop(idx), name=f"segment-writer-{idx}")
+            for idx in range(self.workers)
+        ]
+
+    async def stop(self) -> None:
+        if not self._tasks:
+            return
+        # Drain queued writes before worker shutdown so committed segments are persisted.
+        await self.queue.join()
+        for _ in self._tasks:
+            await self.queue.put(None)
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+        self._log_metrics(force=True)
+
+    def enqueue(self, sid: str, segment: dict, stream_start_time: Any) -> bool:
+        if self.queue.full():
+            # Drop the oldest queued item to keep memory bounded and preserve recency.
+            try:
+                _ = self.queue.get_nowait()
+                self.queue.task_done()
+                self._dropped += 1
+            except asyncio.QueueEmpty:
+                pass
+
+        try:
+            self.queue.put_nowait((sid, segment, stream_start_time))
+        except asyncio.QueueFull:
+            self._dropped += 1
+            return False
+
+        self._enqueued += 1
+        return True
+
+    async def _worker_loop(self, worker_idx: int) -> None:
+        while True:
+            item = await self.queue.get()
+            if item is None:
+                self.queue.task_done()
+                break
+
+            sid, segment, stream_start_time = item
+            started = time.perf_counter()
+            try:
+                await _save_segment_to_mongo(sid, segment, stream_start_time)
+                self._processed += 1
+            except Exception as e:
+                self._failed += 1
+                log_exception(logger, e, f"segment write worker {worker_idx} failed")
+            finally:
+                self._write_latency_total_ms += (time.perf_counter() - started) * 1000
+                self.queue.task_done()
+                self._log_metrics()
+
+    def snapshot(self) -> dict[str, float | int]:
+        avg_latency_ms = (
+            self._write_latency_total_ms / self._processed if self._processed > 0 else 0.0
+        )
+        return {
+            "queue_depth": self.queue.qsize(),
+            "queue_maxsize": self.queue.maxsize,
+            "workers": self.workers,
+            "enqueued": self._enqueued,
+            "processed": self._processed,
+            "dropped": self._dropped,
+            "failed": self._failed,
+            "avg_write_latency_ms": round(avg_latency_ms, 2),
+        }
+
+    def _log_metrics(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and (now - self._last_metrics_log) < self.metrics_log_interval:
+            return
+        metrics = self.snapshot()
+        logger.info(
+            "segment_write_queue metrics depth=%s/%s workers=%s enqueued=%s processed=%s dropped=%s failed=%s avg_write_ms=%s",
+            metrics["queue_depth"],
+            metrics["queue_maxsize"],
+            metrics["workers"],
+            metrics["enqueued"],
+            metrics["processed"],
+            metrics["dropped"],
+            metrics["failed"],
+            metrics["avg_write_latency_ms"],
+        )
+        self._last_metrics_log = now
+
+
+segment_write_queue = SegmentWriteQueue(
+    workers=_SEGMENT_WRITE_WORKERS,
+    maxsize=_SEGMENT_WRITE_QUEUE_MAXSIZE,
+    metrics_log_interval=_SEGMENT_WRITE_METRICS_LOG_INTERVAL,
+)
+
+
 async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) -> ScribeSessionManager:
     """Return the existing running ScribeSessionManager for the session, or create a new one.
     Pass force_new=True to unconditionally restart (e.g. after a language change).
@@ -180,6 +299,7 @@ async def lifespan(app: FastAPI):
     await init_indexes()
     _limiter_redis = redis.from_url(REDIS_URL, decode_responses=True)
     await FastAPILimiter.init(_limiter_redis)
+    segment_write_queue.start()
     yield
     # Shutdown
     print("Shutting down resources...")
@@ -195,6 +315,7 @@ async def lifespan(app: FastAPI):
     # Stop all active translation managers
     for manager in list(active_translation_managers.values()):
         await manager.stop()
+    await segment_write_queue.stop()
 
 # Initialize FastAPI app with lifespan
 app = FastAPI(lifespan=lifespan)
@@ -998,18 +1119,15 @@ async def _load_segments_from_db(sid: str, limit: int | None = None) -> tuple[li
     return segments, store
 
 
-async def save_segment_background(sid, segment, stream_start_time):
-    """Save segment to MongoDB transcription_segments collection"""
-    try:
-        now = datetime.now(timezone.utc)
-        await transcription_segments_collection.insert_one({**segment, "sid": sid, "created_at": now})
-        await transcription_store_collection.update_one(
-            {"sid": sid},
-            {"$set": {"stream_start_time": stream_start_time, "updated_at": now}},
-            upsert=True
-        )
-    except Exception as e:
-        log_exception(logger, e, "Error saving to MongoDB")
+async def _save_segment_to_mongo(sid, segment, stream_start_time):
+    """Save one committed segment and refresh session metadata in MongoDB."""
+    now = datetime.now(timezone.utc)
+    await transcription_segments_collection.insert_one({**segment, "sid": sid, "created_at": now})
+    await transcription_store_collection.update_one(
+        {"sid": sid},
+        {"$set": {"stream_start_time": stream_start_time, "updated_at": now}},
+        upsert=True
+    )
 
 
 # FastAPI Routes
@@ -1292,7 +1410,9 @@ async def _process_transcription_update(session_id, sync_data):
             if not last_committed or sync_data["start_time"] >= last_committed["start_time"]:
                 last_committed = sync_data
 
-        asyncio.create_task(save_segment_background(session_id, sync_data, stream_start_time))
+        accepted = segment_write_queue.enqueue(session_id, sync_data, stream_start_time)
+        if not accepted:
+            logger.warning("segment_write_queue dropped incoming segment sid=%s start=%s", session_id, sync_data.get("start_time"))
 
     payload = sync_data.copy()
     if last_committed:

@@ -134,6 +134,9 @@ live_server/
 | `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017` | Yes |
 | `MONGODB_DB_NAME` | Database name | `opentranslive` | Yes |
 | `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` | Yes |
+| `SEGMENT_WRITE_WORKERS` | Number of MongoDB segment-write workers | `2` | No |
+| `SEGMENT_WRITE_QUEUE_MAXSIZE` | Max queued committed segments before backpressure applies | `500` | No |
+| `SEGMENT_WRITE_METRICS_LOG_INTERVAL_SEC` | Segment write queue metrics log interval (seconds) | `10` | No |
 | `YOUTUBE_API_KEY` | YouTube Data API key | - | For YouTube features |
 | `AI_PROVIDER` | Translation AI provider (`gemini` or `openai`) | `gemini` | No |
 | `GEMINI_API_KEY` | Gemini API key | - | When `AI_PROVIDER=gemini` |
@@ -144,6 +147,18 @@ live_server/
 | `ELEVENLABS_API_KEY` | ElevenLabs API key | - | For ElevenLabs Scribe |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Google Cloud credentials path | - | For Google STT |
 | `GOOGLE_CLOUD_PROJECT` | Google Cloud project ID | - | For Google STT |
+
+### Committed Segment Backpressure Strategy
+
+Committed segments are persisted through a bounded in-process queue instead of
+creating an unbounded async task per segment.
+
+- Queue: fixed-size `asyncio.Queue` (`SEGMENT_WRITE_QUEUE_MAXSIZE`)
+- Workers: fixed concurrency (`SEGMENT_WRITE_WORKERS`)
+- Overflow behavior: if queue is full, the oldest queued committed segment is
+  dropped to keep memory bounded and preserve newer context
+- Metrics (logs): queue depth, drop count, processed count, failure count, and
+  average write latency (controlled by `SEGMENT_WRITE_METRICS_LOG_INTERVAL_SEC`)
 
 ## API Documentation
 
