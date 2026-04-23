@@ -597,7 +597,7 @@
   const FONT_STEP = 0.125;
   const FONT_MIN = 0.5;
   const FONT_MAX = 5;
-  const MAX_HISTORY = 60; // cap displayed transcription history to prevent lag
+  const MAX_HISTORY = 30; // cap displayed transcription history to prevent lag
 
   function applyFontSize(rem) {
     currentFontSizeRem = Math.min(FONT_MAX, Math.max(FONT_MIN, rem));
@@ -865,17 +865,68 @@
     else refreshGridView();
   }
 
-  function updateContent(container, key, historyText, lastText, partialText, scrollParent) {
+  // Keep history as per-segment <span> nodes so we can trim individual
+  // segments and report the exact height removed from the top. Callers
+  // use that height to anchor the viewport when the user is reading
+  // scrolled-up history.
+  function syncHistoryItems(historyEl, newItems) {
+    const existing = historyEl._items || [];
+
+    // Align existing to newItems: find how many to drop from the start so
+    // existing.slice(dropFromStart) is a prefix of newItems.
+    let dropFromStart = 0;
+    while (dropFromStart <= existing.length) {
+      const tail = existing.length - dropFromStart;
+      const compareLen = Math.min(tail, newItems.length);
+      let match = true;
+      for (let j = 0; j < compareLen; j++) {
+        if (existing[dropFromStart + j] !== newItems[j]) { match = false; break; }
+      }
+      if (match) break;
+      dropFromStart++;
+    }
+    if (dropFromStart > existing.length) dropFromStart = existing.length;
+
+    // Measure before removal — offsetHeight requires nodes to be in the DOM.
+    let removedFromStartHeight = 0;
+    for (let i = 0; i < dropFromStart; i++) {
+      removedFromStartHeight += historyEl.children[i].offsetHeight;
+    }
+    for (let i = 0; i < dropFromStart; i++) {
+      historyEl.removeChild(historyEl.firstChild);
+    }
+
+    const retained = existing.length - dropFromStart;
+    let appended = 0;
+    for (let i = retained; i < newItems.length; i++) {
+      const seg = document.createElement('span');
+      seg.textContent = newItems[i] + '\n';
+      historyEl.appendChild(seg);
+      appended++;
+    }
+
+    historyEl._items = newItems.slice();
+    return {
+      changed: dropFromStart > 0 || appended > 0,
+      removedFromStartHeight,
+    };
+  }
+
+  function updateContent(container, key, historyItems, lastText, partialText, scrollParent) {
     const historyEl = container.children[0];
     const lastEl = container.children[1];
     const partialEl = container.children[2];
-    let changed = false;
     const scroller = scrollParent || container;
 
-    if (historyEl.textContent !== historyText) {
-      historyEl.textContent = historyText;
-      changed = true;
-    }
+    // Snapshot scroll state BEFORE any DOM change so the final scrollTop
+    // adjustment is relative to the pre-update position. All DOM edits
+    // below are synchronous, so the browser never paints an intermediate
+    // frame where the viewport has shifted.
+    const prevScrollTop = scroller.scrollTop;
+    const following = scroller.dataset.followingBottom !== '0';
+
+    const sync = syncHistoryItems(historyEl, historyItems);
+    let changed = sync.changed;
 
     if (lastEl.textContent !== lastText) {
       lastEl.textContent = lastText;
@@ -896,9 +947,24 @@
     }
 
     if (changed) {
-      const following = scroller.dataset.followingBottom !== '0';
-      if (following || !initialized) {
-        setTimeout(() => { scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' }); }, 10);
+      if (!initialized) {
+        // First render after a layout switch — jump to bottom.
+        scroller.scrollTop = scroller.scrollHeight;
+      } else {
+        // Anchor first so the next paint shows the same visible content
+        // as before the update. Without this, trimming a segment from
+        // the top causes a visible shift that the smooth scroll then
+        // has to "undo", producing the up-then-back flick.
+        if (sync.removedFromStartHeight > 0) {
+          scroller.scrollTop = Math.max(0, prevScrollTop - sync.removedFromStartHeight);
+        }
+        if (following) {
+          // Smooth-scroll from the anchored position to the new bottom.
+          // Called synchronously (no setTimeout) so the browser paints
+          // the anchored frame and animates forward from there, never
+          // an intermediate mid-update frame.
+          scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+        }
       }
     }
   }
@@ -981,19 +1047,19 @@
 
     const transcriptions = transcriptionsData.transcriptions || [];
     const cropped = transcriptions.slice(-MAX_HISTORY);
-    let historyText = '';
+    const historyItems = [];
     let lastText = '';
     for (let i = 0; i < cropped.length; i++) {
       const text = cropped[i]?.result?.translated?.[selectedLanguage];
       if (!text) continue;
       if (i === cropped.length - 1) lastText = text + '\n';
-      else historyText += text + '\n';
+      else historyItems.push(text);
     }
 
     const partialText = transcriptionsData?.partial?.result?.translated ? (transcriptionsData.partial.result.translated[selectedLanguage] || '') + '\n' : '';
     const card = dataContent.querySelector('.language-card');
     const wrapper = card.children[0];
-    updateContent(wrapper, 'single:' + selectedLanguage, historyText, lastText, partialText, card);
+    updateContent(wrapper, 'single:' + selectedLanguage, historyItems, lastText, partialText, card);
   }
 
   function refreshGridView() {
@@ -1060,18 +1126,18 @@
       if (!languageBox) return;
       const transcriptions = transcriptionsData.transcriptions || [];
       const cropped = transcriptions.slice(-MAX_HISTORY);
-      let historyText = '';
+      const historyItems = [];
       let lastText = '';
       for (let i = 0; i < cropped.length; i++) {
         const text = cropped[i]?.result?.translated?.[language];
         if (!text) continue;
         if (i === cropped.length - 1) lastText = text + '\n';
-        else historyText += text + '\n';
+        else historyItems.push(text);
       }
       const partialText = transcriptionsData?.partial?.result?.translated ? (transcriptionsData.partial.result.translated[language] || '') + '\n' : '';
       const card = languageBox.querySelector('.language-card');
       const wrapper = card.children[0];
-      updateContent(wrapper, 'grid:' + language, historyText, lastText, partialText, card);
+      updateContent(wrapper, 'grid:' + language, historyItems, lastText, partialText, card);
     });
   }
 
