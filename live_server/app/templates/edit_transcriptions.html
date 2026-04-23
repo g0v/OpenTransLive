@@ -1,6 +1,22 @@
 {% extends "base.html" %}
 {% block title %}OpenTransLive - Edit Translations{% endblock %}
 
+{% block head %}
+<style>
+  .seg-highlight { animation: seg-flash 1.4s ease-out; }
+  @keyframes seg-flash {
+    0%   { background-color: rgba(99, 102, 241, 0.35); }
+    100% { background-color: transparent; }
+  }
+  .toc-text {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="min-h-screen bg-gray-900 text-gray-100 font-sans">
 
@@ -15,7 +31,7 @@
     </div>
   </header>
 
-  <main class="container py-8">
+  <main class="container py-16">
 
     <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
       <a href="/user-dashboard" class="text-xs text-gray-500 hover:text-gray-300 whitespace-nowrap flex items-center gap-1">
@@ -44,6 +60,23 @@
       </p>
       <div id="status" class="text-xs min-h-4 text-gray-500"></div>
     </div>
+
+    <aside id="segment-toc"
+      class="fixed top-10 right-4 z-40 w-64 max-h-[calc(100vh-6rem)] dark-card flex flex-col shadow-xl">
+      <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
+        <span class="text-xs font-semibold text-gray-300">Segments ({{ segments|length }})</span>
+        <button id="toc-hide-btn" class="text-gray-400 hover:text-gray-200" title="Hide panel">
+          <iconify-icon icon="mdi:chevron-right" width="18" height="18"></iconify-icon>
+        </button>
+      </div>
+      <div id="toc-list" class="flex-1 overflow-y-auto divide-y divide-gray-800"></div>
+    </aside>
+    <button id="toc-show-btn"
+      class="fixed top-10 right-2 z-40 hidden items-center gap-1 dark-card px-2 py-1 text-xs text-gray-300 hover:text-gray-100"
+      title="Show segments">
+      <iconify-icon icon="mdi:format-list-bulleted" width="16" height="16"></iconify-icon>
+      <span>Segments</span>
+    </button>
 
     <div class="dark-card divide-y divide-gray-700">
       {% for seg in segments %}
@@ -107,6 +140,87 @@
     });
   });
 
+  // ── Floating segment TOC ──────────────────────────────────────────────
+  const tocList = document.getElementById('toc-list');
+  const tocPanel = document.getElementById('segment-toc');
+  const tocShowBtn = document.getElementById('toc-show-btn');
+  const tocHideBtn = document.getElementById('toc-hide-btn');
+
+  function tocItemKey(row) { return row.dataset.startTime; }
+
+  function tocItemFor(key) {
+    if (!tocList) return null;
+    return tocList.querySelector(`.toc-item[data-start-time="${CSS.escape(key)}"]`);
+  }
+
+  function scrollToSegment(row) {
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.classList.remove('seg-highlight');
+    // Force reflow so re-adding the class restarts the animation.
+    void row.offsetWidth;
+    row.classList.add('seg-highlight');
+  }
+
+  function buildTocItem(row) {
+    const startTime = parseFloat(row.dataset.startTime);
+    const correctedEl = row.querySelector('[data-field="corrected"]');
+    const preview = (correctedEl ? correctedEl.value : '').trim();
+
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'toc-item w-full text-left px-3 py-2 hover:bg-gray-700/60 focus:bg-gray-700/60 focus:outline-none flex gap-2 items-start';
+    item.dataset.startTime = row.dataset.startTime;
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'font-mono text-[11px] text-gray-500 shrink-0 pt-0.5';
+    timeSpan.textContent = startTime.toFixed(1) + 's';
+
+    const textSpan = document.createElement('span');
+    textSpan.className = 'toc-text text-xs text-gray-200 break-words';
+    textSpan.textContent = preview || '(empty)';
+    if (!preview) textSpan.classList.add('italic', 'text-gray-500');
+
+    item.append(timeSpan, textSpan);
+    item.addEventListener('click', () => scrollToSegment(row));
+    return item;
+  }
+
+  function updateTocItem(key, correctedText) {
+    const item = tocItemFor(key);
+    if (!item) return;
+    const textEl = item.querySelector('.toc-text');
+    const preview = (correctedText || '').trim();
+    textEl.textContent = preview || '(empty)';
+    textEl.classList.toggle('italic', !preview);
+    textEl.classList.toggle('text-gray-500', !preview);
+    textEl.classList.toggle('text-gray-200', !!preview);
+  }
+
+  function removeTocItem(key) {
+    const item = tocItemFor(key);
+    if (item) item.remove();
+  }
+
+  if (tocList) {
+    document.querySelectorAll('.segment-row').forEach(row => {
+      tocList.appendChild(buildTocItem(row));
+    });
+  }
+
+  function setTocOpen(open) {
+    if (!tocPanel || !tocShowBtn) return;
+    tocPanel.classList.toggle('hidden', !open);
+    tocPanel.classList.toggle('flex', open);
+    tocShowBtn.classList.toggle('hidden', open);
+    tocShowBtn.classList.toggle('flex', !open);
+  }
+
+  if (tocShowBtn && tocPanel && tocHideBtn) {
+    setTocOpen(window.innerWidth >= 1024);
+    tocHideBtn.addEventListener('click', () => setTocOpen(false));
+    tocShowBtn.addEventListener('click', () => setTocOpen(true));
+  }
+
   document.querySelectorAll('.reset-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const row = btn.closest('.segment-row');
@@ -138,6 +252,7 @@
           siblings.forEach(b => { b.disabled = false; });
           return;
         }
+        removeTocItem(row.dataset.startTime);
         row.remove();
       } catch (e) {
         setRowStatus(row, 'Network error', true);
@@ -176,6 +291,7 @@
           return;
         }
         snapshotOriginals(row);
+        updateTocItem(row.dataset.startTime, corrected || '');
         setRowStatus(row, 'Saved', false);
       } catch (e) {
         setRowStatus(row, 'Network error', true);
