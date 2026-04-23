@@ -57,45 +57,17 @@ live_server/
    uv sync
    ```
 
-3. **Configure environment variables**:
+3. **Create `app/config.py`**:
 
-   Create a `.env` file in the `live_server` directory:
+   `live_server` currently uses `app/config.py` as the primary config source.
+   Start from the example file:
 
    ```bash
-   # Server Configuration
-   SECRET_KEY=your-secret-key-here
-   HOST=0.0.0.0
-   PORT=5000
-   # ENVIRONMENT=production                       # required for production hardening
-   # SOCKET_CORS_ALLOWED_ORIGINS=https://example.com,https://app.example.com
-
-   # MongoDB Configuration
-   MONGODB_URI=mongodb://localhost:27017
-   MONGODB_DB_NAME=opentranslive
-
-   # Redis Configuration
-   REDIS_URL=redis://localhost:6379/0
-
-   # YouTube API (for live stream time detection)
-   YOUTUBE_API_KEY=your-youtube-api-key
-
-   # AI translation provider: "gemini" or "openai"
-   AI_PROVIDER=gemini
-   GEMINI_API_KEY=your-gemini-api-key
-   # OPENAI_API_KEY=your-openai-api-key  # set this instead when AI_PROVIDER=openai
-   AI_MODEL=gemini-3.1-flash-lite-preview  # or gpt-4.1-mini for openai
-
-   # Translation Settings
-   TRANSLATE_LANGUAGES=zh-Hant,ja,ko,en
-   COMMON_PROMPT="This is a meeting about software development"
-
-   # ElevenLabs Configuration (optional)
-   ELEVENLABS_API_KEY=your-elevenlabs-key
-
-   # Google Cloud Configuration (optional)
-   GOOGLE_APPLICATION_CREDENTIALS=/path/to/credentials.json
-   GOOGLE_CLOUD_PROJECT=your-project-id
+   cp app/config.example.py app/config.py
    ```
+
+   Then edit values in `app/config.py` (for example `SECRET_KEY`, MongoDB/Redis, and API keys).
+   Keep secrets out of version control.
 
 4. **Start required services**:
 
@@ -122,31 +94,29 @@ live_server/
 
 ## Configuration Options
 
-### Environment Variables
+### Primary config: `app/config.py`
 
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `SECRET_KEY` | Session encryption key | Random UUID | Yes |
-| `ENVIRONMENT` | Set to `production` to mark session cookies as Secure (HTTPS-only) and enforce the Socket.IO CORS allowlist | `development` | No |
-| `SOCKET_CORS_ALLOWED_ORIGINS` | Comma-separated allowlist of origins permitted to open Socket.IO connections (e.g. `https://example.com,https://app.example.com`). **Required in production**; `*` is rejected. In development, defaults to `http://localhost:5000,http://127.0.0.1:5000,http://localhost:3000,http://127.0.0.1:3000` and `*` is allowed. | localhost allowlist (dev) | Yes in production |
-| `HOST` | Server bind address | `0.0.0.0` | No |
-| `PORT` | Server port | `5000` | No |
-| `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017` | Yes |
-| `MONGODB_DB_NAME` | Database name | `opentranslive` | Yes |
-| `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` | Yes |
-| `SEGMENT_WRITE_WORKERS` | Number of MongoDB segment-write workers | `2` | No |
-| `SEGMENT_WRITE_QUEUE_MAXSIZE` | Max queued committed segments before backpressure applies | `500` | No |
-| `SEGMENT_WRITE_METRICS_LOG_INTERVAL_SEC` | Segment write queue metrics log interval (seconds) | `10` | No |
-| `YOUTUBE_API_KEY` | YouTube Data API key | - | For YouTube features |
-| `AI_PROVIDER` | Translation AI provider (`gemini` or `openai`) | `gemini` | No |
-| `GEMINI_API_KEY` | Gemini API key | - | When `AI_PROVIDER=gemini` |
-| `OPENAI_API_KEY` | OpenAI API key | - | When `AI_PROVIDER=openai` |
-| `AI_MODEL` | Model name for translation | `gemini-3.1-flash-lite-preview` | No |
-| `TRANSLATE_LANGUAGES` | Comma-separated language codes | `zh-Hant,ja,ko,en` | No |
-| `COMMON_PROMPT` | Context prompt for transcription | - | No |
-| `ELEVENLABS_API_KEY` | ElevenLabs API key | - | For ElevenLabs Scribe |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Google Cloud credentials path | - | For Google STT |
-| `GOOGLE_CLOUD_PROJECT` | Google Cloud project ID | - | For Google STT |
+The server reads most settings from `app/config.py`:
+
+- `SETTINGS` (e.g. `SECRET_KEY`, `YOUTUBE_API_KEY`)
+- `EMAIL_SETTINGS` (admin emails / SMTP)
+- `MONGODB_SETTINGS` (db/host/port)
+- `REDIS_URL`
+- `REALTIME_SETTINGS` (AI providers, translation languages, ElevenLabs, etc.)
+
+Use `app/config.example.py` as the baseline schema.
+
+### Optional environment variables
+
+Some runtime options are still read from environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ENVIRONMENT` | Set to `production` to force Secure cookies and strict Socket.IO CORS allowlist | `development` |
+| `SOCKET_CORS_ALLOWED_ORIGINS` | Comma-separated allowlist for Socket.IO in production | Built-in localhost allowlist (development) |
+| `SEGMENT_WRITE_WORKERS` | Number of MongoDB segment-write workers | `2` |
+| `SEGMENT_WRITE_QUEUE_MAXSIZE` | Max queued committed segments before backpressure applies | `500` |
+| `SEGMENT_WRITE_METRICS_LOG_INTERVAL_SEC` | Segment write queue metrics log interval (seconds) | `10` |
 
 ### Committed Segment Backpressure Strategy
 
@@ -377,25 +347,29 @@ The server includes an advanced translation system with the following features:
 - **Async processing**: Non-blocking translation using async HTTP client
 - **Error handling**: Graceful fallback and retry mechanisms
 
-Translation configuration in `.env`:
+Translation configuration in `app/config.py` (`REALTIME_SETTINGS`):
 
-Using Gemini (default):
-```bash
-AI_PROVIDER=gemini
-GEMINI_API_KEY=your-gemini-api-key
-AI_MODEL=gemini-3.1-flash-lite-preview
-TRANSLATE_LANGUAGES=zh-Hant,ja,ko,en
-COMMON_PROMPT="Context about the conversation"
+Using Gemini:
+```python
+REALTIME_SETTINGS = {
+  "AI_PROVIDER": "gemini",
+  "GEMINI_API_KEY": "your-gemini-api-key",
+  "TRANSLATE_LANGUAGES": "zh-Hant-TW,en-US",
+  "COMMON_PROMPT": "Context about the conversation",
+}
 ```
 
 Using OpenAI:
-```bash
-AI_PROVIDER=openai
-OPENAI_API_KEY=your-openai-api-key
-AI_MODEL=gpt-4.1-mini
-TRANSLATE_LANGUAGES=zh-Hant,ja,ko,en
-COMMON_PROMPT="Context about the conversation"
+```python
+REALTIME_SETTINGS = {
+  "AI_PROVIDER": "openai",
+  "OPENAI_API_KEY": "your-openai-api-key",
+  "TRANSLATE_LANGUAGES": "zh-Hant-TW,en-US",
+  "COMMON_PROMPT": "Context about the conversation",
+}
 ```
+
+Also supported providers: `groq`, `cerebras`.
 
 ## ElevenLabs Scribe Integration
 
@@ -446,8 +420,7 @@ This starts:
 ```bash
 docker build -t opentranslive-server .
 docker run -p 5000:5000 \
-  -e MONGODB_URI=mongodb://mongo:27017 \
-  -e REDIS_URL=redis://redis:6379 \
+  -v $(pwd)/app/config.py:/app/app/config.py:ro \
   opentranslive-server
 ```
 
@@ -457,10 +430,6 @@ docker run -p 5000:5000 \
 
 ```bash
 # With auto-reload
-uv run uvicorn app:socket_app --reload --host 0.0.0.0 --port 5000
-
-# With debug logging
-export LOG_LEVEL=DEBUG
 uv run uvicorn app:socket_app --reload --host 0.0.0.0 --port 5000
 ```
 
@@ -493,12 +462,12 @@ socket.on('transcription_update', (data) => {
 
 1. **MongoDB connection failed**
    - Verify MongoDB is running: `systemctl status mongod`
-   - Check connection string in `.env`
+   - Check `MONGODB_SETTINGS` in `app/config.py`
    - Ensure network connectivity
 
 2. **Redis connection failed**
    - Verify Redis is running: `redis-cli ping`
-   - Check Redis URL in `.env`
+   - Check `REDIS_URL` in `app/config.py`
    - Check firewall settings
 
 3. **WebSocket connection issues**
