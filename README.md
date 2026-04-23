@@ -24,7 +24,8 @@ opentranslive/
 │   ├── app/                # 主應用程式
 │   │   ├── __init__.py     # 路由和 WebSocket 處理
 │   │   ├── database.py     # MongoDB 整合
-│   │   ├── translator.py   # 翻譯服務
+│   │   ├── translation_service.py # 翻譯流程與佇列管理
+│   │   ├── translators/    # 翻譯提供者抽象與實作
 │   │   ├── scribe_manager.py # ElevenLabs Scribe 管理
 │   │   └── templates/      # HTML 模板
 │   ├── Dockerfile          # Docker 容器設定
@@ -239,24 +240,29 @@ socket.emit('join_session', {
 
 // 接收即時更新
 socket.on('transcription_update', (data) => {
-  console.log('轉錄文字:', data.message);
+  console.log('轉錄文字:', data.text);
   console.log('翻譯:', data.result.translated);
+});
+
+// 送出轉錄資料（目前主流程）
+socket.emit('sync', {
+  id: 'your-session-id',
+  text: 'Hello world',
+  start_time: 1711111111.0,
+  end_time: 1711111112.4,
+  partial: false
 });
 ```
 
 ### HTTP API
 
 ```bash
-# 同步轉錄資料
-curl -X POST http://localhost:5000/api/sync/your-session-id \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Hello world",
-    "start_time": 0,
-    "end_time": 1.5,
-    "created_at": "2024-01-01T12:00:00Z"
-  }'
+# 查詢 session 語言設定（需登入與權限）
+curl http://localhost:5000/api/session/your-session-id/languages
 ```
+
+> 注意：目前伺服器沒有 `POST /api/sync/{session_id}`。  
+> 即時轉錄同步請使用 Socket.IO `sync` event。
 
 完整 API 文件請參閱: [live_server/README.md](live_server/README.md#api-documentation)
 
