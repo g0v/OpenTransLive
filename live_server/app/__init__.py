@@ -5,6 +5,7 @@
 
 import asyncio
 import collections
+import hashlib
 import json
 import os
 import re
@@ -302,7 +303,7 @@ async def lifespan(app: FastAPI):
     segment_write_queue.start()
     yield
     # Shutdown
-    print("Shutting down resources...")
+    logger.info("Shutting down resources")
     await FastAPILimiter.close()
     # Close translator and shared HTTP client
     from .translators import close_translator
@@ -426,6 +427,28 @@ def sanitize_query_param(value: str, param_name: str = "parameter") -> str:
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
     return value
+
+
+def _mask_email(email: str | None) -> str:
+    """Mask email for logs so no full address is emitted."""
+    if not email:
+        return "unknown"
+    parts = email.split("@", 1)
+    if len(parts) != 2:
+        return "***"
+    local, domain = parts
+    if len(local) <= 2:
+        masked_local = f"{local[:1]}***"
+    else:
+        masked_local = f"{local[:2]}***{local[-1:]}"
+    return f"{masked_local}@{domain}"
+
+
+def _hash_token(value: str | None) -> str:
+    """Stable short hash for IDs/tokens in logs."""
+    if not value:
+        return "none"
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 async def _identifier(request: Request) -> str:
     uid = request.session.get("user_uid", "")
@@ -674,12 +697,12 @@ async def send_otp(request: Request):
     if not validate_email_format(email):
         raise HTTPException(status_code=400, detail="Invalid email address")
     otp = generate_otp()
-    print(f"OTP for {email}: {otp}")
+    logger.info("send_otp requested email=%s", _mask_email(email))
     await store_otp(redis_client, email, otp)
     try:
         await send_otp_email(email, otp, EMAIL_SETTINGS)
     except Exception as e:
-        log_exception(logger, e, f"Failed to send OTP email to {email}")
+        log_exception(logger, e, f"Failed to send OTP email to {_mask_email(email)}")
         raise HTTPException(status_code=500, detail="Failed to send email")
     return {"status": "sent"}
 
@@ -979,7 +1002,7 @@ async def get_youtube_start_time(video_id: str) -> float | None:
     else:
         api_key = SETTINGS["YOUTUBE_API_KEY"]
         if not api_key:
-            print("Warning: YOUTUBE_API_KEY environment variable not set")
+            logger.warning("YOUTUBE_API_KEY environment variable not set")
             return None
         url = "https://www.googleapis.com/youtube/v3/videos"
         params = {
@@ -1183,7 +1206,11 @@ async def rt(request: Request, id: str):
         }
     sliced_data = data.copy()
     sliced_data["transcriptions"] = sliced_data["transcriptions"][-50:]
-    print(sliced_data, flush=True)
+    logger.debug(
+        "rt_view sid_hash=%s segment_count=%s",
+        _hash_token(id),
+        len(sliced_data["transcriptions"]),
+    )
     return templates.TemplateResponse("rt.html", {"request": request, "id": id, "data": sliced_data})
   
 @app.get("/panel/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
@@ -1325,14 +1352,14 @@ async def delete_session(request: Request, sid: str):
 async def connect(socket_id, environ, auth):
     """Handle client connection"""
     await sio.save_session(socket_id, {'verified': False})
-    logger.info(f"Client connected: {socket_id}")
+    logger.info("client_connected socket_hash=%s", _hash_token(socket_id))
     await sio.emit('connected', {'status': 'connected', 'client_id': socket_id}, to=socket_id)
 
 @sio.event
 async def disconnect(socket_id):
     """Handle client disconnection"""
     _socket_limiter.cleanup(socket_id)
-    logger.info(f"Client disconnected: {socket_id}")
+    logger.info("client_disconnected socket_hash=%s", _hash_token(socket_id))
     # Admin lock is NOT cleared here: socket disconnect fires on page refresh
     # and transient network blips, not only on true tab-close.
     # Cleanup is handled by:
@@ -1375,7 +1402,12 @@ async def _process_transcription_update(session_id, sync_data):
 
     if is_partial:
         if last_committed and sync_data["start_time"] < last_committed["start_time"]:
-            print(f"skip older partial: {sync_data['start_time']} < {last_committed['start_time']}", flush=True)
+            logger.debug(
+                "skip_older_partial sid_hash=%s incoming_start=%s last_committed_start=%s",
+                _hash_token(session_id),
+                sync_data.get("start_time"),
+                last_committed.get("start_time"),
+            )
             return
 
         if sync_data.get("flow_only") and partial_json:
@@ -1412,7 +1444,11 @@ async def _process_transcription_update(session_id, sync_data):
 
         accepted = segment_write_queue.enqueue(session_id, sync_data, stream_start_time)
         if not accepted:
-            logger.warning("segment_write_queue dropped incoming segment sid=%s start=%s", session_id, sync_data.get("start_time"))
+            logger.warning(
+                "segment_write_queue dropped incoming segment sid_hash=%s start=%s",
+                _hash_token(session_id),
+                sync_data.get("start_time"),
+            )
 
     payload = sync_data.copy()
     if last_committed:
@@ -1422,10 +1458,16 @@ async def _process_transcription_update(session_id, sync_data):
 
     async def _emit_now(p):
         latency = datetime.now(timezone.utc).timestamp() - sync_data['end_time']
-        log_msg = f"sync {sync_data['start_time']} latency:[{latency:.3f}s] {is_partial} redis:{redis_rtts} proc:{proc_elapsed_ms:.1f}ms"
-        if "result" in sync_data and "corrected" in sync_data["result"]:
-            log_msg += f" {sync_data['result']['corrected']}"
-        print(log_msg, flush=True)
+        logger.info(
+            "sync_update sid_hash=%s start=%s end=%s partial=%s latency=%.3fs redis_rtts=%s proc_ms=%.1f",
+            _hash_token(session_id),
+            sync_data.get("start_time"),
+            sync_data.get("end_time"),
+            is_partial,
+            latency,
+            redis_rtts,
+            proc_elapsed_ms,
+        )
         await sio.emit('transcription_update', p, room=session_id)
 
     if is_partial:
@@ -1456,7 +1498,7 @@ async def sync(socket_id, data):
 
     ok, schema_err = validate_sync_payload(data)
     if not ok:
-        logger.warning(f"sync: invalid payload from {socket_id}: {schema_err}")
+        logger.warning("sync invalid_payload socket_hash=%s err=%s", _hash_token(socket_id), schema_err)
         await sio.emit('error', {'code': 'invalid_payload', 'message': schema_err}, to=socket_id)
         return
 
@@ -1499,10 +1541,19 @@ async def join_session(socket_id, data):
                 session['session_id'] = session_id
                 session['email'] = await _get_room_owner_email(room)
                 await sio.save_session(socket_id, session)
-                print(f"Client verified: {session_id}, email: {session.get('email')}")
+                logger.info(
+                    "join_session verified sid_hash=%s owner_email=%s socket_hash=%s",
+                    _hash_token(session_id),
+                    _mask_email(session.get("email")),
+                    _hash_token(socket_id),
+                )
         else:
             # Authentication failed - do not set verified flag
-            print(f"Client authentication failed: {session_id}")
+            logger.warning(
+                "join_session authentication_failed sid_hash=%s socket_hash=%s",
+                _hash_token(session_id),
+                _hash_token(socket_id),
+            )
 
     if session_id:
         await sio.enter_room(socket_id, session_id)
@@ -1516,7 +1567,11 @@ async def leave_session(socket_id, data):
     if session_id:
         await sio.leave_room(socket_id, session_id)
         await sio.emit('left_session', {'session_id': session_id}, to=socket_id)
-        print(f"Client left session: {session_id}")
+        logger.info(
+            "leave_session sid_hash=%s socket_hash=%s",
+            _hash_token(session_id),
+            _hash_token(socket_id),
+        )
 
 async def on_translation_completed(session_id, sync_data):
     await _process_transcription_update(session_id, sync_data)
@@ -1568,7 +1623,7 @@ async def mic_off(socket_id, data):
         return
     manager: ScribeSessionManager | None = active_scribe_managers.pop(session_id, None)
     if manager:
-        logger.info(f"mic_off: stopping scribe for {session_id}")
+        logger.info("mic_off stopping_scribe sid_hash=%s", _hash_token(session_id))
         await manager.stop()
 
 
@@ -1580,7 +1635,7 @@ async def audio_buffer_append(socket_id, data):
 
     ok, schema_err = validate_audio_buffer_append_payload(data)
     if not ok:
-        logger.warning(f"audio_buffer_append: invalid payload from {socket_id}: {schema_err}")
+        logger.warning("audio_buffer_append invalid_payload socket_hash=%s err=%s", _hash_token(socket_id), schema_err)
         await sio.emit('error', {'code': 'invalid_payload', 'message': schema_err}, to=socket_id)
         return
 
@@ -1589,7 +1644,7 @@ async def audio_buffer_append(socket_id, data):
     session_id = session.get('session_id')
 
     if not session_id:
-        logger.debug(f"audio_buffer_append: no session for socket {socket_id}")
+        logger.debug("audio_buffer_append no_session socket_hash=%s", _hash_token(socket_id))
         return
 
     # On every chunk after the first, skip all auth awaits: realtime_authorized

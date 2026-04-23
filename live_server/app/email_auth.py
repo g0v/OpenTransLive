@@ -19,6 +19,20 @@ OTP_TTL = 600  # seconds (10 minutes)
 OTP_MAX_ATTEMPTS = 5
 
 
+def _mask_email(email: str | None) -> str:
+    if not email:
+        return "unknown"
+    parts = email.split("@", 1)
+    if len(parts) != 2:
+        return "***"
+    local, domain = parts
+    if len(local) <= 2:
+        masked_local = f"{local[:1]}***"
+    else:
+        masked_local = f"{local[:2]}***{local[-1:]}"
+    return f"{masked_local}@{domain}"
+
+
 def validate_email_format(email: str) -> bool:
     if not isinstance(email, str):
         return False
@@ -69,7 +83,7 @@ async def verify_otp(redis_client, email: str, otp: str) -> bool:
 async def send_otp_email(email: str, otp: str, email_settings: dict) -> None:
     smtp_host = email_settings.get("SMTP_HOST", "")
     if not smtp_host:
-        logger.info(f"[DEV MODE] OTP for {email}: {otp}")
+        logger.info("[DEV MODE] OTP generated email=%s smtp_configured=false", _mask_email(email))
         return
 
     import aiosmtplib
