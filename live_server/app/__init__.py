@@ -887,10 +887,12 @@ async def edit_transcriptions_page(request: Request, sid: str):
         return RedirectResponse(url="/login", status_code=302)
     email, _ = await _require_session_owner(request, sid)
     segments, _ = await _load_segments_from_db(sid, limit=10000)
+    languages = _collect_srt_languages(segments)
     response = templates.TemplateResponse("edit_transcriptions.html", {
         "request": request,
         "sid": sid,
         "segments": segments,
+        "languages": languages,
         "current_email": email,
     })
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -1142,6 +1144,45 @@ async def _load_segments_from_db(sid: str, limit: int | None = None) -> tuple[li
     return segments, store
 
 
+def _seconds_to_srt_timestamp(seconds: float) -> str:
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int(round((seconds % 1) * 1000))
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def _collect_srt_languages(segments: list) -> list[str]:
+    seen: dict[str, None] = {}
+    for seg in segments:
+        translated = ((seg.get("result") or {}).get("translated") or {})
+        for lang in translated.keys():
+            if lang and lang not in seen:
+                seen[lang] = None
+    return list(seen.keys())
+
+
+def _build_srt_for_language(segments: list, lang: str) -> str:
+    if not segments:
+        return ""
+    epoch_offset = segments[0].get("start_time", 0) or 0
+    parts: list[str] = []
+    idx = 0
+    for seg in segments:
+        translated = ((seg.get("result") or {}).get("translated") or {})
+        text = translated.get(lang)
+        if not text:
+            continue
+        start = (seg.get("start_time") or 0) - epoch_offset
+        end = max((seg.get("end_time") or seg.get("start_time") or 0), start + 0.5) - epoch_offset
+        idx += 1
+        parts.append(str(idx))
+        parts.append(f"{_seconds_to_srt_timestamp(start)} --> {_seconds_to_srt_timestamp(end)}")
+        parts.append(text)
+        parts.append("")
+    return "\n".join(parts) if idx > 0 else ""
+
+
 async def _save_segment_to_mongo(sid, segment, stream_start_time):
     """Save one committed segment and refresh session metadata in MongoDB."""
     now = datetime.now(timezone.utc)
@@ -1182,6 +1223,32 @@ async def download(request: Request, id: str):
 
     content = json.dumps(data, ensure_ascii=False, indent=2)
     return Response(content=content, media_type="application/json")
+
+@app.get("/download/{id}/srt/{lang}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+async def download_srt(request: Request, id: str, lang: str):
+    id = sanitize_query_param(id, "session ID")
+    if not re.match(r'^[a-zA-Z0-9_-]{1,32}$', lang):
+        raise HTTPException(status_code=400, detail="Invalid language code")
+
+    room, (segments, _) = await asyncio.gather(
+        rooms_collection.find_one({"sid": id}, {"admin_email": 1, "admin_uid": 1}),
+        _load_segments_from_db(id),
+    )
+    if room:
+        await _require_room_owner(request, room)
+    if not segments:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    content = _build_srt_for_language(segments, lang)
+    if not content:
+        raise HTTPException(status_code=404, detail=f"No transcripts for language '{lang}'")
+
+    filename = f"{id}.{lang}.srt"
+    return Response(
+        content=content,
+        media_type="application/x-subrip; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 @app.get("/yt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def yt(request: Request, id: str):
