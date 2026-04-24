@@ -20,6 +20,7 @@ _SEGMENT_START_OFFSET = 0.3   # seconds subtracted from seg_start_time to accoun
 _IDLE_TIMEOUT_SECS = 60       # stop session after 1 minute with no audio
 _IDLE_CHECK_INTERVAL = 30     # how often the watchdog checks (seconds)
 _MAX_PARTIAL_LENGTH = 100     # maximum length of partial transcript
+_MIN_COMMIT_LENGTH = 50       # commits shorter than this are buffered and merged into the next segment
 
 class ScribeSessionManager:
     _BYTES_PER_SEC = 16000 * 2          # 16kHz 16-bit mono PCM
@@ -50,6 +51,9 @@ class ScribeSessionManager:
         self.task_group = None
         self.partial_interval = REALTIME_SETTINGS.get('PARTIAL_INTERVAL', 2)
         self.should_commit = False
+        # Prefix holding committed text from segments too short to stand alone.
+        # Prepended to subsequent partials/commits so translation gets useful context.
+        self.pending_commit_text = ""
         # Usage tracking
         self.audio_bytes_total = 0
         self.audio_chunks = 0
@@ -230,15 +234,24 @@ class ScribeSessionManager:
             if self.seg_start_time is None:
                 self.seg_start_time = now
 
-            transcription = self._build_transcription(transcript, partial, now)
+            combined_text = self.pending_commit_text + transcript
+            emit_partial = partial or len(combined_text) < _MIN_COMMIT_LENGTH
 
-            if partial:
+            if emit_partial:
+                transcription = self._build_transcription(combined_text, True, now)
                 self.last_partial_time = now
-                self.last_partial_text = transcript
-                if len(self.last_partial_text) > _MAX_PARTIAL_LENGTH:
+                if partial:
+                    self.last_partial_text = transcript
+                else:
+                    # Short commit: keep segment open and accumulate as prefix.
+                    print(f"Short commit, appending to pending: {repr(combined_text)}", flush=True)
+                    self.pending_commit_text = combined_text + " "
+                if len(combined_text) > _MAX_PARTIAL_LENGTH:
                     self.should_commit = True
                 asyncio.create_task(self.callback(self.session_id, transcription))
             else:
+                transcription = self._build_transcription(combined_text, False, now)
+                self.pending_commit_text = ""
                 self.seg_start_time = None
                 self.should_commit = False
                 asyncio.create_task(self.callback(self.session_id, transcription))
@@ -373,16 +386,19 @@ class ScribeSessionManager:
         self.ws = None
         logger.info(f"Scribe session stopped for {self.session_id}")
 
-        # Commit any pending partial so it is not lost on stop/mic-off.
+        # Commit any pending partial / buffered short commit so they are not
+        # lost on stop/mic-off.
         callback = getattr(self, "callback", None)
-        if callback and self.last_partial_text and self.seg_start_time is not None:
+        final_text = (self.pending_commit_text + self.last_partial_text).strip()
+        if callback and final_text and self.seg_start_time is not None:
             try:
                 now = datetime.now(timezone.utc)
-                transcription = self._build_transcription(self.last_partial_text, False, now)
+                transcription = self._build_transcription(final_text, False, now)
                 self.seg_start_time = None
+                self.pending_commit_text = ""
                 logger.info(
                     f"Committing last partial on stop for {self.session_id}: "
-                    f"{repr(self.last_partial_text)}"
+                    f"{repr(final_text)}"
                 )
                 await callback(self.session_id, transcription)
             except Exception as e:
