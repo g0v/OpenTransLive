@@ -19,21 +19,21 @@ _RETRY_DELAYS = [0.5, 1.0, 2.0]
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 _CORRECT_PROMPT = (
-    "Correct the user's text literally. No styling/summaries. \n"
-    "Remove timecodes. Remove umms, ahs, and other filler words. \n"
+    "Correct the user's ASR transcript literally. No styling/summaries. \n"
+    "Remove speech disfluencies and redundant fillers. \n"
     "Output ONLY the corrected text.\n\n"
     "Context: {keywords}"
 )
 
 _TRANSLATE_PROMPT = (
-    "Rewrite <translate_this> to {language}.\n\n"
+    "Role: Professional diplomatic interpreter.\n"
+    "Task: Rewrite <translate_this> into formal {language}.\n"
     "Rules:\n"
-    "1. Accurate and fluent; No styling/summaries; Use formal language.\n"
+    "1. Accurate and fluent; No styling/summaries.\n"
     "2. Adapt formats (like dates/numbers) to target language conventions.\n"
-    "3. Match <previous_translation> to minimize changes.\n"
-    "4. If same language, fix typos only.\n"
-    "5. Add punctuation.\n"
-    "6. Output ONLY the processed translated text.\n\n"
+    "3. If same language, fix typos only.\n"
+    "4. Add punctuation.\n"
+    "5. Output ONLY the processed translated text.\n\n"
     "<context>\n{keywords}\n</context>\n\n"
     "<previous_translation>\n{prev_translation}\n</previous_translation>"
 )
