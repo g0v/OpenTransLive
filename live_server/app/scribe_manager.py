@@ -21,7 +21,7 @@ _RECONNECT_MAX_DELAY = 60.0
 _SEGMENT_START_OFFSET = 0.3   # seconds subtracted from seg_start_time to account for ASR processing latency
 _IDLE_TIMEOUT_SECS = 60       # stop session after 1 minute with no audio
 _IDLE_CHECK_INTERVAL = 30     # how often the watchdog checks (seconds)
-_MAX_PARTIAL_TOKENS = 100     # maximum length of partial transcript
+_MAX_PARTIAL_TOKENS = 150     # maximum length of partial transcript
 _MIN_COMMIT_TOKENS = 50       # commits shorter than this are buffered and merged into the next segment
 
 class ScribeSessionManager:

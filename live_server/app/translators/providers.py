@@ -30,7 +30,7 @@ _TRANSLATE_PROMPT = (
     "Task: Rewrite <translate_this> into formal {language}.\n"
     "Rules:\n"
     "1. Accurate and fluent; No styling/summaries.\n"
-    "2. Adapt formats (like dates/numbers) to target language conventions.\n"
+    "2. Adapt dates/numbers/nouns/etc. to target language conventions.\n"
     "3. If same language, fix typos only.\n"
     "4. Add punctuation.\n"
     "5. Output ONLY the processed translated text.\n\n"
