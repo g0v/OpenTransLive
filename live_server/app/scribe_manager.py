@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+import tiktoken
 from opencc import OpenCC
 from urllib.parse import urlencode
 from websockets.asyncio.client import connect as ws_connect
@@ -12,6 +13,7 @@ from .logger_config import setup_logger, log_exception
 
 cc = OpenCC('s2twp')
 logger = setup_logger(__name__)
+encoding = tiktoken.get_encoding("o200k_base")
 
 _MAX_RECONNECT_RETRIES = 5
 _RECONNECT_BASE_DELAY = 2.0   # seconds; doubles each attempt, capped at 60s
@@ -19,8 +21,8 @@ _RECONNECT_MAX_DELAY = 60.0
 _SEGMENT_START_OFFSET = 0.3   # seconds subtracted from seg_start_time to account for ASR processing latency
 _IDLE_TIMEOUT_SECS = 60       # stop session after 1 minute with no audio
 _IDLE_CHECK_INTERVAL = 30     # how often the watchdog checks (seconds)
-_MAX_PARTIAL_LENGTH = 100     # maximum length of partial transcript
-_MIN_COMMIT_LENGTH = 50       # commits shorter than this are buffered and merged into the next segment
+_MAX_PARTIAL_TOKENS = 100     # maximum length of partial transcript
+_MIN_COMMIT_TOKENS = 50       # commits shorter than this are buffered and merged into the next segment
 
 class ScribeSessionManager:
     _BYTES_PER_SEC = 16000 * 2          # 16kHz 16-bit mono PCM
@@ -235,7 +237,8 @@ class ScribeSessionManager:
                 self.seg_start_time = now
 
             combined_text = self.pending_commit_text + transcript
-            emit_partial = partial or len(combined_text) < _MIN_COMMIT_LENGTH
+            encode_len = len(encoding.encode(combined_text))
+            emit_partial = partial or encode_len < _MIN_COMMIT_TOKENS
 
             if emit_partial:
                 transcription = self._build_transcription(combined_text, True, now)
@@ -246,7 +249,7 @@ class ScribeSessionManager:
                     # Short commit: keep segment open and accumulate as prefix.
                     print(f"Short commit, appending to pending: {repr(combined_text)}", flush=True)
                     self.pending_commit_text = combined_text + " "
-                if len(combined_text) > _MAX_PARTIAL_LENGTH:
+                if encode_len > _MAX_PARTIAL_TOKENS:
                     self.should_commit = True
                 asyncio.create_task(self.callback(self.session_id, transcription))
             else:

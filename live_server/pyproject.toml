@@ -20,4 +20,5 @@ dependencies = [
     "cachetools>=5.0.0",
     "aiosmtplib>=3.0.0",
     "opencc>=1.2.0",
+    "tiktoken>=0.12.0",
 ]
