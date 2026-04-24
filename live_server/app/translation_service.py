@@ -229,7 +229,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         "translated": {language: [] for language in languages},
     }
 
-    history = cached_data.get("transcriptions", [])[-3:]
+    history = cached_data.get("transcriptions", [])
     for transcription in history:
         if "result" in transcription:
             context["corrected"].append(transcription["result"].get("corrected", ""))

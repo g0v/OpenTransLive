@@ -206,7 +206,7 @@ class ScribeSessionManager:
     async def handle_transcript(self, data):
         try:
             transcript = data.get("text", "").strip()
-            if not transcript:
+            if not transcript or len(transcript) <= 2:
                 return
 
             msg_type = data.get("message_type")
@@ -306,8 +306,8 @@ class ScribeSessionManager:
                         "model_id": "scribe_v2_realtime",
                         "audio_format": "pcm_16000",
                         "commit_strategy": "vad",
-                        "vad_silence_threshold_secs": 0.5,
-                        "vad_threshold": 0.4,
+                        "vad_silence_threshold_secs": 1,
+                        "vad_threshold": 0.3,
                         "min_speech_duration_ms": 100,
                         "min_silence_duration_ms": 100,
                         "include_timestamps": "false",

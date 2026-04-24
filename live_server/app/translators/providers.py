@@ -26,13 +26,14 @@ _CORRECT_PROMPT = (
 )
 
 _TRANSLATE_PROMPT = (
-    "Translate <translate_this> to {language}.\n\n"
+    "Rewrite <translate_this> to {language}.\n\n"
     "Rules:\n"
-    "1. Literal only; no styling/summaries; Keep the same tone.\n"
-    "2. Match <previous_translation> to minimize changes.\n"
-    "3. If same language, fix typos only.\n"
-    "4. Add punctuation.\n"
-    "5. Output ONLY the processed translated text.\n\n"
+    "1. Accurate and fluent; No styling/summaries; Use formal language.\n"
+    "2. Adapt formats (like dates/numbers) to target language conventions.\n"
+    "3. Match <previous_translation> to minimize changes.\n"
+    "4. If same language, fix typos only.\n"
+    "5. Add punctuation.\n"
+    "6. Output ONLY the processed translated text.\n\n"
     "<context>\n{keywords}\n</context>\n\n"
     "<previous_translation>\n{prev_translation}\n</previous_translation>"
 )
@@ -145,7 +146,7 @@ class ChatCompletionTranslator(BaseTranslator):
                 },
                 {
                     "role": "user",
-                    "content": f"{context[-25:]}\n<translate_this>\n{text}\n</translate_this>",
+                    "content": f"{context[-50:]}\n<translate_this>\n{text}\n</translate_this>",
                 },
             ],
         }
@@ -238,7 +239,7 @@ class GroqTranslator(ChatCompletionTranslator):
     system_role = "system"
 
     correct_params = {
-        "model": "openai/gpt-oss-20b",
+        "model": "openai/gpt-oss-120b",
         "reasoning_effort": "low",
     }
     translate_params = {

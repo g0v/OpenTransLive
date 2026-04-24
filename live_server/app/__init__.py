@@ -1646,7 +1646,7 @@ async def on_translation_completed(session_id, sync_data):
 async def on_scribe_transcription(session_id, transcription):
     """Callback for Scribe transcription"""
     # Hot path (>10 Hz on partials); translator only needs the last 3 committed segments.
-    cached_data = await get_cached_transcription(session_id, num_committed=3)
+    cached_data = await get_cached_transcription(session_id, num_committed=5)
     sync_data = transcription.copy()
     
     manager = _get_or_create_translation_manager(session_id)
