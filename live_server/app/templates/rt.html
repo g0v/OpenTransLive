@@ -576,6 +576,13 @@
   .new-text {
     animation: new-text-highlight 2s ease-out forwards;
   }
+
+  .language-card {
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable both-edges;
+  }
+
 </style>
 {% endblock %} {% block scripts %}
 <script>
@@ -865,6 +872,29 @@
     else refreshGridView();
   }
 
+  function getInlineStartLeft(node) {
+    if (!node) return null;
+    const rects = node.getClientRects();
+    if (rects && rects.length > 0) return rects[0].left;
+    const txt = node.firstChild;
+    if (txt && txt.nodeType === Node.TEXT_NODE && txt.textContent && txt.textContent.length > 0) {
+      const range = document.createRange();
+      range.setStart(txt, 0);
+      range.setEnd(txt, 1);
+      const rr = range.getClientRects();
+      if (rr && rr.length > 0) return rr[0].left;
+    }
+    return node.getBoundingClientRect().left;
+  }
+
+  function applyLeadingPad(historyEl, deltaX) {
+    if (Math.abs(deltaX) <= 0.01) return;
+    const currentPad = historyEl._leadingPadPx || 0;
+    const nextPad = Math.max(0, currentPad + deltaX);
+    historyEl._leadingPadPx = nextPad;
+    historyEl.style.paddingLeft = nextPad > 0.01 ? `${nextPad}px` : '';
+  }
+
   // Keep history as per-segment <span> nodes so we can trim individual
   // segments and report the exact height removed from the top. Callers
   // use that height to anchor the viewport when the user is reading
@@ -887,13 +917,30 @@
     }
     if (dropFromStart > existing.length) dropFromStart = existing.length;
 
-    // Measure before removal — offsetHeight requires nodes to be in the DOM.
+    // Use a retained node as an anchor and measure top-shift in sub-pixel
+    // precision. This avoids cumulative rounding error from offsetHeight.
+    const retainedAnchor = historyEl.children[dropFromStart] || null;
+    const retainedTopBefore = retainedAnchor ? retainedAnchor.getBoundingClientRect().top : null;
+    const retainedLeftBefore = getInlineStartLeft(retainedAnchor);
+
     let removedFromStartHeight = 0;
-    for (let i = 0; i < dropFromStart; i++) {
-      removedFromStartHeight += historyEl.children[i].offsetHeight;
-    }
-    for (let i = 0; i < dropFromStart; i++) {
-      historyEl.removeChild(historyEl.firstChild);
+    let removedFromStartLeft = 0;
+    if (retainedAnchor && retainedTopBefore !== null) {
+      for (let i = 0; i < dropFromStart; i++) {
+        historyEl.removeChild(historyEl.firstChild);
+      }
+      const retainedTopAfter = retainedAnchor.getBoundingClientRect().top;
+      const retainedLeftAfter = getInlineStartLeft(retainedAnchor);
+      removedFromStartHeight = Math.max(0, retainedTopBefore - retainedTopAfter);
+      if (retainedLeftBefore !== null && retainedLeftAfter !== null) {
+        removedFromStartLeft = retainedLeftBefore - retainedLeftAfter;
+      }
+    } else {
+      // Fallback when everything is trimmed in one pass.
+      for (let i = 0; i < dropFromStart; i++) {
+        removedFromStartHeight += historyEl.firstChild.getBoundingClientRect().height;
+        historyEl.removeChild(historyEl.firstChild);
+      }
     }
 
     const retained = existing.length - dropFromStart;
@@ -909,6 +956,7 @@
     return {
       changed: dropFromStart > 0 || appended > 0,
       removedFromStartHeight,
+      removedFromStartLeft,
     };
   }
 
@@ -923,10 +971,13 @@
     // below are synchronous, so the browser never paints an intermediate
     // frame where the viewport has shifted.
     const prevScrollTop = scroller.scrollTop;
+    const prevScrollLeft = scroller.scrollLeft;
     const following = scroller.dataset.followingBottom !== '0';
 
     const sync = syncHistoryItems(historyEl, historyItems);
     let changed = sync.changed;
+
+    applyLeadingPad(historyEl, sync.removedFromStartLeft);
 
     if (lastEl.textContent !== lastText) {
       lastEl.textContent = lastText;
@@ -950,6 +1001,7 @@
       if (!initialized) {
         // First render after a layout switch — jump to bottom.
         scroller.scrollTop = scroller.scrollHeight;
+        scroller.scrollLeft = prevScrollLeft;
       } else {
         // Anchor first so the next paint shows the same visible content
         // as before the update. Without this, trimming a segment from
@@ -963,7 +1015,9 @@
           // Called synchronously (no setTimeout) so the browser paints
           // the anchored frame and animates forward from there, never
           // an intermediate mid-update frame.
-          scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+          scroller.scrollTo({ top: scroller.scrollHeight, left: prevScrollLeft, behavior: 'smooth' });
+        } else {
+          scroller.scrollLeft = prevScrollLeft;
         }
       }
     }
@@ -985,7 +1039,7 @@
 
   function makeLanguageCard() {
     const card = document.createElement('div');
-    card.className = 'language-card flex-1 overflow-auto px-2 py-1 leading-relaxed wrap-break-word';
+    card.className = 'language-card flex-1 px-2 py-1 leading-relaxed wrap-break-word';
     // Disable browser scroll anchoring — when textContent replaces the
     // history/last/partial spans, the anchor can become invalid and the
     // browser may snap scrollTop to the bottom on its own.
