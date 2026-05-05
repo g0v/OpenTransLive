@@ -27,6 +27,7 @@ class BaseTranslator(ABC):
         context: str,
         prev_translation: str,
         keywords: str,
+        tone: str = "",
     ) -> str:
         """Return *text* translated into *language*.
 

@@ -59,40 +59,67 @@ async def save_session_languages(redis_client, session_id, languages: list[str])
 
 
 # ---------------------------------------------------------------------------
+# Session: string field helpers (Redis + MongoDB)
+# ---------------------------------------------------------------------------
+
+async def _get_session_string_field(redis_client, session_id, field: str) -> str:
+    key = f"{field}:{session_id}"
+    try:
+        raw = await redis_client.get(key)
+        if raw is not None:
+            return raw.decode() if isinstance(raw, bytes) else raw
+    except Exception as e:
+        log_exception(logger, e, f"Redis get {field} error")
+
+    value = ""
+    try:
+        room = await rooms_collection.find_one({"sid": session_id}, {field: 1})
+        value = (room or {}).get(field) or ""
+    except Exception as e:
+        log_exception(logger, e, f"MongoDB get {field} error")
+
+    try:
+        await redis_client.set(key, value, ex=86400)
+    except Exception:
+        pass
+
+    return value
+
+
+async def _save_session_string_field(redis_client, session_id, field: str, value: str):
+    key = f"{field}:{session_id}"
+    try:
+        if value:
+            await redis_client.set(key, value, ex=86400)
+        else:
+            await redis_client.delete(key)
+    except Exception as e:
+        log_exception(logger, e, f"Redis set {field} error")
+    asyncio.create_task(_save_room_field_to_mongo(session_id, field, value))
+
+
+# ---------------------------------------------------------------------------
 # Session: scribe language
 # ---------------------------------------------------------------------------
 
 async def get_session_scribe_language(redis_client, session_id) -> str:
-    """Return forced detect language for Scribe, empty string means auto-detect."""
-    try:
-        raw = await redis_client.get(f"scribe_language:{session_id}")
-        if raw:
-            return raw.decode() if isinstance(raw, bytes) else raw
-    except Exception as e:
-        log_exception(logger, e, "Redis get scribe_language error")
-
-    try:
-        room = await rooms_collection.find_one({"sid": session_id}, {"scribe_language": 1})
-        if room and room.get("scribe_language"):
-            lang = room["scribe_language"]
-            await redis_client.set(f"scribe_language:{session_id}", lang, ex=86400)
-            return lang
-    except Exception as e:
-        log_exception(logger, e, "MongoDB get scribe_language error")
-
-    return ""
+    return await _get_session_string_field(redis_client, session_id, "scribe_language")
 
 
 async def save_session_scribe_language(redis_client, session_id, language: str):
-    """Persist forced detect language for Scribe in Redis and MongoDB."""
-    try:
-        if language:
-            await redis_client.set(f"scribe_language:{session_id}", language, ex=86400)
-        else:
-            await redis_client.delete(f"scribe_language:{session_id}")
-    except Exception as e:
-        log_exception(logger, e, "Redis set scribe_language error")
-    asyncio.create_task(_save_room_field_to_mongo(session_id, "scribe_language", language))
+    await _save_session_string_field(redis_client, session_id, "scribe_language", language)
+
+
+# ---------------------------------------------------------------------------
+# Session: translate tone
+# ---------------------------------------------------------------------------
+
+async def get_session_translate_tone(redis_client, session_id) -> str:
+    return await _get_session_string_field(redis_client, session_id, "translate_tone")
+
+
+async def save_session_translate_tone(redis_client, session_id, tone: str):
+    await _save_session_string_field(redis_client, session_id, "translate_tone", tone)
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +244,10 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     if not text:
         return data
 
-    current_keywords, locked_list = await get_keywords_and_locked(redis_client, session_id)
+    (current_keywords, locked_list), tone = await asyncio.gather(
+        get_keywords_and_locked(redis_client, session_id),
+        get_session_translate_tone(redis_client, session_id),
+    )
     locked_set = set(locked_list)
     sorted_kws = sorted(current_keywords, key=lambda k: current_keywords[k], reverse=True)
     pinned_kws = [kw for kw in sorted_kws if kw in locked_set]
@@ -267,6 +297,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
                 context=translated_context[language],
                 prev_translation=pt_trans,
                 keywords=keywords_str,
+                tone=tone,
             )
         except Exception as e:
             log_exception(logger, e, f"Translation error for {language}")

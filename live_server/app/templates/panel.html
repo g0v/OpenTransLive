@@ -102,6 +102,22 @@
           </div>
         </div>
       </div>
+      <!-- Translate Tone -->
+      <div class="toolbar-group">
+        <span class="toolbar-label">Tone</span>
+        <select id="tone-select"
+          class="w-full max-w-36 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none">
+          <option value="formal">Formal</option>
+          <option value="fluent">Fluent</option>
+          <option value="casual">Casual</option>
+          <option value="literal">Literal</option>
+          <option value="custom">Custom...</option>
+        </select>
+        <input id="tone-custom-input" type="text" placeholder="e.g. academic" maxlength="64"
+          class="hidden w-full max-w-36 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none font-mono">
+        <span id="tone-status" class="text-xs text-gray-500 min-w-12">Saved</span>
+      </div>
+
       <!-- Login status -->
       <div class="ml-auto flex items-center gap-2 pl-2">
         {% if email %}
@@ -452,20 +468,70 @@
     }
   }
 
-  async function saveScribeLanguage(language) {
-    const statusEl = document.getElementById('scribe-lang-status')
+  async function saveSessionField(endpoint, body, statusId) {
+    const statusEl = document.getElementById(statusId)
     if (statusEl) statusEl.textContent = 'Saving'
     try {
-      const res = await fetch(`/api/session/${sid}/scribe-language`, {
+      const res = await fetch(`/api/session/${sid}/${endpoint}`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ language })
+        body: JSON.stringify(body)
       })
       if (statusEl) statusEl.textContent = res.ok ? 'Saved' : 'Error'
     } catch (e) {
       if (statusEl) statusEl.textContent = 'Error'
-      console.error('Failed to save scribe language:', e)
+      console.error(`Failed to save ${endpoint}:`, e)
+    }
+  }
+
+  function saveScribeLanguage(language) {
+    return saveSessionField('scribe-language', { language }, 'scribe-lang-status')
+  }
+
+  function saveTranslateTone(tone) {
+    return saveSessionField('translate-tone', { tone }, 'tone-status')
+  }
+
+  const PRESET_TONES = ['formal', 'fluent', 'casual', 'literal']
+
+  async function loadTranslateTone() {
+    try {
+      const res = await fetch(`/api/session/${sid}/translate-tone`, { credentials: 'same-origin' })
+      if (res.ok) {
+        const data = await res.json()
+        const tone = data.tone || 'formal'
+        const sel = document.getElementById('tone-select')
+        const customInput = document.getElementById('tone-custom-input')
+        if (!sel) return
+        if (PRESET_TONES.includes(tone)) {
+          sel.value = tone
+          customInput.classList.add('hidden')
+        } else {
+          sel.value = 'custom'
+          customInput.value = tone
+          customInput.classList.remove('hidden')
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load translate tone:', e)
+    }
+  }
+
+  async function saveTranslateTone(tone) {
+    const statusEl = document.getElementById('tone-status')
+    if (statusEl) statusEl.textContent = 'Saving'
+    try {
+      const res = await fetch(`/api/session/${sid}/translate-tone`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tone })
+      })
+      if (statusEl) statusEl.textContent = res.ok ? 'Saved' : 'Error'
+    } catch (e) {
+      if (statusEl) statusEl.textContent = 'Error'
+      console.error('Failed to save translate tone:', e)
     }
   }
 
@@ -733,8 +799,34 @@
       })
     }
 
+    loadTranslateTone()
     loadLanguages()
     loadKeywords()
+
+    const toneSelect = document.getElementById('tone-select')
+    const toneCustomInput = document.getElementById('tone-custom-input')
+    const toneStatusEl = document.getElementById('tone-status')
+    let toneDebounce = null
+    toneSelect.addEventListener('change', function () {
+      if (this.value === 'custom') {
+        toneCustomInput.classList.remove('hidden')
+        toneCustomInput.focus()
+      } else {
+        toneCustomInput.classList.add('hidden')
+        saveTranslateTone(this.value)
+      }
+    })
+    toneCustomInput.addEventListener('input', function () {
+      clearTimeout(toneDebounce)
+      if (toneStatusEl) toneStatusEl.textContent = 'Saving'
+      toneDebounce = setTimeout(() => saveTranslateTone(this.value.trim()), 800)
+    })
+    toneCustomInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        clearTimeout(toneDebounce)
+        saveTranslateTone(this.value.trim())
+      }
+    })
 
     // Keywords dropdown toggle
     const kwDropdownBtn = document.getElementById('kw-dropdown-btn')

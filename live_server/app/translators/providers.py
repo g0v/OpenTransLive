@@ -25,11 +25,18 @@ _CORRECT_PROMPT = (
     "Context: {keywords}"
 )
 
+_TONE_MAP = {
+    "formal": "formal and professional",
+    "fluent": "natural and fluent",
+    "casual": "casual and conversational",
+    "literal": "literal and word-for-word",
+}
+
 _TRANSLATE_PROMPT = (
-    "Role: Professional diplomatic interpreter.\n"
-    "Task: Rewrite <translate_this> into formal {language}.\n"
+    "Role: Professional interpreter.\n"
+    "Task: Rewrite <translate_this> into {language}. Tone: {tone}.\n"
     "Rules:\n"
-    "1. Accurate and fluent; No styling/summaries.\n"
+    "1. Accurate; No styling/summaries.\n"
     "2. Adapt dates/numbers/nouns/etc. to target language conventions.\n"
     "3. If same language, fix typos only.\n"
     "4. Add punctuation.\n"
@@ -132,7 +139,9 @@ class ChatCompletionTranslator(BaseTranslator):
         context: str,
         prev_translation: str,
         keywords: str,
+        tone: str = "",
     ) -> str:
+        tone_desc = _TONE_MAP.get(tone, tone) if tone else _TONE_MAP["formal"]
         body = {
             **self.translate_params,
             "messages": [
@@ -140,6 +149,7 @@ class ChatCompletionTranslator(BaseTranslator):
                     "role": self.system_role,
                     "content": _TRANSLATE_PROMPT.format(
                         language=language,
+                        tone=tone_desc,
                         keywords=keywords,
                         prev_translation=prev_translation,
                     ),

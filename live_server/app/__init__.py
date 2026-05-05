@@ -853,6 +853,36 @@ async def update_session_scribe_language_endpoint(request: Request, sid: str):
     return {"language": language}
 
 
+@app.get("/api/session/{sid}/translate-tone", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+async def get_session_translate_tone_endpoint(request: Request, sid: str):
+    """Get the translation tone for a session."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _verify_session_admin(request, sid)
+
+    from .translation_service import get_session_translate_tone
+    tone = await get_session_translate_tone(redis_client, sid)
+    return {"tone": tone}
+
+
+@app.post("/api/session/{sid}/translate-tone", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+async def update_session_translate_tone_endpoint(request: Request, sid: str):
+    """Set the translation tone for a session."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _verify_session_admin(request, sid)
+
+    body = await request.json()
+    tone = body.get("tone", "")
+    if not isinstance(tone, str):
+        raise HTTPException(status_code=400, detail="tone must be a string")
+    tone = tone.strip()
+    if tone and not re.fullmatch(r'[\w\s\-]{1,64}', tone, re.UNICODE):
+        raise HTTPException(status_code=400, detail="Tone must be 1–64 word characters, spaces, or hyphens")
+
+    from .translation_service import save_session_translate_tone
+    await save_session_translate_tone(redis_client, sid, tone)
+    return {"tone": tone}
+
+
 @app.get("/api/session/{sid}/audio-usage", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def get_session_audio_usage_endpoint(request: Request, sid: str):
     """Return audio buffer usage stats for the active scribe session."""
