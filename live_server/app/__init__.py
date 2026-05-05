@@ -15,14 +15,14 @@ import weakref
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 import dotenv
 import redis.asyncio as redis
 import socketio
 from cachetools import TTLCache
 from fastapi import FastAPI, Request, HTTPException, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi_limiter import FastAPILimiter
@@ -401,6 +401,101 @@ youtube_data_cache: TTLCache = TTLCache(maxsize=256, ttl=_YOUTUBE_CACHE_TTL)
 redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
 TRANSCRIPTION_TTL = 3600
+SSE_RETRY_MS = 3000
+SSE_HEARTBEAT_SECONDS = 15
+
+
+def _transcription_room_channel(sid: str) -> str:
+    return f"room:{sid}"
+
+
+def _transcription_event_id(payload: dict) -> str:
+    return str(payload.get("start_time", ""))
+
+
+def _format_sse(payload: dict, *, event: str = "transcription_update") -> str:
+    event_id = _transcription_event_id(payload)
+    data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    lines = [f"event: {event}", f"data: {data}"]
+    if event_id:
+        lines.insert(0, f"id: {event_id}")
+    return "\n".join(lines) + "\n\n"
+
+
+async def _publish_transcription_update(sid: str, payload: dict) -> None:
+    try:
+        await redis_client.publish(
+            _transcription_room_channel(sid),
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        )
+    except Exception as e:
+        log_exception(logger, e, f"Redis publish error for {_hash_token(sid)}")
+
+
+async def _iter_replay_transcription_events(sid: str, last_event_id: float) -> AsyncIterator[dict]:
+    zset_key = f"transcription:{sid}:list"
+    try:
+        raw_segments = await redis_client.zrangebyscore(zset_key, f"({last_event_id}", "+inf")
+    except Exception as e:
+        log_exception(logger, e, f"Redis replay error for {_hash_token(sid)}")
+        return
+
+    for raw in raw_segments:
+        try:
+            yield json.loads(raw)
+        except (TypeError, ValueError):
+            logger.warning("Skipping malformed replay segment sid_hash=%s", _hash_token(sid))
+
+
+async def _session_sse_stream(request: Request, sid: str, last_event_id: float | None) -> AsyncIterator[str]:
+    channel = _transcription_room_channel(sid)
+    pubsub = redis_client.pubsub()
+    max_sent_id = last_event_id
+    try:
+        await pubsub.subscribe(channel)
+        yield f"retry: {SSE_RETRY_MS}\n\n"
+
+        if last_event_id is not None:
+            async for payload in _iter_replay_transcription_events(sid, last_event_id):
+                if await request.is_disconnected():
+                    return
+                event_id_raw = payload.get("start_time")
+                if isinstance(event_id_raw, (int, float)) and not isinstance(event_id_raw, bool):
+                    max_sent_id = max(max_sent_id or event_id_raw, float(event_id_raw))
+                yield _format_sse(payload)
+
+        while True:
+            if await request.is_disconnected():
+                return
+
+            message = await pubsub.get_message(
+                ignore_subscribe_messages=True,
+                timeout=SSE_HEARTBEAT_SECONDS,
+            )
+            if message is None:
+                yield ": heartbeat\n\n"
+                continue
+
+            try:
+                payload = json.loads(message["data"])
+            except (TypeError, ValueError):
+                logger.warning("Skipping malformed pubsub event sid_hash=%s", _hash_token(sid))
+                continue
+
+            event_id_raw = payload.get("start_time")
+            if isinstance(event_id_raw, (int, float)) and not isinstance(event_id_raw, bool):
+                event_id = float(event_id_raw)
+                if max_sent_id is not None and event_id <= max_sent_id:
+                    continue
+                max_sent_id = event_id
+
+            yield _format_sse(payload)
+    finally:
+        try:
+            await pubsub.unsubscribe(channel)
+            await pubsub.close()
+        except Exception as e:
+            log_exception(logger, e, f"Redis pubsub close error for {_hash_token(sid)}")
 
 def validate_query_param(value: str, param_name: str = "parameter") -> tuple[bool, str]:
     """Validate user input to prevent NoSQL injection. Returns (is_valid, error_message)."""
@@ -1283,6 +1378,27 @@ async def download_srt(request: Request, id: str, lang: str):
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
+@app.get("/api/session/{sid}/stream")
+async def session_stream(request: Request, sid: str):
+    sid = sanitize_query_param(sid, "session ID")
+    last_event_id_header = request.headers.get("last-event-id")
+    last_event_id = None
+    if last_event_id_header:
+        try:
+            last_event_id = float(last_event_id_header)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Last-Event-ID")
+
+    return StreamingResponse(
+        _session_sse_stream(request, sid, last_event_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 @app.get("/yt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def yt(request: Request, id: str):
     # Sanitize id parameter to prevent NoSQL injection
@@ -1569,6 +1685,7 @@ async def _process_transcription_update(session_id, sync_data):
             proc_elapsed_ms,
         )
         await sio.emit('transcription_update', p, room=session_id)
+        await _publish_transcription_update(session_id, p)
 
     if is_partial:
         # Cancel any pending broadcast for this session and schedule a fresh one
