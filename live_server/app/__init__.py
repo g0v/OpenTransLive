@@ -720,9 +720,12 @@ async def verify_otp_endpoint(request: Request):
     if not await verify_otp(redis_client, email, otp):
         raise HTTPException(status_code=401, detail="Invalid or expired code")
 
-    # Reuse existing user_uid from session or generate a new one
+    # Reuse existing user_uid from session or generate a new one. The DB will
+    # only persist this on first creation; subsequent logins keep the existing
+    # value so all devices for the same email share one canonical user_uid.
     user_uid = request.session.get("user_uid") or str(uuid.uuid4())
-    await get_or_create_user(users_collection, email, user_uid)
+    user_doc = await get_or_create_user(users_collection, email, user_uid)
+    user_uid = user_doc.get("user_uid", user_uid)
 
     request.session["email"] = email.lower()
     request.session["user_uid"] = user_uid

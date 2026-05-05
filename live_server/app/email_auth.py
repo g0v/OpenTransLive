@@ -188,15 +188,18 @@ async def send_otp_email(email: str, otp: str, email_settings: dict) -> None:
 
 
 async def get_or_create_user(users_collection, email: str, user_uid: str) -> dict:
-    """Upsert a user by email. Always updates user_uid on login."""
+    """Upsert a user by email. user_uid is fixed on first login and preserved
+    across subsequent logins so multiple devices on the same email share one
+    canonical id — keeps legacy rooms (admin_uid only, no admin_email) reachable."""
     now = datetime.now(timezone.utc)
     email = email.lower().strip()
     result = await users_collection.find_one_and_update(
         {"email": email},
         {
-            "$set": {"user_uid": user_uid, "last_login_at": now},
+            "$set": {"last_login_at": now},
             "$setOnInsert": {
                 "email": email,
+                "user_uid": user_uid,
                 "realtime_enabled": False,
                 "created_at": now,
             },
