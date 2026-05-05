@@ -11,8 +11,12 @@
             <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight mb-6 drop-shadow-md">
                 OpenTransLive
             </h1>
-            <p class="text-xl md:text-2xl font-light max-w-3xl mx-auto mb-10 text-indigo-100 drop-shadow-sm">
-                An open-source, real-time voice transcription and translation system.
+            <p class="text-xl md:text-2xl font-semibold max-w-3xl mx-auto mb-4 text-white drop-shadow-sm">
+                An open-source, broadcast-style live translation framework — built for event organizers.
+            </p>
+            <p class="text-base md:text-lg font-light max-w-3xl mx-auto mb-10 text-indigo-100 drop-shadow-sm">
+                One speaker transcribes and translates in real time; unlimited audience members follow along in their
+                preferred language — on the big screen, on their phones, or as YouTube live subtitles.
             </p>
             <div class="flex items-center justify-center gap-4 flex-wrap">
                 <a href="#create-session"
@@ -34,8 +38,23 @@
         </div>
     </div>
 
-    <!-- Features Grid -->
+    <!-- Built for Organizers -->
     <div class="container mx-auto px-6 py-20">
+        <div class="max-w-4xl mx-auto text-center">
+            <span class="inline-block text-xs font-bold uppercase tracking-widest text-indigo-600 mb-3">For Event
+                Organizers</span>
+            <h2 class="text-3xl md:text-4xl font-bold mb-6 text-gray-800">A broadcast model — not a meeting tool.</h2>
+            <p class="text-gray-600 text-lg leading-relaxed">
+                OpenTransLive is a framework for organizers running conferences, hackathons, public hearings, and
+                livestreamed talks. One transcription source feeds an entire audience: speakers and their captioning
+                team produce the stream, viewers consume it in any supported language. There are no per-attendee seats,
+                no audience login required, and no caps on how many people can watch.
+            </p>
+        </div>
+    </div>
+
+    <!-- Features Grid -->
+    <div class="container mx-auto px-6 pb-20">
         <h2 class="text-3xl font-bold text-center mb-16 text-gray-800">Key Features</h2>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-10">
             <!-- Feature 1 -->
@@ -44,9 +63,9 @@
                 <div class="text-indigo-500 mb-4">
                     <iconify-icon icon="mdi:microphone" width="48" height="48"></iconify-icon>
                 </div>
-                <h3 class="text-xl font-bold mb-3">Real-time Transcription</h3>
-                <p class="text-gray-600">Instant speech-to-text using state-of-the-art models like OpenAI Whisper,
-                    Google Scrub, and Elevenlabs Scribe.</p>
+                <h3 class="text-xl font-bold mb-3">One-to-many broadcast</h3>
+                <p class="text-gray-600">A single speaker or captioning team feeds the session; unlimited viewers tune
+                    in via the web, no account needed.</p>
             </div>
             <!-- Feature 2 -->
             <div
@@ -54,16 +73,18 @@
                 <div class="text-purple-500 mb-4">
                     <iconify-icon icon="mdi:translate" width="48" height="48"></iconify-icon>
                 </div>
-                <h3 class="text-xl font-bold mb-3">Multi-language Translation</h3>
-                <p class="text-gray-600">Context-aware translation into multiple languages powered by AI.</p>
+                <h3 class="text-xl font-bold mb-3">Multi-language, multi-engine</h3>
+                <p class="text-gray-600">Pluggable transcription (Whisper, Groq, ElevenLabs Scribe, Google STT) and
+                    context-aware translation into multiple languages in parallel.</p>
             </div>
             <!-- Feature 3 -->
             <div class="bg-white rounded-xl shadow-xl p-8 transition duration-300 border-t-4 border-pink-500 transform">
                 <div class="text-pink-500 mb-4">
                     <iconify-icon icon="mdi:video" width="48" height="48"></iconify-icon>
                 </div>
-                <h3 class="text-xl font-bold mb-3">YouTube Integration</h3>
-                <p class="text-gray-600">Seamlessly sync subtitles with YouTube videos and live streams.</p>
+                <h3 class="text-xl font-bold mb-3">Stage screens & YouTube subtitles</h3>
+                <p class="text-gray-600">Project captions on the venue screen, share a QR code for phone viewing, or
+                    overlay live subtitles on a YouTube stream.</p>
             </div>
         </div>
     </div>

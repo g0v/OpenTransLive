@@ -1,6 +1,10 @@
-# OpenTransLive 開源即時語音翻譯系統
+# OpenTransLive — 為活動舉辦方而設計的開源廣播式即時翻譯框架
 
-一個完整的即時語音轉錄和翻譯系統，具備網頁介面和 YouTube 同步支援。
+OpenTransLive 是一套**為活動舉辦方（event organizers）打造的廣播式（one-to-many）即時翻譯框架**，而非一般的會議協作工具。完整開源（GNU AGPL v3.0），具備網頁介面與 YouTube 同步支援，可自行部署、自由修改。
+
+設計上假設活動現場有「一位講者 / 一組字幕團隊」作為轉錄來源，台下或線上的「無上限觀眾」則以自己偏好的語言收聽：在大螢幕、手機網頁、或 YouTube 直播字幕上同步看到即時翻譯結果。
+
+典型使用情境包含：研討會、黑客松、公聽會、社群 meetup、線上直播演講等需要把單一語音來源即時翻譯給跨語言聽眾的場合。觀眾端不需要註冊、不需要登入，也沒有人數上限——只有負責產出字幕的講者／字幕員需要連線送出音訊。
 
 ![螢幕擷取畫面_15-9-2025_1231_transcribe g0v tw](https://github.com/user-attachments/assets/9a7ff25a-557d-43b7-8071-e7a6ca176c5f)
 ![螢幕擷取畫面_15-9-2025_115957_transcribe g0v tw](https://github.com/user-attachments/assets/6e36b33b-9d41-4734-a833-4a84fa3943cc)
