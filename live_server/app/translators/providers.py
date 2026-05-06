@@ -141,7 +141,7 @@ class ChatCompletionTranslator(BaseTranslator):
         keywords: str,
         tone: str = "",
     ) -> str:
-        tone_desc = _TONE_MAP.get(tone, tone) if tone else _TONE_MAP["formal"]
+        tone_desc = _TONE_MAP.get(tone, tone) if tone else _TONE_MAP["fluent"]
         body = {
             **self.translate_params,
             "messages": [

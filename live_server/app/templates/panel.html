@@ -130,8 +130,8 @@
         <span class="toolbar-label">Tone</span>
         <select id="tone-select"
           class="w-full max-w-36 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none">
-          <option value="formal">Formal</option>
           <option value="fluent">Fluent</option>
+          <option value="formal">Formal</option>
           <option value="casual">Casual</option>
           <option value="literal">Literal</option>
           <option value="custom">Custom...</option>
@@ -609,7 +609,7 @@
           selectedLanguages = selectedLanguages.filter(c => c !== code)
         }
         updateDropdownLabel()
-        saveLanguages()
+        debouncedSaveLanguages()
       })
       list.appendChild(row)
     })
@@ -629,18 +629,41 @@
     }
   }
 
+  // Auto-save pattern: debounce collapses rapid toggles into one POST; the
+  // in-flight + dirty-flag pair guarantees the final client state lands on
+  // the server in order, even if a save outlasts the debounce window.
+  const SAVE_DEBOUNCE_MS = 1000
+  let langSaveTimer = null
+  let langSaveInFlight = false
+  let langSaveDirty = false
+
+  function debouncedSaveLanguages() {
+    document.getElementById('language-status').textContent = 'Saving...'
+    clearTimeout(langSaveTimer)
+    langSaveTimer = setTimeout(saveLanguages, SAVE_DEBOUNCE_MS)
+  }
+
   async function saveLanguages() {
+    if (langSaveInFlight) {
+      langSaveDirty = true
+      return
+    }
     const statusEl = document.getElementById('language-status')
     if (!selectedLanguages.length) {
       statusEl.textContent = 'Saving'
+      langSaveDirty = false
       return
     }
+    langSaveInFlight = true
+    langSaveDirty = false
+    statusEl.textContent = 'Saving'
+    const snapshot = selectedLanguages.slice()
     try {
       const res = await fetch(`/api/session/${sid}/languages`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ languages: selectedLanguages })
+        body: JSON.stringify({ languages: snapshot })
       })
       if (res.ok) {
         statusEl.textContent = 'Saved'
@@ -651,6 +674,9 @@
     } catch (e) {
       statusEl.textContent = 'Error'
       console.error('Failed to save languages:', e)
+    } finally {
+      langSaveInFlight = false
+      if (langSaveDirty) saveLanguages()
     }
   }
 
@@ -777,7 +803,7 @@
     statusEl.textContent = 'Saving...'
     keywordSavePending = true
     clearTimeout(keywordSaveTimer)
-    keywordSaveTimer = setTimeout(saveKeywords, 1000)
+    keywordSaveTimer = setTimeout(saveKeywords, SAVE_DEBOUNCE_MS)
   }
 
   async function saveKeywords() {
