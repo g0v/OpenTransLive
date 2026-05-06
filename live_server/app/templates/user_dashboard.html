@@ -26,7 +26,7 @@
       <div>
         <h2 class="text-lg font-semibold text-gray-100">Session Rooms</h2>
         <p class="mt-1 text-sm text-gray-500">
-          Rooms where you have been the panel admin. Go to
+          Rooms you own or co-own. Go to
           <a href="/" class="underline text-gray-400 hover:text-gray-200">the homepage</a>
           to create or join a new session.
         </p>
@@ -64,7 +64,12 @@
         <tbody>
           {% for room in rooms %}
           <tr class="border-b border-gray-700 last:border-0">
-            <td class="px-4 py-3 font-mono text-xs text-gray-200 break-all">{{ room.sid }}</td>
+            <td class="px-4 py-3 font-mono text-xs text-gray-200 break-all">
+              {{ room.sid }}
+              {% if room.is_co_owner %}
+              <span class="ml-2 inline-block px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 text-[10px] font-sans uppercase tracking-wider align-middle" title="You are a co-owner of this session">Co-owner</span>
+              {% endif %}
+            </td>
             <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
               {% if room.created_at %}
               {{ room.created_at[:19].replace('T', ' ') }} UTC
@@ -96,10 +101,12 @@
                   class="px-3 py-1 rounded text-xs font-semibold bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors">
                   Edit
                 </a>
+                {% if not room.is_co_owner %}
                 <button onclick="deleteSession('{{ room.sid }}', this)"
                   class="px-3 py-1 rounded text-xs font-semibold bg-red-900 hover:bg-red-800 text-red-200 transition-colors">
                   Delete
                 </button>
+                {% endif %}
               </div>
             </td>
           </tr>

@@ -141,6 +141,31 @@
         <span id="tone-status" class="text-xs text-gray-500 min-w-12">Saved</span>
       </div>
 
+      <!-- Co-owners panel (primary owner only) -->
+      {% if is_primary_owner %}
+      <div class="toolbar-group">
+        <span class="toolbar-label">Co-owners</span>
+        <button id="co-dropdown-btn" type="button" class="dropdown-btn min-w-20 max-w-40">
+          <span id="co-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
+          <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
+        </button>
+        <span id="co-status" class="text-xs text-gray-500 min-w-12"></span>
+        <!-- Co-owners dropdown panel -->
+        <div id="co-dropdown-panel" class="hidden dropdown-panel min-w-80" style="top: calc(100% + 4px);">
+          <div class="px-2 py-1 text-[11px] text-gray-500 leading-snug">
+            Co-owners can join the panel and edit session settings. Only the primary owner can add or remove co-owners.
+          </div>
+          <div id="co-list" class="dropdown-list"></div>
+          <div class="dropdown-add-row">
+            <input id="co-email-input" type="email" placeholder="co-owner@example.com" class="panel-input flex-1">
+            <button id="co-add-btn" type="button" class="panel-add-btn">
+              Add
+            </button>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
       <!-- Login status -->
       <div class="ml-auto flex items-center gap-2 pl-2">
         {% if email %}
@@ -339,7 +364,18 @@
 <script>
   const sid = "{{ sid }}"
   const sessionId = "{{ sid }}"
-  const user_secret_key = "{{ user_secret_key }}"
+  let user_secret_key = "{{ user_secret_key }}"
+  const isPrimaryOwner = {{ is_primary_owner | tojson }}
+
+  function updateUserSecretKey(secretKey) {
+    if (!secretKey) return
+    user_secret_key = secretKey
+    const input = document.getElementById('user-secret-key')
+    if (input) {
+      input.value = secretKey
+      input.title = secretKey
+    }
+  }
 
   // ── Mic toggle ───────────────────────────────────────────────────────────
 
@@ -412,6 +448,7 @@
       clearInterval(heartbeatInterval)
     }
     clearInterval(keywordSyncInterval)
+    stopSettingsSync()
     if (user_secret_key) {
       // Detect page refresh: performance.navigation.type 1 = reload
       // Also covers bfcache restores. We set a flag so the reload can
@@ -918,6 +955,152 @@
     }
   }
 
+  // ── Co-owners panel (primary owner only) ────────────────────────────────
+  let coOwners = []
+
+  function updateCoOwnersLabel() {
+    const label = document.getElementById('co-dropdown-label')
+    if (!label) return
+    const total = coOwners.length
+    label.textContent = !total ? 'None' : total + (total === 1 ? ' email' : ' emails')
+  }
+
+  function renderCoOwnersList() {
+    const list = document.getElementById('co-list')
+    if (!list) return
+    list.innerHTML = ''
+    if (!coOwners.length) {
+      const empty = document.createElement('div')
+      empty.className = 'text-xs text-gray-500 px-2 py-1'
+      empty.textContent = 'No co-owners yet.'
+      list.appendChild(empty)
+      return
+    }
+    coOwners.forEach(function (e) {
+      const row = document.createElement('div')
+      row.className = 'flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300'
+      row.innerHTML = `
+        <span class="flex-1 font-mono text-xs truncate text-gray-300">${escapeHtml(e)}</span>
+        <button class="co-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove co-owner" data-email="${escapeHtml(e)}">
+          <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
+        </button>
+      `
+      row.querySelector('.co-remove-btn').addEventListener('click', function () {
+        removeCoOwner(e)
+      })
+      list.appendChild(row)
+    })
+  }
+
+  async function coOwnerMutation(label, fetchOpts) {
+    const statusEl = document.getElementById('co-status')
+    if (statusEl) statusEl.textContent = 'Saving'
+    try {
+      const res = await fetch(fetchOpts.url, fetchOpts.init)
+      if (res.ok) {
+        const data = await res.json()
+        coOwners = data.co_owners || []
+        if (data.secret_key) updateUserSecretKey(data.secret_key)
+        updateCoOwnersLabel()
+        renderCoOwnersList()
+        updateSettingsSyncForCoOwnerCount()
+        if (statusEl) statusEl.textContent = 'Saved'
+      } else {
+        const err = await res.json().catch(() => ({}))
+        if (statusEl) statusEl.textContent = err.detail || 'Error'
+      }
+    } catch (e) {
+      if (statusEl) statusEl.textContent = 'Error'
+      console.error(`Failed to ${label}:`, e)
+    }
+  }
+
+  async function loadCoOwners() {
+    if (!isPrimaryOwner) return
+    try {
+      const res = await fetch(`/api/session/${sid}/co-owners`, { credentials: 'same-origin' })
+      if (!res.ok) return
+      const data = await res.json()
+      coOwners = data.co_owners || []
+      updateCoOwnersLabel()
+      renderCoOwnersList()
+      updateSettingsSyncForCoOwnerCount()
+    } catch (e) {
+      console.error('Failed to load co-owners:', e)
+    }
+  }
+
+  function addCoOwner(email) {
+    return coOwnerMutation('add co-owner', {
+      url: `/api/session/${sid}/co-owners`,
+      init: {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      },
+    })
+  }
+
+  function removeCoOwner(email) {
+    return coOwnerMutation('remove co-owner', {
+      url: `/api/session/${sid}/co-owners/${encodeURIComponent(email)}`,
+      init: { method: 'DELETE', credentials: 'same-origin' },
+    })
+  }
+
+  // ── Settings sync polling ────────────────────────────────────────────────
+  // Co-owners share session settings via the same Redis-backed APIs. This
+  // poll re-fetches the simple settings every few seconds so changes made
+  // by the other owner appear locally without a manual refresh.
+  // Skip when a save is in flight or a dropdown is open to avoid clobbering
+  // local edits mid-interaction. Solo sessions skip polling entirely — the
+  // primary owner only starts the timer once a co-owner exists.
+  function isAnySettingsDropdownOpen() {
+    const ids = ['lang-dropdown-panel', 'kw-dropdown-panel', 'td-dropdown-panel', 'co-dropdown-panel']
+    return ids.some(id => {
+      const el = document.getElementById(id)
+      return el && !el.classList.contains('hidden')
+    })
+  }
+
+  async function syncSettings() {
+    if (isAnySettingsDropdownOpen()) return
+    const tasks = []
+    if (!langSaveInFlight && !langSaveTimer) tasks.push(loadLanguages())
+    if (!textDictSaveTimer) tasks.push(loadTextDictionary())
+    // scribe-language and tone are simple selects/inputs; skip if focused so
+    // we don't clobber a user mid-edit.
+    const scribeLangEl = document.getElementById('scribe-lang-select')
+    if (scribeLangEl && document.activeElement !== scribeLangEl) tasks.push(loadScribeLanguage())
+    const toneCustomInput = document.getElementById('tone-custom-input')
+    if (toneCustomInput && document.activeElement !== toneCustomInput) tasks.push(loadTranslateTone())
+    await Promise.allSettled(tasks)
+  }
+
+  let settingsSyncInterval = null
+
+  function startSettingsSync() {
+    if (settingsSyncInterval) return
+    settingsSyncInterval = setInterval(syncSettings, 5000)
+  }
+
+  function stopSettingsSync() {
+    if (!settingsSyncInterval) return
+    clearInterval(settingsSyncInterval)
+    settingsSyncInterval = null
+  }
+
+  function updateSettingsSyncForCoOwnerCount() {
+    if (!isPrimaryOwner) return
+    if (coOwners.length > 0) startSettingsSync()
+    else stopSettingsSync()
+  }
+
+  // Co-owners always poll (the primary is their source of truth); the
+  // primary's timer is started lazily once loadCoOwners() finds co-owners.
+  if (!isPrimaryOwner) startSettingsSync()
+
   // Flip dropdown alignment when the default right-0 anchor would clip the
   // viewport's left edge (happens for triggers near the left of the toolbar
   // or when the toolbar wraps onto a new line).
@@ -958,6 +1141,34 @@
     loadLanguages()
     loadKeywords()
     loadTextDictionary()
+    loadCoOwners()
+
+    // Co-owners dropdown (primary owner only — element is absent for co-owners)
+    const coDropdownBtn = document.getElementById('co-dropdown-btn')
+    const coDropdownPanel = document.getElementById('co-dropdown-panel')
+    if (coDropdownBtn && coDropdownPanel) {
+      coDropdownBtn.addEventListener('click', function (e) {
+        e.stopPropagation()
+        coDropdownPanel.classList.toggle('hidden')
+        if (!coDropdownPanel.classList.contains('hidden')) positionDropdown(coDropdownPanel)
+      })
+      document.addEventListener('click', function (e) {
+        if (!coDropdownPanel.contains(e.target) && e.target !== coDropdownBtn && !coDropdownBtn.contains(e.target)) {
+          coDropdownPanel.classList.add('hidden')
+        }
+      })
+      const coAddBtn = document.getElementById('co-add-btn')
+      const coEmailInput = document.getElementById('co-email-input')
+      coAddBtn.addEventListener('click', function () {
+        const value = (coEmailInput.value || '').trim()
+        if (!value) return
+        addCoOwner(value)
+        coEmailInput.value = ''
+      })
+      coEmailInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') coAddBtn.click()
+      })
+    }
 
     const toneSelect = document.getElementById('tone-select')
     const toneCustomInput = document.getElementById('tone-custom-input')

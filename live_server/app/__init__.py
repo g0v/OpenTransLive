@@ -623,12 +623,23 @@ async def _check_socket_already_verified(socket_id, session, *, silent: bool = F
 async def _verify_socket_credentials(socket_id, session, secret_key, session_id) -> bool:
     """Verify an unverified socket against the DB, upgrading the session on success.
 
-    Short-circuits when session['verified'] is already set. Emits an error on failure.
+    Re-checks verified sockets against the current room secret so rotating the
+    room key immediately revokes stale co-owner sockets for sync events.
     Used by handlers (e.g. `sync`) that can receive `secret_key` in the event payload
     and should attempt to verify on the fly rather than require a prior `join_session`.
     """
     if session.get('verified'):
-        return True
+        cached_secret = session.get('secret_key') or secret_key
+        if cached_secret and session_id and await verify_socket_auth(socket_id, session_id, cached_secret):
+            return True
+        if secret_key and secret_key != cached_secret and session_id and await verify_socket_auth(socket_id, session_id, secret_key):
+            session['secret_key'] = secret_key
+            await sio.save_session(socket_id, session)
+            return True
+        session['verified'] = False
+        await sio.save_session(socket_id, session)
+        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        return False
     if not secret_key:
         await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
         return False
@@ -697,13 +708,38 @@ async def _get_room_owner_email(room: dict) -> str | None:
     return email
 
 
+def _get_room_co_owner_emails(room: dict) -> list[str]:
+    """Return the lowercased co-owner email list for a room (empty if unset)."""
+    raw = room.get("co_owner_emails") or []
+    return [e.lower() for e in raw if isinstance(e, str) and e]
+
+
 async def _require_room_owner(request: Request, room: dict) -> None:
-    """Raise 403 if the room is owned and the current user is not the owner."""
+    """Raise 403 if the room is owned and the current user is not the owner or a co-owner."""
     owner_email = await _get_room_owner_email(room)
-    if owner_email:
-        current = _get_session_email(request)
-        if not current or current.lower() != owner_email.lower():
-            raise HTTPException(status_code=403, detail="This session is owned by another user.")
+    if not owner_email:
+        return
+    current = _get_session_email(request)
+    if not current:
+        raise HTTPException(status_code=403, detail="This session is owned by another user.")
+    current_lc = current.lower()
+    if current_lc == owner_email.lower():
+        return
+    if current_lc in _get_room_co_owner_emails(room):
+        return
+    raise HTTPException(status_code=403, detail="This session is owned by another user.")
+
+
+async def _require_room_primary_owner(request: Request, room: dict) -> str:
+    """Strict owner gate: only the primary owner (admin_email) may proceed.
+    Co-owners are not allowed. Returns the owner email."""
+    owner_email = await _get_room_owner_email(room)
+    if not owner_email:
+        raise HTTPException(status_code=403, detail="This session has no owner.")
+    current = _get_session_email(request)
+    if not current or current.lower() != owner_email.lower():
+        raise HTTPException(status_code=403, detail="Only the session owner can perform this action.")
+    return owner_email
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -739,18 +775,23 @@ async def user_dashboard(request: Request):
     email, user_uid = _require_logged_in(request)
     if not email or not user_uid:
         return RedirectResponse(url="/login", status_code=302)
+    email_lc = email.lower()
     rooms = await rooms_collection.find(
-        {"admin_email": email.lower()},
-        {"_id": 0, "sid": 1, "created_at": 1, "admin_last_heartbeat": 1,
+        {"$or": [
+            {"admin_email": email_lc},
+            {"co_owner_emails": email_lc},
+        ]},
+        {"_id": 0, "sid": 1, "admin_email": 1, "created_at": 1, "admin_last_heartbeat": 1,
          "audio_bytes": 1, "audio_duration_secs": 1}
     ).sort("created_at", -1).to_list(length=200)
+    max_audio_secs = max((r.get("audio_duration_secs") or 0 for r in rooms), default=0)
     for r in rooms:
         if isinstance(r.get("created_at"), datetime):
             r["created_at"] = r["created_at"].isoformat()
         if isinstance(r.get("admin_last_heartbeat"), datetime):
             r["admin_last_heartbeat"] = r["admin_last_heartbeat"].isoformat()
-    max_audio_secs = max((r.get("audio_duration_secs") or 0 for r in rooms), default=0)
-    for r in rooms:
+        owner = r.get("admin_email")
+        r["is_co_owner"] = bool(owner and owner.lower() != email_lc)
         dur = r.get("audio_duration_secs") or 0
         r["audio_pct"] = min(int(dur / max_audio_secs * 100), 100) if max_audio_secs > 0 else 0
     is_realtime_enabled = await is_realtime_authorized(request.session)
@@ -1021,6 +1062,117 @@ async def update_session_translate_tone_endpoint(request: Request, sid: str):
     return {"tone": tone}
 
 
+_MAX_CO_OWNERS = 20
+
+
+@app.get("/api/session/{sid}/co-owners", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+async def get_session_co_owners_endpoint(request: Request, sid: str):
+    """List co-owners for a session. Visible to the primary owner and any co-owner."""
+    sid = sanitize_query_param(sid, "session ID")
+    email, room = await _require_session_owner(request, sid)
+    owner_email = await _get_room_owner_email(room)
+    return {
+        "owner": owner_email,
+        "co_owners": _get_room_co_owner_emails(room),
+        "is_primary_owner": bool(owner_email and owner_email.lower() == email.lower()),
+    }
+
+
+@app.post("/api/session/{sid}/co-owners", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+async def add_session_co_owner_endpoint(request: Request, sid: str):
+    """Add a co-owner email to the session. Primary owner only."""
+    sid = sanitize_query_param(sid, "session ID")
+    _, room = await _require_session_primary_owner(request, sid)
+
+    body = await request.json()
+    raw_email = body.get("email", "")
+    if not isinstance(raw_email, str):
+        raise HTTPException(status_code=400, detail="email must be a string")
+    new_email = raw_email.strip().lower()
+    if not validate_email_format(new_email):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+
+    owner_email = await _get_room_owner_email(room)
+    if owner_email and new_email == owner_email.lower():
+        raise HTTPException(status_code=400, detail="This email is already the primary owner")
+
+    existing = _get_room_co_owner_emails(room)
+    if new_email in existing:
+        return {"co_owners": existing}
+    if len(existing) >= _MAX_CO_OWNERS:
+        raise HTTPException(status_code=400, detail=f"Too many co-owners (max {_MAX_CO_OWNERS})")
+
+    from pymongo import ReturnDocument
+    updated_room = await rooms_collection.find_one_and_update(
+        {
+            "sid": sid,
+            "co_owner_emails": {"$ne": new_email},
+            "$expr": {"$lt": [{"$size": {"$ifNull": ["$co_owner_emails", []]}}, _MAX_CO_OWNERS]},
+        },
+        {
+            "$addToSet": {"co_owner_emails": new_email},
+            "$set": {"updated_at": datetime.now(timezone.utc)},
+        },
+        projection={"co_owner_emails": 1},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated_room:
+        # Filter rejected the write: either the room was deleted, the cap was
+        # hit by a concurrent add, or someone else already added this email.
+        # Re-read to disambiguate so the message reflects the actual cause.
+        latest = await rooms_collection.find_one({"sid": sid}, {"co_owner_emails": 1})
+        if latest is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        latest_emails = _get_room_co_owner_emails(latest)
+        if new_email in latest_emails:
+            return {"co_owners": latest_emails}
+        if len(latest_emails) >= _MAX_CO_OWNERS:
+            raise HTTPException(status_code=400, detail=f"Too many co-owners (max {_MAX_CO_OWNERS})")
+        raise HTTPException(status_code=409, detail="Failed to add co-owner; please retry")
+    return {"co_owners": _get_room_co_owner_emails(updated_room)}
+
+
+@app.delete("/api/session/{sid}/co-owners/{email}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+async def remove_session_co_owner_endpoint(request: Request, sid: str, email: str):
+    """Remove a co-owner email from the session. Primary owner only."""
+    sid = sanitize_query_param(sid, "session ID")
+    _, room = await _require_session_primary_owner(request, sid)
+
+    target = email.strip().lower()
+    if not validate_email_format(target):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+
+    if target not in _get_room_co_owner_emails(room):
+        raise HTTPException(status_code=404, detail="Co-owner not found")
+
+    now = datetime.now(timezone.utc)
+    set_fields: dict[str, Any] = {"updated_at": now}
+    rotated_secret = None
+    if room.get("secret_key"):
+        rotated_secret = str(uuid.uuid4())
+        set_fields.update({
+            "secret_key": rotated_secret,
+            "admin_uid": request.session.get("user_uid"),
+            "admin_last_heartbeat": now,
+        })
+        request.session["secret_key"] = rotated_secret
+
+    from pymongo import ReturnDocument
+    updated_room = await rooms_collection.find_one_and_update(
+        {"sid": sid, "co_owner_emails": target},
+        {"$pull": {"co_owner_emails": target}, "$set": set_fields},
+        projection={"co_owner_emails": 1},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated_room:
+        raise HTTPException(status_code=404, detail="Co-owner not found")
+
+    response = {"co_owners": _get_room_co_owner_emails(updated_room)}
+    if rotated_secret:
+        response["secret_key"] = rotated_secret
+    return response
+
+
 @app.get("/api/session/{sid}/audio-usage", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def get_session_audio_usage_endpoint(request: Request, sid: str):
     """Return audio buffer usage stats for the active scribe session."""
@@ -1034,7 +1186,8 @@ async def get_session_audio_usage_endpoint(request: Request, sid: str):
 
 
 async def _require_session_owner(request: Request, sid: str) -> tuple[str, dict]:
-    """Owner gate for editor endpoints. Returns (email, room) or raises."""
+    """Owner gate for editor endpoints. Allows the primary owner or any co-owner.
+    Returns (email, room) or raises."""
     email, _ = _require_logged_in(request)
     if not email:
         raise HTTPException(status_code=401, detail="Not logged in")
@@ -1042,8 +1195,20 @@ async def _require_session_owner(request: Request, sid: str) -> tuple[str, dict]
     if not room:
         raise HTTPException(status_code=404, detail="Session not found")
     owner_email = await _get_room_owner_email(room)
-    if not owner_email or owner_email.lower() != email.lower():
+    email_lc = email.lower()
+    is_owner = bool(owner_email and owner_email.lower() == email_lc)
+    is_co_owner = email_lc in _get_room_co_owner_emails(room)
+    if not is_owner and not is_co_owner:
         raise HTTPException(status_code=403, detail="You do not own this session")
+    return email, room
+
+
+async def _require_session_primary_owner(request: Request, sid: str) -> tuple[str, dict]:
+    """Strict gate that allows only the primary owner. Returns (email, room)."""
+    email, room = await _require_session_owner(request, sid)
+    owner_email = await _get_room_owner_email(room)
+    if not owner_email or owner_email.lower() != email.lower():
+        raise HTTPException(status_code=403, detail="Only the session owner can perform this action.")
     return email, room
 
 
@@ -1373,7 +1538,7 @@ async def download(request: Request, id: str):
     id = sanitize_query_param(id, "session ID")
 
     room, (segments, meta) = await asyncio.gather(
-        rooms_collection.find_one({"sid": id}, {"admin_email": 1, "admin_uid": 1}),
+        rooms_collection.find_one({"sid": id}, {"admin_email": 1, "admin_uid": 1, "co_owner_emails": 1}),
         _load_segments_from_db(id),
     )
     if room:
@@ -1399,7 +1564,7 @@ async def download_srt(request: Request, id: str, lang: str):
         raise HTTPException(status_code=400, detail="Invalid language code")
 
     room, (segments, _) = await asyncio.gather(
-        rooms_collection.find_one({"sid": id}, {"admin_email": 1, "admin_uid": 1}),
+        rooms_collection.find_one({"sid": id}, {"admin_email": 1, "admin_uid": 1, "co_owner_emails": 1}),
         _load_segments_from_db(id),
     )
     if room:
@@ -1513,28 +1678,53 @@ async def panel(request: Request, sid: str):
             )
             admin_key = None
         else:
-            # Active admin: verify caller owns the session
+            # Active lock — caller is already authorized as owner/co-owner above.
+            # Share the existing secret_key with this caller so they can call
+            # settings APIs and stay in sync with the active admin. The lock
+            # itself stays single (admin_uid is unchanged); both users sharing
+            # the key just means either can heartbeat.
             if request.session.get("secret_key") != admin_key:
-                raise HTTPException(status_code=403, detail="Session admin is already connected, only one admin is allowed.")
+                request.session["secret_key"] = admin_key
             await rooms_collection.update_one(
                 {"sid": sid},
                 {"$set": {"admin_last_heartbeat": now, "updated_at": now}}
             )
 
+    current_email = _get_session_email(request)
+
     if not admin_uid or not admin_key:
         session_secret_key = str(uuid.uuid4())
-        current_email = _get_session_email(request)
-        await rooms_collection.update_one(
-            {"sid": sid},
-            {"$set": {"secret_key": session_secret_key, "admin_uid": user_uid, "admin_email": current_email, "admin_last_heartbeat": now, "updated_at": now}}
-        )
+        # Only seed admin_email when the room has no primary owner yet — a
+        # co-owner reclaiming an expired lock must NOT overwrite the owner.
+        update_fields: dict = {
+            "secret_key": session_secret_key,
+            "admin_uid": user_uid,
+            "admin_last_heartbeat": now,
+            "updated_at": now,
+        }
+        if not room.get("admin_email"):
+            update_fields["admin_email"] = current_email
+        await rooms_collection.update_one({"sid": sid}, {"$set": update_fields})
         request.session["secret_key"] = session_secret_key
         user_secret_key = session_secret_key
+        # Reflect the in-memory room dict so the template sees the updated owner.
+        room.update(update_fields)
     else:
         user_secret_key = request.session.get("secret_key")
 
+    owner_email = await _get_room_owner_email(room)
+    is_primary_owner = bool(
+        owner_email and current_email and current_email.lower() == owner_email.lower()
+    )
     is_realtime_enabled = await is_realtime_authorized(request.session)
-    response = templates.TemplateResponse("panel.html", {"request": request, "sid": sid, "user_secret_key": user_secret_key, "is_realtime_enabled": is_realtime_enabled, "email": _get_session_email(request)})
+    response = templates.TemplateResponse("panel.html", {
+        "request": request,
+        "sid": sid,
+        "user_secret_key": user_secret_key,
+        "is_realtime_enabled": is_realtime_enabled,
+        "email": current_email,
+        "is_primary_owner": is_primary_owner,
+    })
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
@@ -1584,6 +1774,9 @@ async def release_admin(request: Request, sid: str):
     if room.get("secret_key") != user_secret_key:
         return {"status": "not_admin"}
 
+    if room.get("admin_uid") != request.session.get("user_uid"):
+        return {"status": "not_lock_holder"}
+
     await rooms_collection.update_one(
         {"sid": sid},
         {"$set": {"secret_key": None, "admin_last_heartbeat": None, "updated_at": datetime.now(timezone.utc)}}
@@ -1594,12 +1787,20 @@ async def release_admin(request: Request, sid: str):
 @app.delete("/api/sessions/{sid}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def delete_session(request: Request, sid: str):
     """Release session ownership, removing it from the owner's My Sessions list.
-    Once deleted, anyone can claim the session again."""
+    Once deleted, anyone can claim the session again. Primary owner only —
+    co-owners cannot release the session out from under the owner."""
     sid = sanitize_query_param(sid, "session ID")
-    await _require_session_owner(request, sid)
+    await _require_session_primary_owner(request, sid)
     await rooms_collection.update_one(
         {"sid": sid},
-        {"$set": {"admin_uid": None, "admin_email": None, "secret_key": None, "admin_last_heartbeat": None, "updated_at": datetime.now(timezone.utc)}}
+        {"$set": {
+            "admin_uid": None,
+            "admin_email": None,
+            "secret_key": None,
+            "admin_last_heartbeat": None,
+            "co_owner_emails": [],
+            "updated_at": datetime.now(timezone.utc),
+        }}
     )
     return {"status": "deleted"}
 
@@ -1768,7 +1969,7 @@ async def sync(socket_id, data):
         await sio.emit('error', {'code': 'invalid_payload', 'message': error_msg}, to=socket_id)
         return
 
-    secret_key = session.get('secret_key') or data.get('secret_key')
+    secret_key = data.get('secret_key') or session.get('secret_key')
     if not await _verify_socket_credentials(socket_id, session, secret_key, session_id):
         return
 
