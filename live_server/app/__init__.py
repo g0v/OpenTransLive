@@ -916,6 +916,46 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
     return result
 
 
+@app.get("/api/session/{sid}/text-dictionary", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+async def get_session_text_dictionary_endpoint(request: Request, sid: str):
+    """Get the user-defined text replacement dictionary for a session."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _verify_session_admin(request, sid)
+
+    from .translation_service import get_text_dictionary
+    mapping = await get_text_dictionary(redis_client, sid)
+    return {"text_dictionary": mapping}
+
+
+@app.post("/api/session/{sid}/text-dictionary", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+async def update_session_text_dictionary_endpoint(request: Request, sid: str):
+    """Update the user-defined text replacement dictionary for a session."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _verify_session_admin(request, sid)
+
+    body = await request.json()
+    mapping = body.get("text_dictionary")
+    if not isinstance(mapping, dict):
+        raise HTTPException(status_code=400, detail="text_dictionary must be an object")
+    if len(mapping) > 200:
+        raise HTTPException(status_code=400, detail="text_dictionary too large (max 200 entries)")
+
+    cleaned: dict[str, str] = {}
+    for src, dst in mapping.items():
+        if not isinstance(src, str) or not isinstance(dst, str):
+            raise HTTPException(status_code=400, detail="text_dictionary keys and values must be strings")
+        src_stripped = src.strip()
+        if not src_stripped:
+            continue
+        if len(src_stripped) > 200 or len(dst) > 200:
+            raise HTTPException(status_code=400, detail="text_dictionary entries too long (max 200 chars)")
+        cleaned[src_stripped] = dst
+
+    from .translation_service import save_text_dictionary
+    await save_text_dictionary(redis_client, sid, cleaned)
+    return {"text_dictionary": cleaned}
+
+
 @app.get("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
 async def get_session_scribe_language_endpoint(request: Request, sid: str):
     """Get the forced detect language for Scribe (empty means auto-detect)."""

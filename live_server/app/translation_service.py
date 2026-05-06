@@ -186,6 +186,52 @@ async def save_locked_keywords(redis_client, session_id, locked_keywords: list[s
 
 
 # ---------------------------------------------------------------------------
+# Session: text dictionary (user-defined direct replacements)
+# ---------------------------------------------------------------------------
+
+async def get_text_dictionary(redis_client, session_id) -> dict[str, str]:
+    """Return the user-defined text replacement dictionary for a session."""
+    try:
+        raw = await redis_client.get(f"text_dictionary:{session_id}")
+        if raw:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
+    except Exception as e:
+        log_exception(logger, e, "Redis get text_dictionary error")
+
+    try:
+        room = await rooms_collection.find_one({"sid": session_id}, {"text_dictionary": 1})
+        if room and isinstance(room.get("text_dictionary"), dict):
+            mapping = {k: v for k, v in room["text_dictionary"].items() if isinstance(k, str) and isinstance(v, str)}
+            await redis_client.set(f"text_dictionary:{session_id}", json.dumps(mapping), ex=86400)
+            return mapping
+    except Exception as e:
+        log_exception(logger, e, "MongoDB get text_dictionary error")
+
+    return {}
+
+
+async def save_text_dictionary(redis_client, session_id, mapping: dict[str, str]):
+    """Persist the user-defined text replacement dictionary for a session."""
+    try:
+        await redis_client.set(f"text_dictionary:{session_id}", json.dumps(mapping), ex=86400)
+    except Exception as e:
+        log_exception(logger, e, "Redis set text_dictionary error")
+    asyncio.create_task(_save_room_field_to_mongo(session_id, "text_dictionary", mapping))
+
+
+def apply_text_dictionary(text: str, mapping: dict[str, str]) -> str:
+    """Apply user-defined direct text replacements. Longer keys win on overlap."""
+    if not text or not mapping:
+        return text
+    for src in sorted(mapping.keys(), key=len, reverse=True):
+        if src:
+            text = text.replace(src, mapping[src])
+    return text
+
+
+# ---------------------------------------------------------------------------
 # Keyword reranking (background task)
 # ---------------------------------------------------------------------------
 
@@ -244,10 +290,14 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     if not text:
         return data
 
-    (current_keywords, locked_list), tone = await asyncio.gather(
+    (current_keywords, locked_list), tone, text_dict = await asyncio.gather(
         get_keywords_and_locked(redis_client, session_id),
         get_session_translate_tone(redis_client, session_id),
+        get_text_dictionary(redis_client, session_id),
     )
+    if text_dict:
+        text = apply_text_dictionary(text, text_dict)
+        data["text"] = text
     locked_set = set(locked_list)
     sorted_kws = sorted(current_keywords, key=lambda k: current_keywords[k], reverse=True)
     pinned_kws = [kw for kw in sorted_kws if kw in locked_set]

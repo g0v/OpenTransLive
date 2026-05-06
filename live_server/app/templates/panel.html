@@ -83,6 +83,29 @@
         </div>
       </div>
 
+      <!-- Text mapping panel -->
+      <div class="toolbar-group">
+        <span class="toolbar-label">Text Mapping</span>
+        <button id="td-dropdown-btn" type="button" class="dropdown-btn min-w-20 max-w-40">
+          <span id="td-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
+          <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
+        </button>
+        <span id="td-status" class="text-xs text-gray-500 min-w-12">Saved</span>
+        <!-- Text mapping dropdown panel -->
+        <div id="td-dropdown-panel" class="hidden dropdown-panel min-w-80" style="top: calc(100% + 4px);">
+          <div id="td-list" class="dropdown-list"></div>
+          <div class="dropdown-add-row flex-col items-stretch gap-1">
+            <div class="flex gap-1">
+              <input id="td-from-input" type="text" placeholder="From" class="panel-input flex-1">
+              <input id="td-to-input" type="text" placeholder="To" class="panel-input flex-1">
+              <button id="td-add-btn" type="button" class="panel-add-btn">
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Language multi-select dropdown -->
       <div class="toolbar-group">
         <span class="toolbar-label">Languages</span>
@@ -783,6 +806,112 @@
     }
   }
 
+  // ── Text mapping panel ───────────────────────────────────────────────────
+  let textDictionary = {}  // { from: to }
+  let textDictSaveTimer = null
+
+  function updateTextDictLabel() {
+    const label = document.getElementById('td-dropdown-label')
+    const total = Object.keys(textDictionary).length
+    label.textContent = !total ? 'None'
+      : total + ' mapping' + (total === 1 ? '' : 's')
+  }
+
+  function renderTextDictList() {
+    const list = document.getElementById('td-list')
+    list.innerHTML = ''
+    const entries = Object.entries(textDictionary)
+    if (!entries.length) {
+      const empty = document.createElement('div')
+      empty.className = 'text-xs text-gray-500 px-2 py-1'
+      empty.textContent = 'No text mappings set.'
+      list.appendChild(empty)
+      return
+    }
+    entries.forEach(function ([from, to]) {
+      const row = document.createElement('div')
+      row.className = 'flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300'
+      row.innerHTML = `
+        <span class="flex-1 font-mono text-xs truncate text-gray-300">${escapeHtml(from)}</span>
+        <iconify-icon icon="mdi:arrow-right" width="14" height="14" class="text-gray-500 flex-shrink-0"></iconify-icon>
+        <span class="flex-1 font-mono text-xs truncate text-blue-300">${escapeHtml(to)}</span>
+        <button class="td-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove mapping" data-from="${escapeHtml(from)}">
+          <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
+        </button>
+      `
+      row.querySelector('.td-remove-btn').addEventListener('click', function () {
+        delete textDictionary[from]
+        updateTextDictLabel()
+        renderTextDictList()
+        debouncedSaveTextDict()
+      })
+      list.appendChild(row)
+    })
+  }
+
+  async function loadTextDictionary() {
+    try {
+      const res = await fetch(`/api/session/${sid}/text-dictionary`, { credentials: 'same-origin' })
+      if (res.ok) {
+        const data = await res.json()
+        textDictionary = data.text_dictionary || {}
+        updateTextDictLabel()
+        renderTextDictList()
+      }
+    } catch (e) {
+      console.error('Failed to load text dictionary:', e)
+    }
+  }
+
+  function debouncedSaveTextDict() {
+    const statusEl = document.getElementById('td-status')
+    statusEl.textContent = 'Saving...'
+    clearTimeout(textDictSaveTimer)
+    textDictSaveTimer = setTimeout(saveTextDictionary, 600)
+  }
+
+  async function saveTextDictionary() {
+    const statusEl = document.getElementById('td-status')
+    statusEl.textContent = 'Saving'
+    try {
+      const res = await fetch(`/api/session/${sid}/text-dictionary`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text_dictionary: textDictionary })
+      })
+      if (res.ok) {
+        statusEl.textContent = 'Saved'
+      } else {
+        const err = await res.json()
+        statusEl.textContent = err.detail || 'Error'
+      }
+    } catch (e) {
+      statusEl.textContent = 'Error'
+      console.error('Failed to save text dictionary:', e)
+    }
+  }
+
+  // Flip dropdown alignment when the default right-0 anchor would clip the
+  // viewport's left edge (happens for triggers near the left of the toolbar
+  // or when the toolbar wraps onto a new line).
+  function positionDropdown(panel) {
+    panel.style.left = ''
+    panel.style.right = ''
+    const rect = panel.getBoundingClientRect()
+    const margin = 8
+    if (rect.left < margin) {
+      panel.style.right = 'auto'
+      panel.style.left = '0'
+      const after = panel.getBoundingClientRect()
+      if (after.right > window.innerWidth - margin) {
+        // If the panel is wider than the viewport, pin it to the viewport edge.
+        const offset = panel.offsetParent ? panel.offsetParent.getBoundingClientRect().left : 0
+        panel.style.left = (margin - offset) + 'px'
+      }
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
     // Populate and wire up scribe detect language select
     const scribeLangSelect = document.getElementById('scribe-lang-select')
@@ -802,6 +931,7 @@
     loadTranslateTone()
     loadLanguages()
     loadKeywords()
+    loadTextDictionary()
 
     const toneSelect = document.getElementById('tone-select')
     const toneCustomInput = document.getElementById('tone-custom-input')
@@ -834,7 +964,43 @@
     kwDropdownBtn.addEventListener('click', function (e) {
       e.stopPropagation()
       kwDropdownPanel.classList.toggle('hidden')
+      if (!kwDropdownPanel.classList.contains('hidden')) positionDropdown(kwDropdownPanel)
     })
+
+    // Text mapping dropdown toggle
+    const tdDropdownBtn = document.getElementById('td-dropdown-btn')
+    const tdDropdownPanel = document.getElementById('td-dropdown-panel')
+    tdDropdownBtn.addEventListener('click', function (e) {
+      e.stopPropagation()
+      tdDropdownPanel.classList.toggle('hidden')
+      if (!tdDropdownPanel.classList.contains('hidden')) positionDropdown(tdDropdownPanel)
+    })
+    document.addEventListener('click', function (e) {
+      if (!tdDropdownPanel.contains(e.target) && e.target !== tdDropdownBtn && !tdDropdownBtn.contains(e.target)) {
+        tdDropdownPanel.classList.add('hidden')
+      }
+    })
+
+    // Add custom text mapping
+    document.getElementById('td-add-btn').addEventListener('click', function () {
+      const fromInput = document.getElementById('td-from-input')
+      const toInput = document.getElementById('td-to-input')
+      const from = fromInput.value.trim()
+      const to = toInput.value
+      if (!from) return
+      textDictionary[from] = to
+      updateTextDictLabel()
+      renderTextDictList()
+      saveTextDictionary()
+      fromInput.value = ''
+      toInput.value = ''
+      fromInput.focus()
+    })
+    const tdSubmitOnEnter = function (e) {
+      if (e.key === 'Enter') document.getElementById('td-add-btn').click()
+    }
+    document.getElementById('td-from-input').addEventListener('keydown', tdSubmitOnEnter)
+    document.getElementById('td-to-input').addEventListener('keydown', tdSubmitOnEnter)
 
     // Add custom keyword
     document.getElementById('kw-custom-add-btn').addEventListener('click', function () {
@@ -860,6 +1026,7 @@
     dropdownBtn.addEventListener('click', function (e) {
       e.stopPropagation()
       dropdownPanel.classList.toggle('hidden')
+      if (!dropdownPanel.classList.contains('hidden')) positionDropdown(dropdownPanel)
     })
     // Close when clicking outside
     document.addEventListener('click', function (e) {
