@@ -551,7 +551,8 @@ async def _identifier(request: Request) -> str:
         uid = str(uuid.uuid4())
         request.session["user_uid"] = uid
     func_name = request.scope["route"].endpoint.__name__
-    return f"{uid}:{func_name}"
+    room = request.path_params.get("sid") or request.path_params.get("id") or ""
+    return f"{uid}:{func_name}:{room}"
 
 
 async def _otp_email_identifier(request: Request) -> str:
