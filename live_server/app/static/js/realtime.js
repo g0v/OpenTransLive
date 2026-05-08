@@ -11,7 +11,7 @@ let levelAnimFrame = null;
 
 socket.on('connect', function () {
   // Show pending state — auth is not yet confirmed by the server
-  statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-yellow-400';
+  statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-yellow-400';
   statusText.textContent = 'Authenticating…';
   console.log('WebSocket connection opened');
 
@@ -20,7 +20,7 @@ socket.on('connect', function () {
 });
 
 socket.on('disconnect', function () {
-  statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-red-500';
+  statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-red-500';
   statusText.textContent = 'Disconnected';
   console.log('WebSocket connection closed');
 });
@@ -32,11 +32,11 @@ socket.on('connected', function (data) {
 socket.on('joined_session', function (data) {
   console.log('Joined session:', data);
   if (data.authorized) {
-    statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-green-500';
-    statusText.textContent = 'Connected to session: ' + data.session_id;
+    statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-green-500';
+    statusText.textContent = 'Connected: ' + data.session_id;
     socket.emit('realtime_connect', { session_id: sessionId });
   } else {
-    statusIndicator.className = 'inline-block w-3 h-3 rounded-full bg-orange-500';
+    statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-orange-500';
     statusText.textContent = 'Unauthorized';
     console.warn('join_session: not authorized for session', data.session_id);
   }

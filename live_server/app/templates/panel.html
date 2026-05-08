@@ -5,179 +5,140 @@
 <div class="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
   <!-- Top Bar -->
   <header class="">
-    <div class="px-4 md:px-8 py-3 bg-gray-800 flex items-center flex-wrap gap-4">
-      <div class="toolbar-group flex-grow-1">
-        <span class="toolbar-label">Viewer Link</span>
-        <div class="relative group flex-grow-1">
-          <input id="viewer-url" type="text" value=""
-            class="copyable-input w-full min-w-40 bg-gray-800 border-none text-xs text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly"
-            readonly>
-          <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-            <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
-          </div>
-        </div>
-      </div>
-      <div class="toolbar-group">
-        <span class="toolbar-label">KEY</span>
-        <div class="relative group">
-          <input id="user-secret-key" type="text" value="{{ user_secret_key }}"
-            class="copyable-input w-full max-w-40 bg-gray-800 border-none text-xs text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
-            readonly title="{{ user_secret_key }}">
-          <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-            <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
-          </div>
-        </div>
-      </div>
-      <!-- Mic Toggle Button -->
-      {% if is_realtime_enabled %}
-      <div class="toolbar-group">
-        <button id="mic-toggle-btn" title="Toggle microphone" class="mic-btn mic-off" aria-pressed="false">
-          <!-- Mic ON icon -->
-          <iconify-icon id="mic-icon-on" icon="mdi:microphone" width="20" height="20"
-            style="display:none"></iconify-icon>
-          <!-- Mic OFF icon -->
-          <iconify-icon id="mic-icon-off" icon="mdi:microphone-off" width="20" height="20"></iconify-icon>
-          <span id="mic-label">MIC OFF</span>
-        </button>
-        <div id="mic-level-container" class="flex items-center gap-1" style="display:none;">
-          <div class="relative w-24 h-3 bg-gray-700 rounded overflow-hidden">
-            <div id="mic-level-bar" class="absolute left-0 top-0 h-full bg-green-500 rounded transition-none"
-              style="width:0%"></div>
-          </div>
-          <span id="mic-level-db" class="text-xs text-gray-500 w-10 text-right font-mono">--dB</span>
-        </div>
-        <select id="mic-device-selector"
-          class="w-full max-w-48 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 text-sm rounded focus:ring-1 focus:ring-blue-500 outline-none"
-          style="display:none;">
-          <option value="">Select Microphone</option>
-        </select>
-      </div>
-      <!-- Detect Language select (only for realtime transcription) -->
-      <div class="toolbar-group">
-        <span class="toolbar-label">Detect Lang</span>
-        <select id="scribe-lang-select"
-          class="w-full max-w-48 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none">
-          <option value="">Auto Detect</option>
-        </select>
-        <span id="scribe-lang-status" class="text-xs text-gray-500 min-w-12">Saved</span>
-      </div>
+
+    <!-- Login status -->
+    <div class="flex items-center justify-end gap-2 px-2 py-1">
+      {% if email %}
+      <span class="text-xs text-gray-400 me-auto">Hi {{ email }}</span>
+      <a href="/user-dashboard" class="nav-link">My Sessions</a>
+      <a href="/logout" class="nav-link">Logout</a>
+      {% else %}
+      <a href="/login" class="nav-link">Login</a>
       {% endif %}
-
-      <!-- Keywords panel -->
-      <div class="toolbar-group">
-        <span class="toolbar-label">Keywords</span>
-        <button id="kw-dropdown-btn" type="button" class="dropdown-btn min-w-20 max-w-40">
-          <span id="kw-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
-          <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
-        </button>
-        <span id="keyword-status" class="text-xs text-gray-500 min-w-12">Saved</span>
-        <!-- Keywords dropdown panel -->
-        <div id="kw-dropdown-panel" class="hidden dropdown-panel min-w-72" style="top: calc(100% + 4px);">
-          <div id="kw-list" class="dropdown-list"></div>
-          <div class="dropdown-add-row">
-            <input id="kw-custom-input" type="text" placeholder="Add keyword" class="panel-input">
-            <button id="kw-custom-add-btn" type="button" class="panel-add-btn">
-              Add
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Text mapping panel -->
-      <div class="toolbar-group">
-        <span class="toolbar-label">Text Mapping</span>
-        <button id="td-dropdown-btn" type="button" class="dropdown-btn min-w-20 max-w-40">
-          <span id="td-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
-          <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
-        </button>
-        <span id="td-status" class="text-xs text-gray-500 min-w-12">Saved</span>
-        <!-- Text mapping dropdown panel -->
-        <div id="td-dropdown-panel" class="hidden dropdown-panel min-w-80" style="top: calc(100% + 4px);">
-          <div id="td-list" class="dropdown-list"></div>
-          <div class="dropdown-add-row flex-col items-stretch gap-1">
-            <div class="flex gap-1">
-              <input id="td-from-input" type="text" placeholder="From" class="panel-input flex-1">
-              <input id="td-to-input" type="text" placeholder="To" class="panel-input flex-1">
-              <button id="td-add-btn" type="button" class="panel-add-btn">
-                Add
-              </button>
+    </div>
+    <div id="header-toolbar-wrap">
+      <div id="header-toolbar" class="px-3 py-3 bg-gray-800 flex items-center flex-wrap gap-x-3 gap-y-1">
+        <div class="toolbar-group flex-grow-1">
+          <span class="toolbar-label">Viewer Link</span>
+          <div class="relative group flex-grow-1">
+            <input id="viewer-url" type="text" value=""
+              class="copyable-input w-full min-w-40 bg-gray-800 border-none text-xs text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly"
+              readonly>
+            <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+              <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
             </div>
           </div>
         </div>
-      </div>
-
-      <!-- Language multi-select dropdown -->
-      <div class="toolbar-group">
-        <span class="toolbar-label">Languages</span>
-        <button id="lang-dropdown-btn" type="button" class="dropdown-btn min-w-32 max-w-48">
-          <span id="lang-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
-          <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
-        </button>
-        <span id="language-status" class="text-xs text-gray-500 min-w-12">Saved</span>
-        <!-- Dropdown panel -->
-        <div id="lang-dropdown-panel" class="hidden dropdown-panel min-w-56" style="top: calc(100% + 4px);">
-          <div id="lang-checkbox-list" class="dropdown-list"></div>
-          <div class="dropdown-add-row">
-            <input id="lang-custom-input" type="text" placeholder="Custom (e.g. ja-JP)" class="panel-input font-mono">
-            <button id="lang-custom-add-btn" type="button" class="panel-add-btn">
-              Add
-            </button>
+        <div class="toolbar-group">
+          <span class="toolbar-label">KEY</span>
+          <div class="relative group">
+            <input id="user-secret-key" type="text" value="{{ user_secret_key }}"
+              class="copyable-input w-full max-w-40 bg-gray-800 border-none text-xs text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
+              readonly title="{{ user_secret_key }}">
+            <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+              <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
+            </div>
           </div>
         </div>
-      </div>
-      <!-- Translate Tone -->
-      <div class="toolbar-group">
-        <span class="toolbar-label">Tone</span>
-        <select id="tone-select"
-          class="w-full max-w-36 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none">
-          <option value="fluent">Fluent</option>
-          <option value="formal">Formal</option>
-          <option value="casual">Casual</option>
-          <option value="literal">Literal</option>
-          <option value="custom">Custom...</option>
-        </select>
-        <input id="tone-custom-input" type="text" placeholder="e.g. academic" maxlength="64"
-          class="hidden w-full max-w-36 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none font-mono">
-        <span id="tone-status" class="text-xs text-gray-500 min-w-12">Saved</span>
-      </div>
-
-      <!-- Co-owners panel (primary owner only) -->
-      {% if is_primary_owner %}
-      <div class="toolbar-group">
-        <span class="toolbar-label">Co-owners</span>
-        <button id="co-dropdown-btn" type="button" class="dropdown-btn min-w-20 max-w-40">
-          <span id="co-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
-          <iconify-icon icon="mdi:chevron-down" width="16" height="16" class="flex-shrink-0"></iconify-icon>
-        </button>
-        <span id="co-status" class="text-xs text-gray-500 min-w-12"></span>
-        <!-- Co-owners dropdown panel -->
-        <div id="co-dropdown-panel" class="hidden dropdown-panel min-w-80" style="top: calc(100% + 4px);">
-          <div class="px-2 py-1 text-[11px] text-gray-500 leading-snug">
-            Co-owners can join the panel and edit session settings. Only the primary owner can add or remove co-owners.
+        <!-- Mic Toggle Button -->
+        {% if is_realtime_enabled %}
+        <div class="toolbar-group" id="mic-group">
+          <button id="mic-toggle-btn" title="Toggle microphone" class="mic-btn mic-off" aria-pressed="false">
+            <iconify-icon class="mic-icon-on" icon="mdi:microphone" width="20" height="20"></iconify-icon>
+            <iconify-icon class="mic-icon-off" icon="mdi:microphone-off" width="20" height="20"></iconify-icon>
+            <span id="mic-label">MIC OFF</span>
+          </button>
+          <div id="mic-level-container" class="flex items-center gap-1" style="display:none;">
+            <div class="relative w-24 h-3 bg-gray-700 rounded overflow-hidden">
+              <div id="mic-level-bar" class="absolute left-0 top-0 h-full bg-green-500 rounded transition-none"
+                style="width:0%"></div>
+            </div>
+            <span id="mic-level-db" class="text-xs text-gray-500 w-10 text-right font-mono">--dB</span>
           </div>
-          <div id="co-list" class="dropdown-list"></div>
-          <div class="dropdown-add-row">
-            <input id="co-email-input" type="email" placeholder="co-owner@example.com" class="panel-input flex-1">
-            <button id="co-add-btn" type="button" class="panel-add-btn">
-              Add
-            </button>
-          </div>
+          <select id="mic-device-selector"
+            class="w-full max-w-48 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 text-sm rounded focus:ring-1 focus:ring-blue-500 outline-none"
+            style="display:none;">
+            <option value="">Select Microphone</option>
+          </select>
         </div>
-      </div>
-      {% endif %}
-
-      <!-- Login status -->
-      <div class="ml-auto flex items-center gap-2 pl-2">
-        {% if email %}
-        <span class="text-xs text-gray-400">Hi {{ email }}</span>
-        <a href="/user-dashboard" class="nav-link">My Sessions</a>
-        <a href="/logout" class="nav-link">Logout</a>
-        {% else %}
-        <a href="/login" class="nav-link">Login</a>
+        <!-- Detect Language select (only for realtime transcription) -->
+        <div class="toolbar-group">
+          <span class="toolbar-label">Detect Lang</span>
+          <select id="scribe-lang-select"
+            class="w-full max-w-48 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none">
+            <option value="">Auto Detect</option>
+          </select>
+        </div>
         {% endif %}
+
+        <!-- Keywords (opens modal) -->
+        <div class="toolbar-group">
+          <span class="toolbar-label">Keywords</span>
+          <button id="kw-dropdown-btn" type="button" class="dropdown-btn min-w-20 max-w-40">
+            <span id="kw-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
+            <iconify-icon icon="mdi:pencil-outline" width="14" height="14" class="flex-shrink-0"></iconify-icon>
+          </button>
+        </div>
+
+        <!-- Text mapping (opens modal) -->
+        <div class="toolbar-group">
+          <span class="toolbar-label">Text Mapping</span>
+          <button id="td-dropdown-btn" type="button" class="dropdown-btn min-w-20 max-w-40">
+            <span id="td-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
+            <iconify-icon icon="mdi:pencil-outline" width="14" height="14" class="flex-shrink-0"></iconify-icon>
+          </button>
+        </div>
+
+        <!-- Languages (opens modal) -->
+        <div class="toolbar-group">
+          <span class="toolbar-label">Languages</span>
+          <button id="lang-dropdown-btn" type="button" class="dropdown-btn min-w-32 max-w-48">
+            <span id="lang-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
+            <iconify-icon icon="mdi:pencil-outline" width="14" height="14" class="flex-shrink-0"></iconify-icon>
+          </button>
+        </div>
+        <!-- Translate Tone -->
+        <div class="toolbar-group">
+          <span class="toolbar-label">Tone</span>
+          <select id="tone-select"
+            class="w-full max-w-36 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none">
+            <option value="fluent">Fluent</option>
+            <option value="formal">Formal</option>
+            <option value="casual">Casual</option>
+            <option value="literal">Literal</option>
+            <option value="custom">Custom...</option>
+          </select>
+          <input id="tone-custom-input" type="text" placeholder="e.g. academic" maxlength="64"
+            class="hidden w-full max-w-36 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none font-mono">
+        </div>
+
+        <!-- Co-owners (primary owner only — opens modal) -->
+        {% if is_primary_owner %}
+        <div class="toolbar-group">
+          <span class="toolbar-label">Co-owners</span>
+          <button id="co-dropdown-btn" type="button" class="dropdown-btn min-w-20 max-w-40">
+            <span id="co-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
+            <iconify-icon icon="mdi:pencil-outline" width="14" height="14" class="flex-shrink-0"></iconify-icon>
+          </button>
+        </div>
+        {% endif %}
+
+        <!-- Unified save status for all settings (languages, keywords, tone, etc.) -->
+        <div class="toolbar-group">
+          <span id="settings-status" class="text-xs text-gray-200 px-1 ms-auto">Saved</span>
+        </div>
       </div>
     </div>
-    <div class="flex py-1 items-center">
+    <div class="md:hidden flex items-stretch">
+      <button id="header-toggle" type="button"
+        class="header-bar flex-1 px-3 py-2 border-b border-gray-700 flex items-center gap-2 text-left"
+        aria-label="Toggle controls" aria-expanded="false">
+        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Controls</span>
+        <iconify-icon id="header-chevron" icon="mdi:chevron-down" width="16" height="16"
+          class="text-gray-500 ml-auto"></iconify-icon>
+      </button>
+    </div>
+    <div class="flex py-1 items-center px-2 gap-2">
       <span class="flex items-center gap-1 text-xs mx-auto">
         <span id="status-indicator" class="status-dot-md bg-gray-400"></span>
         <span id="status-text">Connecting...</span>
@@ -185,10 +146,115 @@
       {% if is_realtime_enabled %}
       <span id="audio-usage-display" class="text-xs text-gray-500 pr-4"
         title="Audio sent to transcription service this session">Audio: --</span>
+      <button id="mic-mobile-btn" title="Toggle microphone" class="mic-btn mic-off my-auto md:hidden!"
+        aria-pressed="false">
+        <iconify-icon class="mic-icon-on" icon="mdi:microphone" width="20" height="20"></iconify-icon>
+        <iconify-icon class="mic-icon-off" icon="mdi:microphone-off" width="20" height="20"></iconify-icon>
+      </button>
       {% endif %}
     </div>
 
   </header>
+
+  <!-- Languages modal -->
+  <div id="lang-dropdown-panel" class="modal-overlay hidden" role="dialog" aria-modal="true"
+    aria-labelledby="lang-modal-title">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2 id="lang-modal-title" class="modal-title">Languages</h2>
+        <button type="button" class="modal-close-btn" data-modal-close aria-label="Close">
+          <iconify-icon icon="mdi:close" width="20" height="20"></iconify-icon>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="text-[11px] text-gray-500 leading-snug">
+          Select target translation languages. Add a custom BCP-47 code (e.g. <span class="font-mono">ja-JP</span>) if
+          it's not in the list.
+        </p>
+        <div id="lang-checkbox-list" class="modal-list"></div>
+        <div class="modal-add-row">
+          <input id="lang-custom-input" type="text" placeholder="Custom (e.g. ja-JP)"
+            class="panel-input font-mono flex-1">
+          <button id="lang-custom-add-btn" type="button" class="panel-add-btn">Add</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keywords modal -->
+  <div id="kw-dropdown-panel" class="modal-overlay hidden" role="dialog" aria-modal="true"
+    aria-labelledby="kw-modal-title">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2 id="kw-modal-title" class="modal-title">Keywords</h2>
+        <button type="button" class="modal-close-btn" data-modal-close aria-label="Close">
+          <iconify-icon icon="mdi:close" width="20" height="20"></iconify-icon>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="text-[11px] text-gray-500 leading-snug">
+          Keywords help the transcriber recognize names, jargon, or phrases. Pin a keyword to keep it from being
+          auto-removed.
+        </p>
+        <div id="kw-list" class="modal-list"></div>
+        <div class="modal-add-row">
+          <input id="kw-custom-input" type="text" placeholder="Add keyword" class="panel-input flex-1">
+          <button id="kw-custom-add-btn" type="button" class="panel-add-btn">Add</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Text mapping modal -->
+  <div id="td-dropdown-panel" class="modal-overlay hidden" role="dialog" aria-modal="true"
+    aria-labelledby="td-modal-title">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2 id="td-modal-title" class="modal-title">Text Mapping</h2>
+        <button type="button" class="modal-close-btn" data-modal-close aria-label="Close">
+          <iconify-icon icon="mdi:close" width="20" height="20"></iconify-icon>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="text-[11px] text-gray-500 leading-snug">
+          Replace specific phrases in the transcript. Useful for fixing common mishearings or normalizing terms.
+        </p>
+        <div id="td-list" class="modal-list"></div>
+        <div class="modal-add-row flex-col items-stretch gap-1">
+          <div class="flex gap-1">
+            <input id="td-from-input" type="text" placeholder="From" class="panel-input flex-1">
+            <input id="td-to-input" type="text" placeholder="To" class="panel-input flex-1">
+            <button id="td-add-btn" type="button" class="panel-add-btn">Add</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if is_primary_owner %}
+  <!-- Co-owners modal -->
+  <div id="co-dropdown-panel" class="modal-overlay hidden" role="dialog" aria-modal="true"
+    aria-labelledby="co-modal-title">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2 id="co-modal-title" class="modal-title">Co-owners</h2>
+        <button type="button" class="modal-close-btn" data-modal-close aria-label="Close">
+          <iconify-icon icon="mdi:close" width="20" height="20"></iconify-icon>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="text-[11px] text-gray-500 leading-snug">
+          Co-owners can join the panel and edit session settings. Only the primary owner can add or remove co-owners.
+        </p>
+        <div id="co-list" class="modal-list"></div>
+        <div class="modal-add-row">
+          <input id="co-email-input" type="email" placeholder="co-owner@example.com" class="panel-input flex-1">
+          <button id="co-add-btn" type="button" class="panel-add-btn">Add</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   <div class="flex-1 flex min-h-0">
     <div id="viewer-wrap" class="flex-1 relative bg-white min-w-0">
@@ -196,10 +262,12 @@
     </div>
     <!-- Flow panel (side column on desktop, bottom drawer on mobile) -->
     <div id="flow-panel" class="w-72 flex flex-col bg-gray-900 border-l border-gray-700 shrink-0">
-      <button id="flow-toggle" type="button" class="flow-header px-3 py-2 border-b border-gray-700 flex items-center gap-2 text-left w-full">
+      <button id="flow-toggle" type="button"
+        class="flow-header px-3 py-2 border-b border-gray-700 flex items-center gap-2 text-left w-full">
         <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Current Flow</span>
         <span id="flow-count" class="text-xs text-gray-600 ml-auto">0 segments</span>
-        <iconify-icon id="flow-chevron" icon="mdi:chevron-up" width="16" height="16" class="flow-chevron text-gray-500"></iconify-icon>
+        <iconify-icon id="flow-chevron" icon="mdi:chevron-up" width="16" height="16"
+          class="flow-chevron text-gray-500"></iconify-icon>
       </button>
       <div id="flow-content" class="flex-1 overflow-y-auto px-3 py-2 space-y-1"></div>
     </div>
@@ -227,6 +295,17 @@
 
   .mic-btn:active {
     transform: scale(0.95);
+  }
+
+  .mic-btn .mic-icon-on,
+  .mic-btn .mic-icon-off {
+    display: none;
+  }
+
+  .mic-btn.mic-on .mic-icon-on,
+  .mic-btn.mic-off .mic-icon-off,
+  .mic-btn.mic-busy .mic-icon-off {
+    display: inline-block;
   }
 
   /* OFF state */
@@ -294,6 +373,58 @@
     animation: none;
   }
 
+  /* Mobile: collapse the toolbar by default; toggle reveals it. Mirrors the
+     flow drawer's collapse pattern (single full-width row, label + chevron,
+     180deg chevron rotation when open) and animates the reveal smoothly via
+     a grid-template-rows transition (animates to natural content height). */
+  @media (max-width: 767px) {
+    header {
+      position: relative;
+    }
+
+    #header-toolbar-wrap {
+      display: grid;
+      grid-template-rows: 0fr;
+      transition: grid-template-rows 0.25s ease;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      z-index: 50;
+    }
+
+    #header-toolbar {
+      overflow: hidden;
+      min-height: 0;
+      padding-top: 0;
+      padding-bottom: 0;
+      transition: padding 0.25s ease;
+    }
+
+    header.header-open #header-toolbar-wrap {
+      grid-template-rows: 1fr;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    }
+
+    header.header-open #header-toolbar {
+      padding-top: 0.75rem;
+      padding-bottom: 0.75rem;
+      transition: padding 0.25s ease;
+    }
+
+    .header-bar {
+      cursor: pointer;
+    }
+
+    #header-chevron {
+      transition: transform 0.25s ease;
+    }
+
+    header.header-open #header-chevron {
+      transform: rotate(180deg);
+    }
+  }
+
   /* Flow panel */
   #flow-content {
     font-size: 0.78rem;
@@ -318,8 +449,9 @@
     display: none;
   }
 
-  /* Mobile: turn the flow panel into a bottom drawer that collapses to
-     just its header, and slides up when opened. */
+  /* Mobile: turn the flow panel into a bottom drawer. Header stays pinned;
+     content area animates to natural height via grid-template-rows + padding
+     collapse (same pattern as the mobile controls toolbar). */
   @media (max-width: 767px) {
     #flow-panel {
       position: fixed;
@@ -327,22 +459,37 @@
       right: 0;
       bottom: 0;
       width: auto;
-      height: 60vh;
       max-height: 60vh;
       border-left: none;
       border-top: 1px solid #374151;
-      transform: translateY(calc(100% - 2.5rem));
-      transition: transform 0.25s ease;
       z-index: 40;
       box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.4);
+      display: grid;
+      grid-template-rows: auto 0fr;
+      transition: grid-template-rows 0.25s ease;
     }
 
     #flow-panel.flow-open {
-      transform: translateY(0);
+      grid-template-rows: auto 1fr;
+    }
+
+    #flow-content {
+      overflow: hidden;
+      min-height: 0;
+      padding-top: 0;
+      padding-bottom: 0;
+      transition: padding 0.25s ease;
+    }
+
+    #flow-panel.flow-open #flow-content {
+      padding-top: 0.5rem;
+      padding-bottom: 0.5rem;
+      overflow-y: auto;
     }
 
     #flow-panel .flow-header {
       cursor: pointer;
+      min-height: 2.5rem;
     }
 
     .flow-chevron {
@@ -359,6 +506,95 @@
     #viewer-wrap {
       padding-bottom: 2.5rem;
     }
+  }
+
+  /* Modal — centered popup used by Keywords / Text Mapping / Co-owners. */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+  }
+
+  .modal-overlay.hidden {
+    display: none;
+  }
+
+  .modal-panel {
+    background: #1f2937;
+    border: 1px solid #374151;
+    border-radius: 0.5rem;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+    width: 100%;
+    max-width: 30rem;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #374151;
+    flex-shrink: 0;
+  }
+
+  .modal-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #e5e7eb;
+    flex: 1;
+    margin: 0;
+  }
+
+  .modal-close-btn {
+    background: transparent;
+    border: none;
+    color: #9ca3af;
+    padding: 0.25rem;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .modal-close-btn:hover {
+    background: #374151;
+    color: #e5e7eb;
+  }
+
+  .modal-body {
+    padding: 0.75rem 1rem 1rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .modal-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow-y: auto;
+    min-height: 0;
+  }
+
+  .modal-add-row {
+    display: flex;
+    gap: 0.25rem;
+    border-top: 1px solid #374151;
+    padding-top: 0.75rem;
+    flex-shrink: 0;
   }
 </style>
 <script>
@@ -379,32 +615,33 @@
 
   // ── Mic toggle ───────────────────────────────────────────────────────────
 
-  const iconOn = document.getElementById('mic-icon-on')
-  const iconOff = document.getElementById('mic-icon-off')
   const micLabel = document.getElementById('mic-label')
   const micBtn = document.getElementById('mic-toggle-btn')
+  const micMobileBtn = document.getElementById('mic-mobile-btn')
   let recording = false
 
   function setMicState(state) {
     if (!micBtn) return
     // state: 'off' | 'on' | 'busy'
-    micBtn.className = 'mic-btn mic-' + state
-    micBtn.disabled = (state === 'busy')
+    micBtn.classList.remove('mic-on', 'mic-off', 'mic-busy')
+    micBtn.classList.add('mic-' + state)
     micBtn.setAttribute('aria-pressed', state === 'on' ? 'true' : 'false')
+    micBtn.disabled = (state === 'busy')
+
+    if (micMobileBtn) {
+      micMobileBtn.classList.remove('mic-on', 'mic-off', 'mic-busy')
+      micMobileBtn.classList.add('mic-' + state)
+      micMobileBtn.disabled = (state === 'busy')
+      micMobileBtn.setAttribute('aria-pressed', state === 'on' ? 'true' : 'false')
+    }
 
     if (state === 'on') {
-      if (iconOn) iconOn.style.display = ''
-      if (iconOff) iconOff.style.display = 'none'
       if (micLabel) micLabel.textContent = 'MIC ON'
       micBtn.title = 'Stop microphone'
     } else if (state === 'busy') {
-      if (iconOn) iconOn.style.display = 'none'
-      if (iconOff) iconOff.style.display = ''
       if (micLabel) micLabel.textContent = 'STOPPING…'
       micBtn.title = 'Please wait…'
     } else {
-      if (iconOn) iconOn.style.display = 'none'
-      if (iconOff) iconOff.style.display = ''
       if (micLabel) micLabel.textContent = 'MIC OFF'
       micBtn.title = 'Start microphone'
     }
@@ -546,11 +783,11 @@
   }
 
   function saveScribeLanguage(language) {
-    return saveSessionField('scribe-language', { language }, 'scribe-lang-status')
+    return saveSessionField('scribe-language', { language }, 'settings-status')
   }
 
   function saveTranslateTone(tone) {
-    return saveSessionField('translate-tone', { tone }, 'tone-status')
+    return saveSessionField('translate-tone', { tone }, 'settings-status')
   }
 
   const PRESET_TONES = ['formal', 'fluent', 'casual', 'literal']
@@ -579,7 +816,7 @@
   }
 
   async function saveTranslateTone(tone) {
-    const statusEl = document.getElementById('tone-status')
+    const statusEl = document.getElementById('settings-status')
     if (statusEl) statusEl.textContent = 'Saving'
     try {
       const res = await fetch(`/api/session/${sid}/translate-tone`, {
@@ -675,7 +912,7 @@
   let langSaveDirty = false
 
   function debouncedSaveLanguages() {
-    document.getElementById('language-status').textContent = 'Saving...'
+    document.getElementById('settings-status').textContent = 'Saving...'
     clearTimeout(langSaveTimer)
     langSaveTimer = setTimeout(saveLanguages, SAVE_DEBOUNCE_MS)
   }
@@ -685,7 +922,7 @@
       langSaveDirty = true
       return
     }
-    const statusEl = document.getElementById('language-status')
+    const statusEl = document.getElementById('settings-status')
     if (!selectedLanguages.length) {
       statusEl.textContent = 'Saving'
       langSaveDirty = false
@@ -836,7 +1073,7 @@
   }
 
   function debouncedSaveKeywords() {
-    const statusEl = document.getElementById('keyword-status')
+    const statusEl = document.getElementById('settings-status')
     statusEl.textContent = 'Saving...'
     keywordSavePending = true
     clearTimeout(keywordSaveTimer)
@@ -844,7 +1081,7 @@
   }
 
   async function saveKeywords() {
-    const statusEl = document.getElementById('keyword-status')
+    const statusEl = document.getElementById('settings-status')
     statusEl.textContent = 'Saving'
     keywordSavePending = true
     try {
@@ -927,14 +1164,14 @@
   }
 
   function debouncedSaveTextDict() {
-    const statusEl = document.getElementById('td-status')
+    const statusEl = document.getElementById('settings-status')
     statusEl.textContent = 'Saving...'
     clearTimeout(textDictSaveTimer)
     textDictSaveTimer = setTimeout(saveTextDictionary, 600)
   }
 
   async function saveTextDictionary() {
-    const statusEl = document.getElementById('td-status')
+    const statusEl = document.getElementById('settings-status')
     statusEl.textContent = 'Saving'
     try {
       const res = await fetch(`/api/session/${sid}/text-dictionary`, {
@@ -993,7 +1230,7 @@
   }
 
   async function coOwnerMutation(label, fetchOpts) {
-    const statusEl = document.getElementById('co-status')
+    const statusEl = document.getElementById('settings-status')
     if (statusEl) statusEl.textContent = 'Saving'
     try {
       const res = await fetch(fetchOpts.url, fetchOpts.init)
@@ -1101,25 +1338,30 @@
   // primary's timer is started lazily once loadCoOwners() finds co-owners.
   if (!isPrimaryOwner) startSettingsSync()
 
-  // Flip dropdown alignment when the default right-0 anchor would clip the
-  // viewport's left edge (happens for triggers near the left of the toolbar
-  // or when the toolbar wraps onto a new line).
-  function positionDropdown(panel) {
-    panel.style.left = ''
-    panel.style.right = ''
-    const rect = panel.getBoundingClientRect()
-    const margin = 8
-    if (rect.left < margin) {
-      panel.style.right = 'auto'
-      panel.style.left = '0'
-      const after = panel.getBoundingClientRect()
-      if (after.right > window.innerWidth - margin) {
-        // If the panel is wider than the viewport, pin it to the viewport edge.
-        const offset = panel.offsetParent ? panel.offsetParent.getBoundingClientRect().left : 0
-        panel.style.left = (margin - offset) + 'px'
+  // Wire a popup modal to a trigger button. Open via button click, close via
+  // backdrop click, the close button, or the global Escape handler below.
+  function setupModal(modal, btn) {
+    if (!modal || !btn) return
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation()
+      const willOpen = modal.classList.contains('hidden')
+      modal.classList.toggle('hidden')
+      if (willOpen) {
+        const firstInput = modal.querySelector('input:not([type="hidden"])')
+        if (firstInput) setTimeout(() => firstInput.focus(), 0)
       }
-    }
+    })
+    modal.addEventListener('click', function (e) {
+      if (e.target === modal) modal.classList.add('hidden')
+    })
+    const closeBtn = modal.querySelector('[data-modal-close]')
+    if (closeBtn) closeBtn.addEventListener('click', () => modal.classList.add('hidden'))
   }
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return
+    document.querySelectorAll('.modal-overlay:not(.hidden)').forEach(m => m.classList.add('hidden'))
+  })
 
   document.addEventListener('DOMContentLoaded', function () {
     // Populate and wire up scribe detect language select
@@ -1143,20 +1385,11 @@
     loadTextDictionary()
     loadCoOwners()
 
-    // Co-owners dropdown (primary owner only — element is absent for co-owners)
+    // Co-owners modal (primary owner only — element is absent for co-owners)
     const coDropdownBtn = document.getElementById('co-dropdown-btn')
     const coDropdownPanel = document.getElementById('co-dropdown-panel')
     if (coDropdownBtn && coDropdownPanel) {
-      coDropdownBtn.addEventListener('click', function (e) {
-        e.stopPropagation()
-        coDropdownPanel.classList.toggle('hidden')
-        if (!coDropdownPanel.classList.contains('hidden')) positionDropdown(coDropdownPanel)
-      })
-      document.addEventListener('click', function (e) {
-        if (!coDropdownPanel.contains(e.target) && e.target !== coDropdownBtn && !coDropdownBtn.contains(e.target)) {
-          coDropdownPanel.classList.add('hidden')
-        }
-      })
+      setupModal(coDropdownPanel, coDropdownBtn)
       const coAddBtn = document.getElementById('co-add-btn')
       const coEmailInput = document.getElementById('co-email-input')
       coAddBtn.addEventListener('click', function () {
@@ -1172,7 +1405,7 @@
 
     const toneSelect = document.getElementById('tone-select')
     const toneCustomInput = document.getElementById('tone-custom-input')
-    const toneStatusEl = document.getElementById('tone-status')
+    const toneStatusEl = document.getElementById('settings-status')
     let toneDebounce = null
     toneSelect.addEventListener('change', function () {
       if (this.value === 'custom') {
@@ -1195,28 +1428,9 @@
       }
     })
 
-    // Keywords dropdown toggle
-    const kwDropdownBtn = document.getElementById('kw-dropdown-btn')
-    const kwDropdownPanel = document.getElementById('kw-dropdown-panel')
-    kwDropdownBtn.addEventListener('click', function (e) {
-      e.stopPropagation()
-      kwDropdownPanel.classList.toggle('hidden')
-      if (!kwDropdownPanel.classList.contains('hidden')) positionDropdown(kwDropdownPanel)
-    })
-
-    // Text mapping dropdown toggle
-    const tdDropdownBtn = document.getElementById('td-dropdown-btn')
-    const tdDropdownPanel = document.getElementById('td-dropdown-panel')
-    tdDropdownBtn.addEventListener('click', function (e) {
-      e.stopPropagation()
-      tdDropdownPanel.classList.toggle('hidden')
-      if (!tdDropdownPanel.classList.contains('hidden')) positionDropdown(tdDropdownPanel)
-    })
-    document.addEventListener('click', function (e) {
-      if (!tdDropdownPanel.contains(e.target) && e.target !== tdDropdownBtn && !tdDropdownBtn.contains(e.target)) {
-        tdDropdownPanel.classList.add('hidden')
-      }
-    })
+    // Keywords + Text mapping modals
+    setupModal(document.getElementById('kw-dropdown-panel'), document.getElementById('kw-dropdown-btn'))
+    setupModal(document.getElementById('td-dropdown-panel'), document.getElementById('td-dropdown-btn'))
 
     // Add custom text mapping
     document.getElementById('td-add-btn').addEventListener('click', function () {
@@ -1257,20 +1471,8 @@
       if (e.key === 'Enter') document.getElementById('kw-custom-add-btn').click()
     })
 
-    // Toggle dropdown open/close
-    const dropdownBtn = document.getElementById('lang-dropdown-btn')
-    const dropdownPanel = document.getElementById('lang-dropdown-panel')
-    dropdownBtn.addEventListener('click', function (e) {
-      e.stopPropagation()
-      dropdownPanel.classList.toggle('hidden')
-      if (!dropdownPanel.classList.contains('hidden')) positionDropdown(dropdownPanel)
-    })
-    // Close when clicking outside
-    document.addEventListener('click', function (e) {
-      if (!dropdownPanel.contains(e.target) && e.target !== dropdownBtn) {
-        dropdownPanel.classList.add('hidden')
-      }
-    })
+    // Languages modal
+    setupModal(document.getElementById('lang-dropdown-panel'), document.getElementById('lang-dropdown-btn'))
 
     // Add custom language
     document.getElementById('lang-custom-add-btn').addEventListener('click', function () {
@@ -1308,12 +1510,23 @@
       })
     })
     // Flow drawer toggle (only active on mobile via CSS; button is a no-op
-     // on desktop since the panel is statically visible).
+    // on desktop since the panel is statically visible).
     const flowPanel = document.getElementById('flow-panel')
     const flowToggle = document.getElementById('flow-toggle')
     if (flowPanel && flowToggle) {
       flowToggle.addEventListener('click', function () {
         flowPanel.classList.toggle('flow-open')
+      })
+    }
+
+    // Mobile header toolbar toggle (no-op on desktop since the toolbar is
+    // always visible there).
+    const headerEl = document.querySelector('header')
+    const headerToggle = document.getElementById('header-toggle')
+    if (headerEl && headerToggle) {
+      headerToggle.addEventListener('click', function () {
+        const isOpen = headerEl.classList.toggle('header-open')
+        headerToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false')
       })
     }
 
@@ -1332,6 +1545,12 @@
           recording = true
           setMicState('on')
         }
+      })
+    }
+
+    if (micMobileBtn) {
+      micMobileBtn.addEventListener('click', async () => {
+        micBtn.click()
       })
     }
   })
@@ -1361,10 +1580,10 @@
         if (partialEl) { partialEl.remove(); partialEl = null }
         const p = document.createElement('p')
         p.className = 'flow-item flex justify-between items-start group'
-        
+
         const latency = (Date.now() / 1000) - segment.end_time
         p.innerHTML = `<span class="flex-1">${escapeHtml(text)}</span><span class="text-[10px] text-gray-600 ml-2 tabular-nums">${latency.toFixed(2)}s</span>`
-        
+
         flowContent.appendChild(p)
         segmentCount++
         // Remove oldest items to keep DOM size bounded
