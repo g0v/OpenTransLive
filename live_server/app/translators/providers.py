@@ -27,16 +27,16 @@ _CORRECT_PROMPT = (
 
 _TONE_MAP = {
     "formal": "formal and professional",
-    "fluent": "natural and fluent",
+    "fluent": "natural and fluency",
     "casual": "casual and conversational",
     "literal": "literal and word-for-word",
 }
 
 _TRANSLATE_PROMPT = (
-    "Role: Professional interpreter.\n"
-    "Task: Rewrite <translate_this> into {language}. Tone: {tone}.\n"
+    "Role: Expert Translator & Localizer.\n"
+    "Task: Rewrite <translate_this> into {language}.\n"
     "Rules:\n"
-    "1. Accurate; No styling/summaries.\n"
+    "1. Accurate first; Tone: {tone}.\n"
     "2. Adapt dates/numbers/nouns/etc. to target language conventions.\n"
     "3. If same language, fix typos only.\n"
     "4. Add punctuation.\n"
