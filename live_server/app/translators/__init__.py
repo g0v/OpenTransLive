@@ -64,8 +64,9 @@ class _CompositeTranslator(BaseTranslator):
         context: str,
         prev_translation: str,
         keywords: str,
+        tone: str = "",
     ) -> str:
-        return await self._translate.translate(text, language, context, prev_translation, keywords)
+        return await self._translate.translate(text, language, context, prev_translation, keywords, tone)
 
     async def extract_keywords(
         self, text: str, existing_keywords: dict[str, int]
