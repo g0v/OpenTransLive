@@ -146,8 +146,6 @@
   const tocShowBtn = document.getElementById('toc-show-btn');
   const tocHideBtn = document.getElementById('toc-hide-btn');
 
-  function tocItemKey(row) { return row.dataset.startTime; }
-
   function tocItemFor(key) {
     if (!tocList) return null;
     return tocList.querySelector(`.toc-item[data-start-time="${CSS.escape(key)}"]`);

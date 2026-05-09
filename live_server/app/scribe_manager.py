@@ -8,7 +8,6 @@ from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
 from datetime import datetime, timezone
 from .config import REALTIME_SETTINGS
-from .translation_service import get_async_client
 from .logger_config import setup_logger, log_exception
 
 cc = OpenCC('s2twp')

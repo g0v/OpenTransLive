@@ -1,6 +1,4 @@
 from pymongo import AsyncMongoClient, ASCENDING, DESCENDING
-import os
-from datetime import datetime, timezone
 from .config import MONGODB_SETTINGS
 
 client = AsyncMongoClient(host=MONGODB_SETTINGS.get('host', 'mongodb'), port=MONGODB_SETTINGS.get('port', 27017), tz_aware=True)

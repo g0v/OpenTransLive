@@ -79,32 +79,3 @@ def log_exception(logger: logging.Logger, exc: Exception, context: str = "") -> 
         logger.error(f"{context}: {type(exc).__name__}: {str(exc)}", exc_info=True)
     else:
         logger.error(f"{type(exc).__name__}: {str(exc)}", exc_info=True)
-
-
-def get_generic_error_message(exc: Exception | None = None) -> str:
-    """
-    Return a generic error message for client responses.
-
-    Args:
-        exc: Optional exception (not included in message)
-
-    Returns:
-        Generic error message string
-    """
-    return "An internal error occurred. Please try again later."
-
-
-def get_generic_error_dict(error_type: str = "internal_error") -> dict:
-    """
-    Return a generic error dictionary for JSON responses.
-
-    Args:
-        error_type: Error type identifier (generic, not detailed)
-
-    Returns:
-        Generic error dictionary
-    """
-    return {
-        "error": error_type,
-        "message": "An error occurred while processing your request."
-    }

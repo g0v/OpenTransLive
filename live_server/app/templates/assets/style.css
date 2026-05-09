@@ -17,9 +17,6 @@
   input[type="text"] {
     @apply border border-gray-300 rounded w-full p-2 focus:outline-none focus:ring-2 focus:ring-blue-100;
   }
-  red {
-    @apply text-red-500;
-  }
 }
 
 @layer utilities {
@@ -28,12 +25,6 @@
   }
   .btn {
     @apply cursor-pointer px-4 py-2 rounded transition-colors;
-  }
-  .btn-primary {
-    @apply bg-gray-500 text-white hover:bg-gray-600;
-  }
-  .btn-red {
-    @apply bg-red-500 text-white hover:bg-red-600;
   }
 
   /* ── Status indicator dot ─────────────────────────────────────────────── */
@@ -74,21 +65,6 @@
   /* ── Dropdown trigger button (panel dropdowns) ───────────────────────── */
   .dropdown-btn {
     @apply flex items-center gap-1 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none truncate text-left;
-  }
-
-  /* ── Dropdown panel (floating list) ─────────────────────────────────── */
-  .dropdown-panel {
-    @apply absolute right-0 z-50 bg-gray-800 border border-gray-700 rounded-lg shadow-xl p-2;
-  }
-
-  /* ── Scrollable dropdown list ────────────────────────────────────────── */
-  .dropdown-list {
-    @apply flex flex-col gap-1 max-h-64 overflow-y-auto text-xs;
-  }
-
-  /* ── Dropdown list add-row (border + input + button) ────────────────── */
-  .dropdown-add-row {
-    @apply border-t border-gray-700 mt-2 pt-2 flex gap-1;
   }
 
   /* ── Small dark input (inside panel dropdowns) ───────────────────────── */

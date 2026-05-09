@@ -731,18 +731,6 @@ async def _require_room_owner(request: Request, room: dict) -> None:
     raise HTTPException(status_code=403, detail="This session is owned by another user.")
 
 
-async def _require_room_primary_owner(request: Request, room: dict) -> str:
-    """Strict owner gate: only the primary owner (admin_email) may proceed.
-    Co-owners are not allowed. Returns the owner email."""
-    owner_email = await _get_room_owner_email(room)
-    if not owner_email:
-        raise HTTPException(status_code=403, detail="This session has no owner.")
-    current = _get_session_email(request)
-    if not current or current.lower() != owner_email.lower():
-        raise HTTPException(status_code=403, detail="Only the session owner can perform this action.")
-    return owner_email
-
-
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     email = _get_session_email(request)
@@ -1174,18 +1162,6 @@ async def remove_session_co_owner_endpoint(request: Request, sid: str, email: st
     return response
 
 
-@app.get("/api/session/{sid}/audio-usage", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
-async def get_session_audio_usage_endpoint(request: Request, sid: str):
-    """Return audio buffer usage stats for the active scribe session."""
-    sid = sanitize_query_param(sid, "session ID")
-    await _verify_session_admin(request, sid)
-
-    manager = active_scribe_managers.get(sid)
-    if not manager:
-        return {"audio_bytes": 0, "audio_chunks": 0, "audio_duration_secs": 0.0}
-    return manager.get_usage_stats()
-
-
 async def _require_session_owner(request: Request, sid: str) -> tuple[str, dict]:
     """Owner gate for editor endpoints. Allows the primary owner or any co-owner.
     Returns (email, room) or raises."""
@@ -1347,7 +1323,7 @@ async def get_youtube_start_time(video_id: str) -> float | None:
             'key': api_key
         }
         try:
-            from .translation_service import get_async_client
+            from .http_client import get_async_client
             client = get_async_client()
             response = await client.get(url, params=params, timeout=10.0)
             response.raise_for_status()

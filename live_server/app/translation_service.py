@@ -2,7 +2,6 @@ import asyncio
 import json
 from .config import REALTIME_SETTINGS
 from .database import rooms_collection
-from .http_client import get_async_client, close_async_client  # re-exported for callers
 from .logger_config import setup_logger, log_exception
 from .translators import get_translator
 
