@@ -174,17 +174,35 @@ POST /api/sessions              # Create new session
 POST /api/user_realtime_token   # Get authentication token
 ```
 
-### WebSocket Events
+### Realtime Transport
 
-The server uses Socket.IO for real-time communication.
+The server uses two realtime transports:
 
-#### Client to Server Events
+- Viewer pages (`/rt/{session_id}`, `/yt/{session_id}`) use SSE via `GET /api/session/{session_id}/stream`.
+- The studio panel uses Socket.IO for authenticated bidirectional control and realtime transcription audio upload.
+
+#### Viewer SSE
 
 ```javascript
-// Join a session
+const stream = new EventSource('/api/session/test-session/stream');
+
+stream.addEventListener('transcription_update', (event) => {
+  const data = JSON.parse(event.data);
+  console.log('New transcription:', data);
+});
+
+stream.onerror = () => {
+  console.log('SSE reconnecting');
+};
+```
+
+#### Panel Socket.IO Client to Server Events
+
+```javascript
+// Join a session as an authenticated panel.
 socket.emit('join_session', {
   'session_id': 'your_session_id',
-  'secret_key': 'optional_secret_key'
+  'secret_key': 'required_secret_key'
 });
 
 // Sync transcription data
@@ -205,25 +223,25 @@ socket.emit('sync', {
   }
 });
 
-// Start ElevenLabs Scribe session
-socket.emit('start_scribe_session', {
+// Start the realtime transcription session.
+socket.emit('mic_on', {
   'session_id': 'your_session_id',
-  'language': 'en'
+  'secret_key': 'required_secret_key'
 });
 
 // Send audio data (for ElevenLabs Scribe)
-socket.emit('audio_data', {
-  'session_id': 'your_session_id',
+socket.emit('audio_buffer_append', {
+  'secret_key': 'required_secret_key',
   'audio': 'base64_encoded_audio_data'
 });
 
-// Stop Scribe session
-socket.emit('stop_scribe_session', {
+// Stop the realtime transcription session.
+socket.emit('mic_off', {
   'session_id': 'your_session_id'
 });
 ```
 
-#### Server to Client Events
+#### Panel Socket.IO Server to Client Events
 
 ```javascript
 // Connection confirmation
@@ -234,24 +252,16 @@ socket.on('connected', (data) => {
 // Session join confirmation
 socket.on('joined_session', (data) => {
   console.log('Joined session:', data.session_id);
+  console.log('Viewer count:', data.viewer_count);
 });
 
-// Real-time transcription updates
+// Real-time transcription updates for the panel flow view.
 socket.on('transcription_update', (data) => {
   console.log('New transcription:', data);
 });
 
-// Scribe session events
-socket.on('scribe_session_started', (data) => {
-  console.log('Scribe session started:', data.session_id);
-});
-
-socket.on('scribe_transcription', (data) => {
-  console.log('Scribe transcription:', data.text);
-});
-
-socket.on('scribe_error', (data) => {
-  console.error('Scribe error:', data.error);
+socket.on('viewer_count_update', (data) => {
+  console.log('Viewer count:', data.viewer_count);
 });
 ```
 
@@ -322,7 +332,7 @@ Features:
 - Multi-language grid layout
 - Single-column layout option
 - Language selection dropdown
-- Real-time WebSocket updates
+- Real-time SSE updates
 - QR code generation for mobile access
 - Responsive design for all screen sizes
 
@@ -439,20 +449,15 @@ FastAPI provides automatic interactive API documentation:
 - Swagger UI: `http://localhost:5000/docs`
 - ReDoc: `http://localhost:5000/redoc`
 
-### Testing WebSocket Connections
+### Testing Realtime Viewer Connections
 
-Use the provided test scripts or browser console:
+Use the browser console:
 
 ```javascript
-const socket = io('http://localhost:5000');
+const stream = new EventSource('/api/session/test-session/stream');
 
-socket.on('connect', () => {
-  console.log('Connected');
-  socket.emit('join_session', { session_id: 'test-session' });
-});
-
-socket.on('transcription_update', (data) => {
-  console.log('Update:', data);
+stream.addEventListener('transcription_update', (event) => {
+  console.log('Update:', JSON.parse(event.data));
 });
 ```
 

@@ -403,13 +403,50 @@ redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 TRANSCRIPTION_TTL = 3600
 SSE_RETRY_MS = 3000
 SSE_HEARTBEAT_SECONDS = 15
+VIEWER_PRESENCE_TTL = 35
+VIEWER_PRESENCE_REFRESH = 10
 
 
 def _transcription_room_channel(sid: str) -> str:
     return f"room:{sid}"
 
 
+def _viewer_presence_key(sid: str) -> str:
+    return f"viewer_presence:{sid}"
+
+
+async def _viewer_presence_op(
+    sid: str,
+    *,
+    add: str | None = None,
+    remove: str | None = None,
+    label: str = "viewer presence",
+) -> int:
+    key = _viewer_presence_key(sid)
+    now = time.time()
+    try:
+        pipe = redis_client.pipeline()
+        if add is not None:
+            pipe.zadd(key, {add: now})
+        if remove is not None:
+            pipe.zrem(key, remove)
+        pipe.zremrangebyscore(key, "-inf", now - VIEWER_PRESENCE_TTL)
+        pipe.zcard(key)
+        pipe.expire(key, VIEWER_PRESENCE_TTL)
+        results = await pipe.execute()
+        return int(results[-2] or 0)
+    except Exception as e:
+        log_exception(logger, e, f"Redis {label} error for {_hash_token(sid)}")
+        return 0
+
+
+async def _emit_viewer_count(sid: str, count: int) -> None:
+    await sio.emit("viewer_count_update", {"session_id": sid, "viewer_count": count}, room=sid)
+
+
 def _transcription_event_id(payload: dict) -> str:
+    if payload.get("partial") is True:
+        return ""
     return str(payload.get("start_time", ""))
 
 
@@ -451,8 +488,15 @@ async def _session_sse_stream(request: Request, sid: str, last_event_id: float |
     channel = _transcription_room_channel(sid)
     pubsub = redis_client.pubsub()
     max_sent_id = last_event_id
+    viewer_id = f"sse:{uuid.uuid4()}"
+    last_emitted_count = -1
     try:
         await pubsub.subscribe(channel)
+        count = await _viewer_presence_op(sid, add=viewer_id, label="viewer presence join")
+        if count != last_emitted_count:
+            await _emit_viewer_count(sid, count)
+            last_emitted_count = count
+        last_presence_refresh = time.monotonic()
         yield f"retry: {SSE_RETRY_MS}\n\n"
 
         if last_event_id is not None:
@@ -467,6 +511,13 @@ async def _session_sse_stream(request: Request, sid: str, last_event_id: float |
         while True:
             if await request.is_disconnected():
                 return
+            now = time.monotonic()
+            if now - last_presence_refresh >= VIEWER_PRESENCE_REFRESH:
+                count = await _viewer_presence_op(sid, add=viewer_id, label="viewer presence refresh")
+                if count != last_emitted_count:
+                    await _emit_viewer_count(sid, count)
+                    last_emitted_count = count
+                last_presence_refresh = now
 
             message = await pubsub.get_message(
                 ignore_subscribe_messages=True,
@@ -483,7 +534,11 @@ async def _session_sse_stream(request: Request, sid: str, last_event_id: float |
                 continue
 
             event_id_raw = payload.get("start_time")
-            if isinstance(event_id_raw, (int, float)) and not isinstance(event_id_raw, bool):
+            if (
+                payload.get("partial") is not True
+                and isinstance(event_id_raw, (int, float))
+                and not isinstance(event_id_raw, bool)
+            ):
                 event_id = float(event_id_raw)
                 if max_sent_id is not None and event_id <= max_sent_id:
                     continue
@@ -491,6 +546,9 @@ async def _session_sse_stream(request: Request, sid: str, last_event_id: float |
 
             yield _format_sse(payload)
     finally:
+        count = await _viewer_presence_op(sid, remove=viewer_id, label="viewer presence leave")
+        if count != last_emitted_count:
+            await _emit_viewer_count(sid, count)
         try:
             await pubsub.unsubscribe(channel)
             await pubsub.close()
@@ -1563,11 +1621,11 @@ async def download_srt(request: Request, id: str, lang: str):
 @app.get("/api/session/{sid}/stream")
 async def session_stream(request: Request, sid: str):
     sid = sanitize_query_param(sid, "session ID")
-    last_event_id_header = request.headers.get("last-event-id")
+    last_event_id_raw = request.headers.get("last-event-id") or request.query_params.get("last_event_id")
     last_event_id = None
-    if last_event_id_header:
+    if last_event_id_raw:
         try:
-            last_event_id = float(last_event_id_header)
+            last_event_id = float(last_event_id_raw)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid Last-Event-ID")
 
@@ -1712,7 +1770,8 @@ async def heartbeat(request: Request, sid: str):
     await _verify_session_admin(request, sid)
     now = datetime.now(timezone.utc)
     update = {"admin_last_heartbeat": now, "updated_at": now}
-    response: dict = {"status": "ok"}
+    viewer_count = await _viewer_presence_op(sid, label="viewer count heartbeat")
+    response: dict = {"status": "ok", "viewer_count": viewer_count}
     scribe_manager = active_scribe_managers.get(sid)
     if scribe_manager and scribe_manager.audio_bytes_total > 0:
         stats = scribe_manager.get_usage_stats()
@@ -1956,50 +2015,65 @@ async def sync(socket_id, data):
 
 @sio.event
 async def join_session(socket_id, data):
-    """Handle client joining a session room"""
+    """Handle an authenticated panel joining a session room."""
     if not _socket_limiter.check(socket_id, 'join_session', 5, 10.0):
         await sio.emit('error', {'message': 'Rate limit exceeded'}, to=socket_id)
         return
     session_id = data.get('session_id')
     secret_key = data.get('secret_key')
+    if not session_id or not secret_key:
+        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        return
+    is_valid, error_msg = validate_query_param(session_id, "session ID")
+    if not is_valid:
+        await sio.emit('error', {'code': 'invalid_payload', 'message': error_msg}, to=socket_id)
+        return
 
     session = await sio.get_session(socket_id)
 
-    if secret_key and session_id:
-        # Use helper function for consistent authentication verification
-        if await verify_socket_auth(socket_id, session_id, secret_key):
-            # Fetch room data to look up admin email for realtime authorization
-            room = await rooms_collection.find_one({"sid": session_id, "secret_key": secret_key})
-            if room:
-                session['secret_key'] = secret_key
-                session['verified'] = True
-                session['session_id'] = session_id
-                session['email'] = await _get_room_owner_email(room)
-                await sio.save_session(socket_id, session)
-                logger.info(
-                    "join_session verified sid_hash=%s owner_email=%s socket_hash=%s",
-                    _hash_token(session_id),
-                    _mask_email(session.get("email")),
-                    _hash_token(socket_id),
-                )
-        else:
-            # Authentication failed - do not set verified flag
-            logger.warning(
-                "join_session authentication_failed sid_hash=%s socket_hash=%s",
-                _hash_token(session_id),
-                _hash_token(socket_id),
-            )
+    if not await verify_socket_auth(socket_id, session_id, secret_key):
+        logger.warning(
+            "join_session authentication_failed sid_hash=%s socket_hash=%s",
+            _hash_token(session_id),
+            _hash_token(socket_id),
+        )
+        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        return
 
-    if session_id:
-        await sio.enter_room(socket_id, session_id)
-        authorized = session.get('verified', False)
-        await sio.emit('joined_session', {'session_id': session_id, 'authorized': authorized}, to=socket_id)
+    room = await rooms_collection.find_one({"sid": session_id, "secret_key": secret_key})
+    if not room:
+        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        return
+
+    session['secret_key'] = secret_key
+    session['verified'] = True
+    session['session_id'] = session_id
+    session['email'] = await _get_room_owner_email(room)
+    await sio.save_session(socket_id, session)
+    await sio.enter_room(socket_id, session_id)
+    logger.info(
+        "join_session verified sid_hash=%s owner_email=%s socket_hash=%s",
+        _hash_token(session_id),
+        _mask_email(session.get("email")),
+        _hash_token(socket_id),
+    )
+    viewer_count = await _viewer_presence_op(session_id, label="viewer count")
+    await sio.emit(
+        'joined_session',
+        {'session_id': session_id, 'authorized': True, 'viewer_count': viewer_count},
+        to=socket_id,
+    )
+    await _emit_viewer_count(session_id, viewer_count)
 
 @sio.event
 async def leave_session(socket_id, data):
     """Handle client leaving a session room"""
     session_id = data.get('session_id')
     if session_id:
+        is_valid, error_msg = validate_query_param(session_id, "session ID")
+        if not is_valid:
+            await sio.emit('error', {'code': 'invalid_payload', 'message': error_msg}, to=socket_id)
+            return
         await sio.leave_room(socket_id, session_id)
         await sio.emit('left_session', {'session_id': session_id}, to=socket_id)
         logger.info(

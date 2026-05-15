@@ -9,6 +9,12 @@ let audioProcessor = null;
 let analyserNode = null;
 let levelAnimFrame = null;
 
+function updateViewerCountDisplay(count) {
+  const el = document.getElementById('viewer-count-display');
+  if (!el || !Number.isFinite(count)) return;
+  el.textContent = 'Viewers: ' + count;
+}
+
 socket.on('connect', function () {
   // Show pending state — auth is not yet confirmed by the server
   statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-yellow-400';
@@ -31,6 +37,7 @@ socket.on('connected', function (data) {
 
 socket.on('joined_session', function (data) {
   console.log('Joined session:', data);
+  updateViewerCountDisplay(data.viewer_count);
   if (data.authorized) {
     statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-green-500';
     statusText.textContent = 'Connected: ' + data.session_id;
@@ -40,6 +47,11 @@ socket.on('joined_session', function (data) {
     statusText.textContent = 'Unauthorized';
     console.warn('join_session: not authorized for session', data.session_id);
   }
+});
+
+socket.on('viewer_count_update', function (data) {
+  if (!data || data.session_id !== sessionId) return;
+  updateViewerCountDisplay(data.viewer_count);
 });
 
 socket.on('error', function (data) {

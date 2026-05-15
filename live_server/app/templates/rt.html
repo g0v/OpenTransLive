@@ -1227,28 +1227,22 @@
     }, 100);
   });
 
-  // ------------------------------------------------------------------ //
-  // Init                                                                //
-  // ------------------------------------------------------------------ //
   document.addEventListener('DOMContentLoaded', function () {
-    const socket = io();
+    let stream = null;
+    let reconnectTimer = null;
+    let reconnectAttempts = 0;
+    let lastEventId = '';
+    let pageUnloading = false;
 
-    socket.on('connect', function () {
-      statusIndicator.className = 'status-dot-sm bg-emerald-500';
-      statusText.textContent = 'Connected';
-      socket.emit('join_session', { session_id: '{{ id }}' });
-    });
+    function streamUrl() {
+      const url = new URL('/api/session/{{ id }}/stream', window.location.origin);
+      if (lastEventId) url.searchParams.set('last_event_id', lastEventId);
+      return url.toString();
+    }
 
-    socket.on('disconnect', function () {
-      statusIndicator.className = 'status-dot-sm bg-red-500';
-      statusText.textContent = 'Disconnected';
-    });
-
-    socket.on('joined_session', function (data) {
-      statusText.textContent = 'Live';
-    });
-
-    socket.on('transcription_update', function (data) {
+    function handleTranscriptionUpdate(event) {
+      if (event.lastEventId) lastEventId = event.lastEventId;
+      const data = JSON.parse(event.data);
       if (data.last_committed) {
         const last_committed = data.last_committed;
         const exists = !!transcriptionsData["transcriptions"].findLast(t => t.start_time === last_committed.start_time);
@@ -1269,12 +1263,38 @@
       }
       populateCombinedSelect();
       refreshView();
-    });
+    }
 
-    socket.on('error', function (data) {
-      statusIndicator.className = 'status-dot-sm bg-red-500';
-      statusText.textContent = 'Error: ' + data.message;
-    });
+    function scheduleReconnect() {
+      if (pageUnloading || reconnectTimer) return;
+      reconnectAttempts += 1;
+      const delay = Math.min(1000 * reconnectAttempts, 10000);
+      statusIndicator.className = 'status-dot-sm bg-yellow-500';
+      statusText.textContent = 'Reconnecting... retry ' + reconnectAttempts;
+      reconnectTimer = setTimeout(function () {
+        reconnectTimer = null;
+        if (stream) stream.close();
+        connectStream();
+      }, delay);
+    }
+
+    function connectStream() {
+      stream = new EventSource(streamUrl());
+
+      stream.onopen = function () {
+        reconnectAttempts = 0;
+        statusIndicator.className = 'status-dot-sm bg-emerald-500';
+        statusText.textContent = 'Live';
+      };
+
+      stream.addEventListener('transcription_update', handleTranscriptionUpdate);
+
+      stream.onerror = function () {
+        scheduleReconnect();
+      };
+    }
+
+    connectStream();
 
     window.addEventListener('resize', function () {
       if (currentLayout === 'grid') refreshGridView();
@@ -1320,7 +1340,9 @@
     });
 
     window.addEventListener('beforeunload', function () {
-      socket.disconnect();
+      pageUnloading = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (stream) stream.close();
     });
   });
 </script>

@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block title %}OpenTransLive - Studio Control{% endblock %}
+{% block head %}
+<script src="https://cdn.socket.io/4.8.1/socket.io.min.js"
+  integrity="sha384-mkQ3/7FUtcGyoppY6bz/PORYoGqOl7/aSUMn2ymDOJcapfS6PHqxhRTMh1RR0Q6+"
+  crossorigin="anonymous"></script>
+{% endblock %}
 
 {% block content %}
 <div class="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
@@ -143,6 +148,8 @@
         <span id="status-indicator" class="status-dot-md bg-gray-400"></span>
         <span id="status-text">Connecting...</span>
       </span>
+      <span id="viewer-count-display" class="text-xs text-gray-500 pr-4"
+        title="Current viewers connected to this session">Viewers: --</span>
       {% if is_realtime_enabled %}
       <span id="audio-usage-display" class="text-xs text-gray-500 pr-4"
         title="Audio sent to transcription service this session">Audio: --</span>
@@ -659,6 +666,7 @@
         })
         if (res.ok) {
           const data = await res.json()
+          if (typeof updateViewerCountDisplay === 'function') updateViewerCountDisplay(data.viewer_count)
           if (typeof updateAudioUsageDisplay === 'function') updateAudioUsageDisplay(data)
         }
       } catch (error) {
@@ -797,7 +805,7 @@
       const res = await fetch(`/api/session/${sid}/translate-tone`, { credentials: 'same-origin' })
       if (res.ok) {
         const data = await res.json()
-        const tone = data.tone || 'formal'
+        const tone = data.tone || 'fluent'
         const sel = document.getElementById('tone-select')
         const customInput = document.getElementById('tone-custom-input')
         if (!sel) return

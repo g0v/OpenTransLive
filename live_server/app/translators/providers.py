@@ -34,7 +34,7 @@ _TONE_MAP = {
 
 _TRANSLATE_PROMPT = (
     "Role: Expert Translator & Localizer.\n"
-    "Task: Rewrite <translate_this> into {language}.\n"
+    "Task: Translate <translate_this> into {language}.\n"
     "Rules:\n"
     "1. Accurate first; Tone: {tone}.\n"
     "2. Adapt dates/numbers/nouns/etc. to target language conventions.\n"
