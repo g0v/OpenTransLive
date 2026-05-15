@@ -9,6 +9,11 @@ logger = setup_logger(__name__)
 
 _KEYWORD_CAP = 30          # max keywords sent in prompts
 _KEYWORD_STORE_CAP = _KEYWORD_CAP * 2  # store 2x so low-freq words can recover
+# Skip translating a partial when its source text has grown by fewer than this
+# many chars since the last dispatched partial. Re-translating tiny extensions
+# wastes calls and is a major source of caption flicker; the LLM tends to
+# rewrite the whole sentence even when only one word was added.
+_MIN_PARTIAL_DELTA_CHARS = 4
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +382,10 @@ class TranslationQueueManager:
         self._pending_partial = None  # latest partial waiting for in-flight to finish
         self.commit_queue = asyncio.Queue(maxsize=self._COMMIT_QUEUE_MAXSIZE)
         self._commit_in_flight = False
+        # Source text of the most recently dispatched partial. Used to gate
+        # tiny extensions that would only cause LLM rewrites without giving
+        # the reader meaningful new content. Reset on every commit.
+        self._last_dispatched_partial_text = ""
         self.is_running = False
         self.task = None
 
@@ -387,6 +396,7 @@ class TranslationQueueManager:
     async def stop(self):
         self.is_running = False
         self._pending_partial = None
+        self._last_dispatched_partial_text = ""
         if self.partial_task:
             self.partial_task.cancel()
             try:
@@ -405,6 +415,15 @@ class TranslationQueueManager:
         if sync_data.get("partial") is True:
             if self._commit_in_flight or not self.commit_queue.empty():
                 return
+            # Throttle by content delta: skip partials whose source text grew
+            # by fewer than _MIN_PARTIAL_DELTA_CHARS chars. A shrinking text
+            # (negative delta) means ASR corrected itself — always pass that
+            # through since it's a meaningful change worth re-translating.
+            new_text = sync_data.get("text", "") or ""
+            delta = len(new_text) - len(self._last_dispatched_partial_text)
+            if 0 <= delta < _MIN_PARTIAL_DELTA_CHARS:
+                return
+            self._last_dispatched_partial_text = new_text
             if self.partial_task and not self.partial_task.done():
                 # Replace pending slot with the latest partial; it will be
                 # dispatched as soon as the in-flight translation finishes.
@@ -415,6 +434,7 @@ class TranslationQueueManager:
             if self.partial_task and not self.partial_task.done():
                 self.partial_task.cancel()
             self._pending_partial = None  # commit supersedes any pending partial
+            self._last_dispatched_partial_text = ""
             if self.commit_queue.full():
                 try:
                     self.commit_queue.get_nowait()

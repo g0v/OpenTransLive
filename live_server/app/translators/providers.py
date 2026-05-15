@@ -37,12 +37,12 @@ _TRANSLATE_PROMPT = (
     "Task: Translate <translate_this> into {language}.\n"
     "Rules:\n"
     "1. Accurate first; Tone: {tone}.\n"
-    "2. Adapt dates/numbers/nouns/etc. to target language conventions.\n"
+    "2. Adapt dates/numbers/nouns/etc. to target language conventions, then add punctuation.\n"
     "3. If same language, fix typos only.\n"
-    "4. Add punctuation.\n"
+    "4. Loosely follow previous translations.\n"
     "5. Output ONLY the processed translated text.\n\n"
-    "<context>\n{keywords}\n</context>\n\n"
-    "<previous_translation>\n{prev_translation}\n</previous_translation>"
+    "Context: {keywords}\n\n"
+    "Previous translation: {prev_translation}\n\n"
 )
 
 _EXTRACT_KEYWORDS_PROMPT = (
