@@ -157,6 +157,8 @@ async def get_keywords_and_locked(redis_client, session_id) -> tuple[dict[str, i
                 keywords = data if isinstance(data, dict) else {kw: 1 for kw in data if isinstance(kw, str)}
             else:
                 keywords = _default_keywords()
+                if not locked:
+                    locked = list(keywords.keys())
             return keywords, locked
     except Exception as e:
         log_exception(logger, e, "Redis mget keywords error")
@@ -177,7 +179,8 @@ async def get_keywords_and_locked(redis_client, session_id) -> tuple[dict[str, i
     except Exception as e:
         log_exception(logger, e, "MongoDB get keywords error")
 
-    return _default_keywords(), []
+    defaults = _default_keywords()
+    return defaults, list(defaults.keys())
 
 
 async def save_locked_keywords(redis_client, session_id, locked_keywords: list[str]):
