@@ -2,7 +2,6 @@ import asyncio
 import json
 import time
 import tiktoken
-from opencc import OpenCC
 from urllib.parse import urlencode
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
@@ -10,7 +9,6 @@ from datetime import datetime, timezone
 from .config import REALTIME_SETTINGS
 from .logger_config import setup_logger, log_exception
 
-cc = OpenCC('s2twp')
 logger = setup_logger(__name__)
 encoding = tiktoken.get_encoding("o200k_base")
 
@@ -220,8 +218,6 @@ class ScribeSessionManager:
 
             # Efficiently strip specific punctuation
             transcript = transcript.rstrip(",.。，").strip()
-            if(self.language_code == "zho"):
-                transcript = cc.convert(transcript)
 
             if self._is_hallucination(transcript):
                 logger.warning(f"Hallucination detected, dropping: {repr(transcript)}")

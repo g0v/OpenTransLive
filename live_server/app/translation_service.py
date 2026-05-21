@@ -1,11 +1,30 @@
 import asyncio
 import json
+from opencc import OpenCC
 from .config import REALTIME_SETTINGS
 from .database import rooms_collection
 from .logger_config import setup_logger, log_exception
 from .translators import get_translator
 
 logger = setup_logger(__name__)
+_cc_s2twp = OpenCC('s2twp')
+_cc_tw2sp = OpenCC('tw2sp')
+
+
+def _normalize_chinese_output(text: str, language: str) -> str:
+    """Normalize Chinese translation output to match the target script.
+
+    LLMs sometimes mix Simplified and Traditional Chinese; OpenCC enforces
+    consistency based on the BCP-47 target language (e.g. zh-Hant-TW, zh-Hans-CN).
+    """
+    if not text or not language:
+        return text
+    lang = language.lower()
+    if "hant" in lang or lang.endswith("-tw"):
+        return _cc_s2twp.convert(text)
+    if "hans" in lang or lang.endswith("-cn"):
+        return _cc_tw2sp.convert(text)
+    return text
 
 _KEYWORD_CAP = 30          # max keywords sent in prompts
 _KEYWORD_STORE_CAP = _KEYWORD_CAP * 2  # store 2x so low-freq words can recover
@@ -348,7 +367,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     async def _translation_worker(language):
         pt_trans = cached_data.get("partial", {}).get("result", {}).get("translated", {}).get(language, "")
         try:
-            translated[language] = await translator.translate(
+            out = await translator.translate(
                 text=result['corrected'],
                 language=language,
                 context=translated_context[language],
@@ -356,6 +375,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
                 keywords=keywords_str,
                 tone=tone,
             )
+            translated[language] = _normalize_chinese_output(out, language)
         except Exception as e:
             log_exception(logger, e, f"Translation error for {language}")
             translated[language] = result['corrected']
