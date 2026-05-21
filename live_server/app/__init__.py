@@ -444,6 +444,15 @@ async def _emit_viewer_count(sid: str, count: int) -> None:
     await sio.emit("viewer_count_update", {"session_id": sid, "viewer_count": count}, room=sid)
 
 
+async def _emit_session_settings_update(sid: str, kind: str) -> None:
+    """Notify panel clients that a session setting has changed.
+
+    Only sockets that completed `join_session` (panel primary owner + co-owners,
+    not viewers) are in the room, so this is safe to broadcast unconditionally.
+    """
+    await sio.emit("session_settings_updated", {"session_id": sid, "kind": kind}, room=sid)
+
+
 def _transcription_event_id(payload: dict) -> str:
     if payload.get("partial") is True:
         return ""
@@ -947,6 +956,7 @@ async def update_session_languages_endpoint(request: Request, sid: str):
 
     from .translation_service import save_session_languages
     await save_session_languages(redis_client, sid, languages)
+    await _emit_session_settings_update(sid, "languages")
     return {"languages": languages}
 
 
@@ -1001,6 +1011,7 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
     result = {"keywords": list(keywords_dict.keys())}
     if locked_keywords is not None:
         result["locked_keywords"] = locked_keywords
+    await _emit_session_settings_update(sid, "keywords")
     return result
 
 
@@ -1041,6 +1052,7 @@ async def update_session_text_dictionary_endpoint(request: Request, sid: str):
 
     from .translation_service import save_text_dictionary
     await save_text_dictionary(redis_client, sid, cleaned)
+    await _emit_session_settings_update(sid, "text-dictionary")
     return {"text_dictionary": cleaned}
 
 
@@ -1076,6 +1088,7 @@ async def update_session_scribe_language_endpoint(request: Request, sid: str):
     if active_scribe_managers.get(sid):
         await _get_or_create_scribe_manager(sid, force_new=True)
 
+    await _emit_session_settings_update(sid, "scribe-language")
     return {"language": language}
 
 
@@ -1106,6 +1119,7 @@ async def update_session_translate_tone_endpoint(request: Request, sid: str):
 
     from .translation_service import save_session_translate_tone
     await save_session_translate_tone(redis_client, sid, tone)
+    await _emit_session_settings_update(sid, "translate-tone")
     return {"tone": tone}
 
 
@@ -1176,6 +1190,7 @@ async def add_session_co_owner_endpoint(request: Request, sid: str):
         if len(latest_emails) >= _MAX_CO_OWNERS:
             raise HTTPException(status_code=400, detail=f"Too many co-owners (max {_MAX_CO_OWNERS})")
         raise HTTPException(status_code=409, detail="Failed to add co-owner; please retry")
+    await _emit_session_settings_update(sid, "co-owners")
     return {"co_owners": _get_room_co_owner_emails(updated_room)}
 
 
@@ -1217,6 +1232,7 @@ async def remove_session_co_owner_endpoint(request: Request, sid: str, email: st
     response = {"co_owners": _get_room_co_owner_emails(updated_room)}
     if rotated_secret:
         response["secret_key"] = rotated_secret
+    await _emit_session_settings_update(sid, "co-owners")
     return response
 
 

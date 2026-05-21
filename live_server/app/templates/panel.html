@@ -1294,13 +1294,14 @@
     })
   }
 
-  // ── Settings sync polling ────────────────────────────────────────────────
-  // Co-owners share session settings via the same Redis-backed APIs. This
-  // poll re-fetches the simple settings every few seconds so changes made
-  // by the other owner appear locally without a manual refresh.
-  // Skip when a save is in flight or a dropdown is open to avoid clobbering
-  // local edits mid-interaction. Solo sessions skip polling entirely — the
-  // primary owner only starts the timer once a co-owner exists.
+  // ── Settings sync ────────────────────────────────────────────────────────
+  // Two paths keep co-owners' panels in sync:
+  //   • push (socket event)  → applySettingsUpdate(kind)   (~instant)
+  //   • pull (5s polling)    → syncSettings()              (backstop)
+  // `isInteracting()` blocks a reload while the user is mid-edit so their
+  // pending input isn't clobbered. `polled: false` means the kind relies
+  // on a dedicated sync path (keywords: syncKeywords reconciler; co-owners:
+  // primary-only, refreshed by the socket event).
   function isAnySettingsDropdownOpen() {
     const ids = ['lang-dropdown-panel', 'kw-dropdown-panel', 'td-dropdown-panel', 'co-dropdown-panel']
     return ids.some(id => {
@@ -1309,18 +1310,51 @@
     })
   }
 
+  const focused = id => {
+    const el = document.getElementById(id)
+    return !!el && document.activeElement === el
+  }
+
+  const SETTINGS_KINDS = {
+    'languages':       { load: loadLanguages,      isInteracting: () => langSaveInFlight || !!langSaveTimer, polled: true },
+    'keywords':        { load: loadKeywords,       isInteracting: () => keywordSavePending,                  polled: false },
+    'text-dictionary': { load: loadTextDictionary, isInteracting: () => !!textDictSaveTimer,                 polled: true },
+    'scribe-language': { load: loadScribeLanguage, isInteracting: () => focused('scribe-lang-select'),       polled: true },
+    'translate-tone':  { load: loadTranslateTone,  isInteracting: () => focused('tone-custom-input'),        polled: true },
+    'co-owners':       { load: loadCoOwners,       isInteracting: () => false,                               polled: false },
+  }
+
+  function applySettingsUpdate(kind) {
+    const entry = SETTINGS_KINDS[kind]
+    if (!entry || isAnySettingsDropdownOpen() || entry.isInteracting()) return
+    runWithSyncStatus(entry.load())
+  }
+
+  // Flash "Syncing" on the status label while a reload is in flight, then
+  // settle to "Saved". Defers to in-progress save states ("Saving"/"Error")
+  // so a local save isn't clobbered by a concurrent sync.
+  async function runWithSyncStatus(loadPromise) {
+    const statusEl = document.getElementById('settings-status')
+    if (statusEl && !/^(Saving|Error)/.test(statusEl.textContent)) {
+      statusEl.textContent = 'Syncing'
+    }
+    try {
+      await loadPromise
+    } finally {
+      if (statusEl && statusEl.textContent === 'Syncing') {
+        statusEl.textContent = 'Saved'
+      }
+    }
+  }
+
   async function syncSettings() {
     if (isAnySettingsDropdownOpen()) return
     const tasks = []
-    if (!langSaveInFlight && !langSaveTimer) tasks.push(loadLanguages())
-    if (!textDictSaveTimer) tasks.push(loadTextDictionary())
-    // scribe-language and tone are simple selects/inputs; skip if focused so
-    // we don't clobber a user mid-edit.
-    const scribeLangEl = document.getElementById('scribe-lang-select')
-    if (scribeLangEl && document.activeElement !== scribeLangEl) tasks.push(loadScribeLanguage())
-    const toneCustomInput = document.getElementById('tone-custom-input')
-    if (toneCustomInput && document.activeElement !== toneCustomInput) tasks.push(loadTranslateTone())
-    await Promise.allSettled(tasks)
+    for (const entry of Object.values(SETTINGS_KINDS)) {
+      if (!entry.polled || entry.isInteracting()) continue
+      tasks.push(entry.load())
+    }
+    if (tasks.length) await runWithSyncStatus(Promise.allSettled(tasks))
   }
 
   let settingsSyncInterval = null
@@ -1643,6 +1677,11 @@
             appendCommitted(data)
           }
         }
+      })
+
+      socket.on('session_settings_updated', function (data) {
+        if (!data || data.session_id !== sessionId) return
+        applySettingsUpdate(data.kind)
       })
     })()
 </script>
