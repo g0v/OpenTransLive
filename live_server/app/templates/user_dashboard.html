@@ -22,17 +22,7 @@
 
   <main class="container py-8">
 
-    <div class="mb-6 flex items-center justify-between">
-      <div>
-        <h2 class="text-lg font-semibold text-gray-100">Session Rooms</h2>
-        <p class="mt-1 text-sm text-gray-500">
-          Rooms you own or co-own. Go to
-          <a href="/" class="underline text-gray-400 hover:text-gray-200">the homepage</a>
-          to create or join a new session.
-        </p>
-      </div>
-    </div>
-
+    <h1 class="text-gray-100 mb-8">Session Rooms</h1>
     <div class="mb-8 p-6 dark-card">
       <h3 class="text-md font-semibold text-gray-100 mb-4">Start New Session</h3>
       <form id="create-form" class="flex flex-col sm:flex-row gap-3">
@@ -51,68 +41,53 @@
     </div>
 
     {% if rooms %}
-    <div class="dark-card overflow-hidden">
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="border-b border-gray-700 text-left text-xs text-gray-500 uppercase tracking-wider">
-            <th class="px-4 py-3 font-semibold">Session ID</th>
-            <th class="px-4 py-3 font-semibold">Created</th>
-            <th class="px-4 py-3 font-semibold">Audio</th>
-            <th class="px-4 py-3 font-semibold text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for room in rooms %}
-          <tr class="border-b border-gray-700 last:border-0">
-            <td class="px-4 py-3 font-mono text-xs text-gray-200 break-all">
-              {{ room.sid }}
-              {% if room.is_co_owner %}
-              <span class="ml-2 inline-block px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 text-[10px] font-sans uppercase tracking-wider align-middle" title="You are a co-owner of this session">Co-owner</span>
-              {% endif %}
-            </td>
-            <td class="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">
-              {% if room.created_at %}
-              {{ room.created_at[:19].replace('T', ' ') }} UTC
-              {% else %}
-              &mdash;
-              {% endif %}
-            </td>
-            <td class="px-4 py-3">
-              {% set dur = room.audio_duration_secs or 0 %}
-              {% if dur > 0 %}
-              <div class="flex items-center gap-2">
-                <div class="w-6 bg-gray-700 rounded h-1 flex-shrink-0">
-                  <div class="bg-blue-500 h-1 rounded" style="width: {{ room.audio_pct }}%"></div>
-                </div>
-                <span class="text-xs text-gray-400 font-mono">{{ (dur // 60)|int }}:{{ '%02d' % ((dur % 60)|int)
-                  }}</span>
-              </div>
-              {% else %}
-              <span class="text-xs text-gray-600">&mdash;</span>
-              {% endif %}
-            </td>
-            <td class="px-4 py-3 text-right">
-              <div class="flex items-center justify-end gap-2 flex-wrap">
-                <a href="/panel/{{ room.sid }}"
-                  class="px-3 py-1 rounded text-xs font-semibold bg-indigo-700 hover:bg-indigo-600 text-indigo-100 transition-colors">
-                  Panel
-                </a>
-                <a href="/edit/{{ room.sid }}"
-                  class="px-3 py-1 rounded text-xs font-semibold bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors">
-                  Edit
-                </a>
-                {% if not room.is_co_owner %}
-                <button onclick="deleteSession('{{ room.sid }}', this)"
-                  class="px-3 py-1 rounded text-xs font-semibold bg-red-900 hover:bg-red-800 text-red-200 transition-colors">
-                  Delete
-                </button>
-                {% endif %}
-              </div>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+    <div class="dark-card">
+      {% for room in rooms %}
+      <div class="session-row grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_180px_140px_auto] md:items-center gap-2 md:gap-4 px-4 py-3 border-b border-gray-700 last:border-0">
+        <div class="font-mono text-xs text-gray-200 break-all">
+          {{ room.sid }}
+          {% if room.is_co_owner %}
+          <span class="ml-2 inline-block px-1.5 py-0.5 rounded bg-gray-700 text-gray-300 text-[10px] font-sans uppercase tracking-wider align-middle" title="You are a co-owner of this session">Co-owner</span>
+          {% endif %}
+        </div>
+        <div class="text-xs text-gray-500">
+          <span class="md:hidden text-gray-600 uppercase tracking-wider mr-2">Created:</span>
+          {% if room.created_at %}
+          {{ room.created_at[:19].replace('T', ' ') }} UTC
+          {% else %}
+          &mdash;
+          {% endif %}
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="md:hidden text-xs text-gray-600 uppercase tracking-wider mr-1">Audio:</span>
+          {% set dur = room.audio_duration_secs or 0 %}
+          {% if dur > 0 %}
+          <div class="w-6 bg-gray-700 rounded h-1 flex-shrink-0">
+            <div class="bg-blue-500 h-1 rounded" style="width: {{ room.audio_pct }}%"></div>
+          </div>
+          <span class="text-xs text-gray-400 font-mono">{{ (dur // 60)|int }}:{{ '%02d' % ((dur % 60)|int) }}</span>
+          {% else %}
+          <span class="text-xs text-gray-600">&mdash;</span>
+          {% endif %}
+        </div>
+        <div class="flex items-center justify-start md:justify-end gap-2 flex-wrap mt-1 md:mt-0">
+          <a href="/panel/{{ room.sid }}"
+            class="px-3 py-1 rounded text-xs font-semibold bg-indigo-700 hover:bg-indigo-600 text-indigo-100 transition-colors">
+            Panel
+          </a>
+          <a href="/edit/{{ room.sid }}"
+            class="px-3 py-1 rounded text-xs font-semibold bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors">
+            Edit
+          </a>
+          {% if not room.is_co_owner %}
+          <button onclick="deleteSession('{{ room.sid }}', this)"
+            class="px-3 py-1 rounded text-xs font-semibold bg-red-900 hover:bg-red-800 text-red-200 transition-colors">
+            Delete
+          </button>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
     </div>
     {% else %}
     <div class="dark-card px-6 py-10 text-center text-sm text-gray-500">
@@ -133,7 +108,7 @@
     try {
       const resp = await fetch('/api/sessions/' + encodeURIComponent(sid), { method: 'DELETE' })
       if (resp.ok) {
-        btn.closest('tr').remove()
+        btn.closest('.session-row').remove()
       } else {
         const data = await resp.json().catch(() => ({}))
         alert('Failed to delete: ' + (data.detail || resp.statusText))
