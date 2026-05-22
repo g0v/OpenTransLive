@@ -813,7 +813,7 @@ async def logout(request: Request):
     return RedirectResponse(url="/login", status_code=302)
 
 
-@app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def dashboard(request: Request):
     _require_admin_email(request)
     users = await users_collection.find({}, {"_id": 0}).to_list(length=1000)
@@ -826,7 +826,7 @@ async def dashboard(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request, "users": users, "current_email": _get_session_email(request)})
 
 
-@app.get("/user-dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.get("/user-dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def user_dashboard(request: Request):
     email, user_uid = _require_logged_in(request)
     if not email or not user_uid:
@@ -861,7 +861,7 @@ async def user_dashboard(request: Request):
     return response
 
 
-@app.post("/api/users/{email}/realtime", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.post("/api/users/{email}/realtime", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def set_user_realtime(request: Request, email: str):
     """Toggle realtime_enabled for a user (admin only)."""
     _require_admin_email(request)
@@ -882,7 +882,7 @@ async def set_user_realtime(request: Request, email: str):
     return {"email": result["email"], "realtime_enabled": result["realtime_enabled"]}
 
 
-@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=3, seconds=60, identifier=_otp_email_identifier))])
+@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_otp_email_identifier))])
 async def send_otp(request: Request):
     body = await request.json()
     email = body.get("email", "").strip()
@@ -926,7 +926,7 @@ async def verify_otp_endpoint(request: Request):
     return {"status": "ok", "is_admin": is_admin, "redirect": "/dashboard" if is_admin else "/user-dashboard"}
 
 
-@app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def get_session_languages_endpoint(request: Request, sid: str):
     """Get the current translate languages for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -937,7 +937,7 @@ async def get_session_languages_endpoint(request: Request, sid: str):
     return {"languages": languages}
 
 
-@app.post("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.post("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def update_session_languages_endpoint(request: Request, sid: str):
     """Update the translate languages for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -960,7 +960,7 @@ async def update_session_languages_endpoint(request: Request, sid: str):
     return {"languages": languages}
 
 
-@app.get("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.get("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def get_session_keywords_endpoint(request: Request, sid: str):
     """Get the current keywords and locked keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -972,7 +972,7 @@ async def get_session_keywords_endpoint(request: Request, sid: str):
     return {"keywords": sorted_keywords, "locked_keywords": locked_keywords}
 
 
-@app.post("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.post("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def update_session_keywords_endpoint(request: Request, sid: str):
     """Update the keywords and locked keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -1015,7 +1015,7 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
     return result
 
 
-@app.get("/api/session/{sid}/text-dictionary", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.get("/api/session/{sid}/text-dictionary", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def get_session_text_dictionary_endpoint(request: Request, sid: str):
     """Get the user-defined text replacement dictionary for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -1026,7 +1026,7 @@ async def get_session_text_dictionary_endpoint(request: Request, sid: str):
     return {"text_dictionary": mapping}
 
 
-@app.post("/api/session/{sid}/text-dictionary", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.post("/api/session/{sid}/text-dictionary", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def update_session_text_dictionary_endpoint(request: Request, sid: str):
     """Update the user-defined text replacement dictionary for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -1056,7 +1056,7 @@ async def update_session_text_dictionary_endpoint(request: Request, sid: str):
     return {"text_dictionary": cleaned}
 
 
-@app.get("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.get("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def get_session_scribe_language_endpoint(request: Request, sid: str):
     """Get the forced detect language for Scribe (empty means auto-detect)."""
     sid = sanitize_query_param(sid, "session ID")
@@ -1067,7 +1067,7 @@ async def get_session_scribe_language_endpoint(request: Request, sid: str):
     return {"language": language}
 
 
-@app.post("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.post("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def update_session_scribe_language_endpoint(request: Request, sid: str):
     """Set or clear the forced detect language for Scribe."""
     sid = sanitize_query_param(sid, "session ID")
@@ -1092,7 +1092,7 @@ async def update_session_scribe_language_endpoint(request: Request, sid: str):
     return {"language": language}
 
 
-@app.get("/api/session/{sid}/translate-tone", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.get("/api/session/{sid}/translate-tone", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def get_session_translate_tone_endpoint(request: Request, sid: str):
     """Get the translation tone for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -1103,7 +1103,7 @@ async def get_session_translate_tone_endpoint(request: Request, sid: str):
     return {"tone": tone}
 
 
-@app.post("/api/session/{sid}/translate-tone", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.post("/api/session/{sid}/translate-tone", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def update_session_translate_tone_endpoint(request: Request, sid: str):
     """Set the translation tone for a session."""
     sid = sanitize_query_param(sid, "session ID")
@@ -1126,7 +1126,7 @@ async def update_session_translate_tone_endpoint(request: Request, sid: str):
 _MAX_CO_OWNERS = 20
 
 
-@app.get("/api/session/{sid}/co-owners", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.get("/api/session/{sid}/co-owners", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def get_session_co_owners_endpoint(request: Request, sid: str):
     """List co-owners for a session. Visible to the primary owner and any co-owner."""
     sid = sanitize_query_param(sid, "session ID")
@@ -1139,7 +1139,7 @@ async def get_session_co_owners_endpoint(request: Request, sid: str):
     }
 
 
-@app.post("/api/session/{sid}/co-owners", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.post("/api/session/{sid}/co-owners", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def add_session_co_owner_endpoint(request: Request, sid: str):
     """Add a co-owner email to the session. Primary owner only."""
     sid = sanitize_query_param(sid, "session ID")
@@ -1194,7 +1194,7 @@ async def add_session_co_owner_endpoint(request: Request, sid: str):
     return {"co_owners": _get_room_co_owner_emails(updated_room)}
 
 
-@app.delete("/api/session/{sid}/co-owners/{email}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.delete("/api/session/{sid}/co-owners/{email}", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def remove_session_co_owner_endpoint(request: Request, sid: str, email: str):
     """Remove a co-owner email from the session. Primary owner only."""
     sid = sanitize_query_param(sid, "session ID")
@@ -1263,7 +1263,7 @@ async def _require_session_primary_owner(request: Request, sid: str) -> tuple[st
     return email, room
 
 
-@app.get("/edit/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.get("/edit/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def edit_transcriptions_page(request: Request, sid: str):
     """Owner-only editor: load saved segments and let the owner correct translations."""
     sid = sanitize_query_param(sid, "session ID")
@@ -1283,7 +1283,7 @@ async def edit_transcriptions_page(request: Request, sid: str):
     return response
 
 
-@app.put("/api/session/{sid}/segments", dependencies=[Depends(RateLimiter(times=30, seconds=10, identifier=_identifier))])
+@app.put("/api/session/{sid}/segments", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def update_session_segment_endpoint(request: Request, sid: str):
     """Update a saved committed segment's corrected text and/or per-language translations.
     Identified by start_time. Owner-only. Refreshes the Redis cache so future viewers
@@ -1355,7 +1355,7 @@ async def update_session_segment_endpoint(request: Request, sid: str):
     return {"status": "ok", "segment": new_seg}
 
 
-@app.delete("/api/session/{sid}/segments", dependencies=[Depends(RateLimiter(times=30, seconds=10, identifier=_identifier))])
+@app.delete("/api/session/{sid}/segments", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def delete_session_segment_endpoint(request: Request, sid: str, start_time: float):
     """Delete a saved committed segment identified by start_time. Owner-only.
     Also removes the segment from the Redis cache if present."""
@@ -1583,7 +1583,7 @@ async def _save_segment_to_mongo(sid, segment, stream_start_time):
 async def hello_world(request: Request):
     return templates.TemplateResponse("index.html", {"request": request, "email": _get_session_email(request)})
 
-@app.get("/download/{id}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.get("/download/{id}", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def download(request: Request, id: str):
     # Sanitize id parameter to prevent NoSQL injection
     id = sanitize_query_param(id, "session ID")
@@ -1608,7 +1608,7 @@ async def download(request: Request, id: str):
     content = json.dumps(data, ensure_ascii=False, indent=2)
     return Response(content=content, media_type="application/json")
 
-@app.get("/download/{id}/srt/{lang}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.get("/download/{id}/srt/{lang}", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def download_srt(request: Request, id: str, lang: str):
     id = sanitize_query_param(id, "session ID")
     if not re.match(r'^[a-zA-Z0-9_-]{1,32}$', lang):
@@ -1655,7 +1655,7 @@ async def session_stream(request: Request, sid: str):
         },
     )
 
-@app.get("/yt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.get("/yt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def yt(request: Request, id: str):
     # Sanitize id parameter to prevent NoSQL injection
     id = sanitize_query_param(id, "session ID")
@@ -1665,7 +1665,7 @@ async def yt(request: Request, id: str):
     data["stream_start_time"] = await get_youtube_start_time(id) 
     return templates.TemplateResponse("yt.html", {"request": request, "id": id, "data": data})
 
-@app.get("/rt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.get("/rt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def rt(request: Request, id: str):
     # Sanitize id parameter to prevent NoSQL injection
     id = sanitize_query_param(id, "session ID")
@@ -1685,7 +1685,7 @@ async def rt(request: Request, id: str):
     )
     return templates.TemplateResponse("rt.html", {"request": request, "id": id, "data": sliced_data})
   
-@app.get("/panel/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.get("/panel/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def panel(request: Request, sid: str):
     # Sanitize sid parameter to prevent NoSQL injection
     sid = sanitize_query_param(sid, "session ID")
@@ -1779,7 +1779,7 @@ async def panel(request: Request, sid: str):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
 
-@app.post("/heartbeat/{sid}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.post("/heartbeat/{sid}", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def heartbeat(request: Request, sid: str):
     """Update admin heartbeat to maintain session lock"""
     sid = sanitize_query_param(sid, "session ID")
@@ -1810,7 +1810,7 @@ async def heartbeat(request: Request, sid: str):
     await rooms_collection.update_one({"sid": sid}, {"$set": update})
     return response
 
-@app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def release_admin(request: Request, sid: str):
     """Release admin lock when admin leaves"""
     sid = sanitize_query_param(sid, "session ID")
@@ -1836,7 +1836,7 @@ async def release_admin(request: Request, sid: str):
     request.session.pop("secret_key", None)
     return {"status": "released"}
 
-@app.delete("/api/sessions/{sid}", dependencies=[Depends(RateLimiter(times=10, seconds=10, identifier=_identifier))])
+@app.delete("/api/sessions/{sid}", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def delete_session(request: Request, sid: str):
     """Release session ownership, removing it from the owner's My Sessions list.
     Once deleted, anyone can claim the session again. Primary owner only —
