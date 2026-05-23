@@ -1,4 +1,11 @@
-const socket = io();
+// Passing creds via the io() auth payload pre-verifies the socket on the
+// server's connect handler, so events firing before join_session completes
+// (e.g. mic_on right after a reconnect) don't race and see verified=False.
+// Function form re-reads the current user_secret_key on every reconnect,
+// which matters because it can be rotated by updateUserSecretKey().
+const socket = io({
+  auth: (cb) => cb({ session_id: sessionId, secret_key: user_secret_key }),
+});
 const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
 let selectedDeviceId = null;

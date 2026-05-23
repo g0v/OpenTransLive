@@ -1857,11 +1857,65 @@ async def delete_session(request: Request, sid: str):
     return {"status": "deleted"}
 
 # Socket.IO Event Handlers
+async def _auto_rejoin_from_auth(socket_id, auth) -> dict:
+    """Pre-verify a panel socket from the `auth` payload supplied to `io()`.
+
+    Returns the initial session dict to save. When the auth payload carries a
+    valid (session_id, secret_key), the socket is marked verified and joined
+    to its room immediately, so events fired before the frontend's explicit
+    `join_session` round-trip don't race and see verified=False on reconnect.
+    Without valid auth, returns an unverified session (viewers, fresh tabs).
+    """
+    session_data: dict = {'verified': False}
+    if not isinstance(auth, dict):
+        return session_data
+    session_id = auth.get('session_id')
+    secret_key = auth.get('secret_key')
+    if not isinstance(session_id, str) or not isinstance(secret_key, str):
+        return session_data
+    sid_ok, _ = validate_query_param(session_id, "session_id")
+    key_ok, _ = validate_query_param(secret_key, "secret_key")
+    if not sid_ok or not key_ok:
+        return session_data
+    room = await rooms_collection.find_one({"sid": session_id, "secret_key": secret_key})
+    if not room:
+        logger.warning(
+            "connect auto_rejoin_failed sid_hash=%s socket_hash=%s",
+            _hash_token(session_id),
+            _hash_token(socket_id),
+        )
+        return session_data
+    session_data.update({
+        'verified': True,
+        'secret_key': secret_key,
+        'session_id': session_id,
+        'email': await _get_room_owner_email(room),
+    })
+    await sio.enter_room(socket_id, session_id)
+    logger.info(
+        "connect auto_rejoin sid_hash=%s socket_hash=%s",
+        _hash_token(session_id),
+        _hash_token(socket_id),
+    )
+    return session_data
+
+
 @sio.event
 async def connect(socket_id, environ, auth):
-    """Handle client connection"""
-    await sio.save_session(socket_id, {'verified': False})
-    logger.info("client_connected socket_hash=%s", _hash_token(socket_id))
+    """Handle client connection.
+
+    If `auth` includes a valid {session_id, secret_key}, the socket is
+    pre-verified and joined to its room before any other event can arrive.
+    The frontend still emits `join_session` as the canonical handshake
+    (it's idempotent and triggers the joined_session UI update).
+    """
+    session_data = await _auto_rejoin_from_auth(socket_id, auth)
+    await sio.save_session(socket_id, session_data)
+    logger.info(
+        "client_connected socket_hash=%s verified=%s",
+        _hash_token(socket_id),
+        session_data['verified'],
+    )
     await sio.emit('connected', {'status': 'connected', 'client_id': socket_id}, to=socket_id)
 
 @sio.event
