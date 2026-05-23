@@ -80,12 +80,12 @@
 
     <div class="dark-card divide-y divide-gray-700">
       {% for seg in segments %}
-      <div class="px-4 py-3 segment-row" data-start-time="{{ seg.start_time }}">
+      <div class="px-4 py-3 segment-row" data-start-time="{{ seg.start_time }}"{% if seg.end_time %} data-end-time="{{ seg.end_time }}"{% endif %}>
         <div class="flex flex-wrap items-center gap-1 mb-2 text-xs text-gray-500 font-mono">
-          <span>{{ "%.2f"|format(seg.start_time) }}s</span>
+          <span class="seg-start-display">{{ seg.start_time }}</span>
           {% if seg.end_time %}
           <iconify-icon icon="mdi:arrow-right" width="12" height="12"></iconify-icon>
-          <span>{{ "%.2f"|format(seg.end_time) }}s</span>
+          <span class="seg-end-display">{{ seg.end_time }}</span>
           {% endif %}
         </div>
         <div class="grid grid-cols-[88px_1fr] gap-y-2 gap-x-3">
@@ -122,6 +122,18 @@
     el.style.height = el.scrollHeight + 'px';
   }
 
+  function formatDateTime(ts) {
+    const n = Number(ts);
+    if (!Number.isFinite(n)) return '';
+    return new Date(n * 1000).toLocaleString();
+  }
+
+  function formatTimeShort(ts) {
+    const n = Number(ts);
+    if (!Number.isFinite(n)) return '';
+    return new Date(n * 1000).toLocaleTimeString();
+  }
+
   function setRowStatus(row, msg, isError) {
     const el = row.querySelector('.row-status');
     el.textContent = msg;
@@ -138,6 +150,10 @@
       autosize(t);
       t.addEventListener('input', () => autosize(t));
     });
+    const startEl = row.querySelector('.seg-start-display');
+    if (startEl) startEl.textContent = formatDateTime(row.dataset.startTime);
+    const endEl = row.querySelector('.seg-end-display');
+    if (endEl && row.dataset.endTime) endEl.textContent = formatDateTime(row.dataset.endTime);
   });
 
   // ── Floating segment TOC ──────────────────────────────────────────────
@@ -171,7 +187,7 @@
 
     const timeSpan = document.createElement('span');
     timeSpan.className = 'font-mono text-[11px] text-gray-500 shrink-0 pt-0.5';
-    timeSpan.textContent = startTime.toFixed(1) + 's';
+    timeSpan.textContent = formatTimeShort(startTime);
 
     const textSpan = document.createElement('span');
     textSpan.className = 'toc-text text-xs text-gray-200 break-words';
@@ -234,7 +250,7 @@
     btn.addEventListener('click', async () => {
       const row = btn.closest('.segment-row');
       const startTime = parseFloat(row.dataset.startTime);
-      if (!confirm(`Delete segment at ${startTime.toFixed(2)}s? This cannot be undone.`)) return;
+      if (!confirm(`Delete segment at ${formatDateTime(startTime)}? This cannot be undone.`)) return;
 
       const siblings = row.querySelectorAll('button');
       siblings.forEach(b => { b.disabled = true; });
