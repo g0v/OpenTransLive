@@ -26,7 +26,7 @@ _CORRECT_PROMPT = (
 )
 
 _TONE_MAP = {
-    "formal": "formal and professional",
+    "formal": "formal business",
     "fluent": "natural and fluency",
     "casual": "casual and conversational",
     "literal": "literal and word-for-word",
@@ -34,13 +34,12 @@ _TONE_MAP = {
 
 _TRANSLATE_PROMPT = (
     "Role: Expert Translator & Localizer.\n"
-    "Task: Translate <translate_this> into {language}.\n"
+    "Task: Translate <translate_this> into natural, native-level {language}.\n"
     "Rules:\n"
-    "1. Accurate first; Tone: {tone}.\n"
+    "1. Accurate and faithful first; Tone: {tone}.\n"
     "2. Adapt dates/numbers/nouns/etc. to target language conventions, then add punctuation.\n"
-    "3. If same language, fix typos only.\n"
-    "4. Loosely follow previous translations.\n"
-    "5. Output ONLY the processed translated text.\n\n"
+    "3. Loosely follow previous translations.\n"
+    "4. Output ONLY the processed translated text.\n\n"
     "Context: {keywords}\n\n"
     "Previous translation: {prev_translation}\n\n"
 )
