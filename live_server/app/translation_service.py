@@ -375,10 +375,14 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
                 keywords=keywords_str,
                 tone=tone,
             )
-            translated[language] = _normalize_chinese_output(out, language)
         except Exception as e:
             log_exception(logger, e, f"Translation error for {language}")
-            translated[language] = result['corrected']
+            out = None
+        if out is None:
+            # Invariant: must not write source-language text into translated[language].
+            translated[language] = pt_trans or ""
+            return
+        translated[language] = _normalize_chinese_output(out, language)
 
     await asyncio.gather(*[_translation_worker(lang) for lang in languages])
 

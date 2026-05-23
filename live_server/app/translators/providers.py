@@ -140,7 +140,7 @@ class ChatCompletionTranslator(BaseTranslator):
         prev_translation: str,
         keywords: str,
         tone: str = "",
-    ) -> str:
+    ) -> str | None:
         tone_desc = _TONE_MAP.get(tone, tone) if tone else _TONE_MAP["fluent"]
         body = {
             **self.translate_params,
@@ -169,7 +169,7 @@ class ChatCompletionTranslator(BaseTranslator):
                 .strip()
             )
             return re.sub(r"[\n\r]+", " ", raw)
-        return text
+        return None
 
     async def extract_keywords(
         self, text: str, existing_keywords: dict[str, int]

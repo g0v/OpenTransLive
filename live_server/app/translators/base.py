@@ -28,8 +28,8 @@ class BaseTranslator(ABC):
         prev_translation: str,
         keywords: str,
         tone: str = "",
-    ) -> str:
-        """Return *text* translated into *language*.
+    ) -> str | None:
+        """Return *text* translated into *language*, or None if translation failed.
 
         Args:
             text: Corrected transcription to translate.
