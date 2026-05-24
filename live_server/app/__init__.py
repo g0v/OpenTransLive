@@ -1484,25 +1484,25 @@ async def get_cached_transcription(id, num_committed: int = 10) -> Any:
 async def migrate_to_zset(id, data):
     """Helper to migrate old list storage to Redis ZSET and Meta keys"""
     try:
-        if not data.get("transcriptions"):
+        transcriptions = data.get("transcriptions")
+        if not transcriptions:
             return
-            
-        # Add to ZSET
+
+        # _load_segments_from_db sorts ascending by start_time; keep only the most
+        # recent N so we never grow the ZSET past its cap. Long sessions (multi-day
+        # conferences with multi-language translations) would otherwise blow
+        # maxmemory mid-pipeline, before the trailing zremrangebyrank could run.
+        recent = transcriptions[-TRANSCRIPTION_ZSET_MAX:]
+
         zset_key = f"transcription:{id}:list"
         pipe = redis_client.pipeline()
-        for seg in data["transcriptions"]:
-            pipe.zadd(zset_key, {json.dumps(seg): seg["start_time"]})
-        # Cap ZSET size by removing oldest entries beyond limit
-        pipe.zremrangebyrank(zset_key, 0, -(TRANSCRIPTION_ZSET_MAX + 1))
-
-        # Set Meta
-        meta = {"stream_start_time": data.get("stream_start_time")}
-        pipe.setex(f"transcription:{id}:meta", 3600, json.dumps(meta))
-        
-        # Set expiry for ZSET
-        pipe.expire(f"transcription:{id}:list", 3600)
-        
-        # Delete old key
+        pipe.zadd(zset_key, {json.dumps(seg): seg["start_time"] for seg in recent})
+        pipe.setex(
+            f"transcription:{id}:meta",
+            TRANSCRIPTION_TTL,
+            json.dumps({"stream_start_time": data.get("stream_start_time")}),
+        )
+        pipe.expire(zset_key, TRANSCRIPTION_TTL)
         pipe.delete(f"transcription:{id}")
         await pipe.execute()
     except Exception as e:

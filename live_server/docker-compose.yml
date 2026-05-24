@@ -5,7 +5,7 @@ services:
     command:
       - redis-server
       - --maxmemory
-      - ${REDIS_MAXMEMORY:-512mb}
+      - ${REDIS_MAXMEMORY:-1024mb}
       - --maxmemory-policy
       - ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
 
