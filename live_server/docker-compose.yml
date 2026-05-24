@@ -2,6 +2,12 @@ services:
   redis:
     image: redis:${REDIS_VERSION:-latest}
     container_name: opentranslive-redis
+    command:
+      - redis-server
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-512mb}
+      - --maxmemory-policy
+      - ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
 
   mongodb:
     image: mongo:${MONGODB_VERSION:-latest}

@@ -401,6 +401,7 @@ youtube_data_cache: TTLCache = TTLCache(maxsize=256, ttl=_YOUTUBE_CACHE_TTL)
 redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
 TRANSCRIPTION_TTL = 3600
+TRANSCRIPTION_ZSET_MAX = 250
 SSE_RETRY_MS = 3000
 SSE_HEARTBEAT_SECONDS = 15
 VIEWER_PRESENCE_TTL = 35
@@ -1492,7 +1493,7 @@ async def migrate_to_zset(id, data):
         for seg in data["transcriptions"]:
             pipe.zadd(zset_key, {json.dumps(seg): seg["start_time"]})
         # Cap ZSET size by removing oldest entries beyond limit
-        pipe.zremrangebyrank(zset_key, 0, -1001)
+        pipe.zremrangebyrank(zset_key, 0, -(TRANSCRIPTION_ZSET_MAX + 1))
 
         # Set Meta
         meta = {"stream_start_time": data.get("stream_start_time")}
@@ -1985,7 +1986,7 @@ async def _process_transcription_update(session_id, sync_data):
     else:
         pipe = redis_client.pipeline()
         pipe.zadd(list_key, {json.dumps(sync_data): sync_data["start_time"]})
-        pipe.zremrangebyrank(list_key, 0, -1001)
+        pipe.zremrangebyrank(list_key, 0, -(TRANSCRIPTION_ZSET_MAX + 1))
         pipe.expire(list_key, TRANSCRIPTION_TTL)
         # Skip meta write when we have no stream_start_time so a transient read
         # failure (which zeroes stream_start_time) doesn't stomp good meta.
