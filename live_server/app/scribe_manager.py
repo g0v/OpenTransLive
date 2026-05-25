@@ -20,6 +20,7 @@ _IDLE_TIMEOUT_SECS = 60       # stop session after 1 minute with no audio
 _IDLE_CHECK_INTERVAL = 30     # how often the watchdog checks (seconds)
 _MAX_PARTIAL_TOKENS = 150     # maximum length of partial transcript
 _MIN_COMMIT_TOKENS = 50       # commits shorter than this are buffered and merged into the next segment
+_COMMIT_TIMEOUT_SECS = 10     # force-flush buffered short commits after this delay if no follow-up arrives
 
 class ScribeSessionManager:
     _BYTES_PER_SEC = 16000 * 2          # 16kHz 16-bit mono PCM
@@ -53,6 +54,7 @@ class ScribeSessionManager:
         # Prefix holding committed text from segments too short to stand alone.
         # Prepended to subsequent partials/commits so translation gets useful context.
         self.pending_commit_text = ""
+        self._commit_timeout_task: asyncio.Task | None = None
         # Usage tracking
         self.audio_bytes_total = 0
         self.audio_chunks = 0
@@ -244,6 +246,8 @@ class ScribeSessionManager:
                     # Short commit: keep segment open and accumulate as prefix.
                     print(f"Short commit, appending to pending: {repr(combined_text)}", flush=True)
                     self.pending_commit_text = combined_text + " "
+                    if self._commit_timeout_task is None or self._commit_timeout_task.done():
+                        self._commit_timeout_task = asyncio.create_task(self._commit_timeout_handler())
                 if encode_len > _MAX_PARTIAL_TOKENS:
                     self.should_commit = True
                 asyncio.create_task(self.callback(self.session_id, transcription))
@@ -252,10 +256,33 @@ class ScribeSessionManager:
                 self.pending_commit_text = ""
                 self.seg_start_time = None
                 self.should_commit = False
+                if self._commit_timeout_task and not self._commit_timeout_task.done():
+                    self._commit_timeout_task.cancel()
                 asyncio.create_task(self.callback(self.session_id, transcription))
 
         except Exception as e:
             log_exception(logger, e, "Error handling transcript")
+
+    async def _commit_timeout_handler(self):
+        """Force-flush pending_commit_text after _COMMIT_TIMEOUT_SECS so short
+        commits don't sit indefinitely when no longer-form follow-up arrives."""
+        try:
+            await asyncio.sleep(_COMMIT_TIMEOUT_SECS)
+            if self.pending_commit_text and self.seg_start_time is not None:
+                now = datetime.now(timezone.utc)
+                text = self.pending_commit_text.strip()
+                transcription = self._build_transcription(text, False, now)
+                self.pending_commit_text = ""
+                self.seg_start_time = None
+                self.should_commit = False
+                logger.info(
+                    f"Commit timeout reached for {self.session_id}, flushing: {repr(text)}"
+                )
+                asyncio.create_task(self.callback(self.session_id, transcription))
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            log_exception(logger, e, "Error in commit timeout handler")
 
     async def idle_watchdog_loop(self):
         """Stop the session automatically after _IDLE_TIMEOUT_SECS with no audio."""
@@ -376,6 +403,8 @@ class ScribeSessionManager:
     async def stop(self):
         self.is_running = False
         self._stop_event.set()
+        if self._commit_timeout_task and not self._commit_timeout_task.done():
+            self._commit_timeout_task.cancel()
         if self.ws:
             try:
                 await self.ws.close()
