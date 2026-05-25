@@ -4,26 +4,9 @@
   <!-- Top Bar -->
   <div id="top-bar" class="flex px-3 py-1 shrink-0 border-b top-bar">
 
-    <!-- View select -->
-    <div class="flex items-center gap-1.5 shrink-0">
-      <span class="text-xs font-medium opacity-60 inline-flex items-center">
-        <iconify-icon icon="ph:globe" width="20" height="20"></iconify-icon>
-      </span>
-      <select id="combined-select"
-        class="text-xs border rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 select-ctrl">
-      </select>
-    </div>
     <div class="flex flex-wrap gap-2 ms-auto items-center justify-end">
-      <!-- Font size controls -->
-      <div class="flex items-center gap-1 shrink-0" title="Font size">
-        <button id="font-decrease" class="icon-btn icon-btn-sm" aria-label="Decrease font size"><iconify-icon
-            icon="mdi:format-font-size-decrease" width="18" height="18"></iconify-icon></button>
-        <button id="font-increase" class="icon-btn icon-btn-sm" aria-label="Increase font size"><iconify-icon
-            icon="mdi:format-font-size-increase" width="18" height="18"></iconify-icon></button>
-      </div>
-
       <!-- Theme buttons -->
-      <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
+      <div class="flex items-center gap-1 shrink-0">
         <button id="theme-light" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="Light theme"
           title="Light theme">
           <iconify-icon icon="ph:sun" width="15" height="15"></iconify-icon>
@@ -38,8 +21,24 @@
         </button>
       </div>
 
+      <!-- Font size controls -->
+      <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider" title="Font size">
+        <button id="font-decrease" class="icon-btn icon-btn-sm" aria-label="Decrease font size"><iconify-icon
+            icon="mdi:format-font-size-decrease" width="18" height="18"></iconify-icon></button>
+        <button id="font-increase" class="icon-btn icon-btn-sm" aria-label="Increase font size"><iconify-icon
+            icon="mdi:format-font-size-increase" width="18" height="18"></iconify-icon></button>
+        <!-- Language settings button -->
+        <button id="sort-btn" class="icon-btn icon-btn-sm" aria-label="Language settings" title="Language settings">
+          <iconify-icon icon="ph:translate" width="18" height="18"></iconify-icon>
+        </button>
+      </div>
+
       <!-- Action buttons -->
       <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
+        <!-- Info / help button -->
+        <button id="info-btn" class="icon-btn icon-btn-sm" aria-label="URL parameters help" title="URL parameters">
+          <iconify-icon icon="ph:info" width="15" height="15"></iconify-icon>
+        </button>
         <!-- QR code button -->
         <div id="qr-area" class="relative">
           <button id="qr-btn" class="icon-btn icon-btn-sm" aria-label="Show QR code" title="Show QR code">
@@ -53,15 +52,6 @@
             <div class="text-xs mt-2 opacity-50 text-center max-w-40 truncate" id="qr-url-text"></div>
           </div>
         </div>
-
-        <!-- Info / help button -->
-        <button id="info-btn" class="icon-btn icon-btn-sm" aria-label="URL parameters help" title="URL parameters">
-          <iconify-icon icon="ph:info" width="15" height="15"></iconify-icon>
-        </button>
-        <!-- Language order button -->
-        <button id="sort-btn" class="icon-btn icon-btn-sm" aria-label="Language order" title="Language order">
-          <iconify-icon icon="ph:arrows-down-up" width="15" height="15"></iconify-icon>
-        </button>
       </div>
 
       <!-- Connection status -->
@@ -146,26 +136,26 @@
 
         <div class="border-t border-divider"></div>
 
-        <!-- layout -->
+        <!-- show -->
         <div>
           <div class="param-header">
-            <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">layout</code>
-            <span class="text-xs opacity-50">default: grid</span>
+            <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">show</code>
+            <span class="text-xs opacity-50">default: all</span>
           </div>
-          <p class="text-sm opacity-80 mb-2">Controls which language is shown. Use <code
-              class="font-mono text-xs">grid</code> to show all languages in a grid, or a language code (e.g. <code
-              class="font-mono text-xs">en</code>, <code class="font-mono text-xs">zh</code>) to show a single language.
-          </p>
+          <p class="text-sm opacity-80 mb-2">Comma-separated language codes to display. Omit to show every language. Use
+            the language settings popup to toggle visibility and order interactively.</p>
           <div class="param-btn-row">
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="layout"
-              data-value="grid">grid</button>
-            <span class="text-xs opacity-40 self-center">or a language code:</span>
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="layout"
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="show"
+              data-value="">all</button>
+            <span class="text-xs opacity-40 self-center">or codes:</span>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="show"
               data-value="en-US">en</button>
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="layout"
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="show"
               data-value="zh-Hant-TW">zh</button>
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="layout"
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="show"
               data-value="ja-JP">ja</button>
+            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="show"
+              data-value="en-US,zh-Hant-TW">en,zh</button>
           </div>
         </div>
 
@@ -225,8 +215,8 @@
     <div class="relative z-10 rounded-2xl shadow-2xl border max-w-sm w-full mx-4 info-modal-bg overflow-hidden">
       <div class="flex items-center justify-between px-5 py-4 border-b border-divider">
         <div>
-          <h2 class="text-base font-semibold">Language Order</h2>
-          <p class="text-xs opacity-50 mt-0.5">Set the display order of languages in the grid and selector</p>
+          <h2 class="text-base font-semibold">Languages</h2>
+          <p class="text-xs opacity-50 mt-0.5">Toggle visibility and reorder languages</p>
         </div>
         <button id="sort-close" class="icon-btn icon-btn-md" aria-label="Close">
           <iconify-icon icon="ph:x" width="16" height="16"></iconify-icon>
@@ -234,6 +224,10 @@
       </div>
       <div class="px-5 py-4 space-y-1.5 max-h-[60vh] overflow-y-auto" id="sort-lang-list">
         <p class="text-xs opacity-50">No languages available yet.</p>
+      </div>
+      <div class="px-5 pb-4 flex justify-end gap-2">
+        <button id="sort-show-all"
+          class="text-xs px-3 py-1.5 rounded-md param-example-btn font-medium">Show all</button>
       </div>
     </div>
   </div>
@@ -589,11 +583,23 @@
   let transcriptionsData = {{ data | tojson(indent = 2) }};
   let lastSubtitle = null;
   let currentLayout = 'grid';
-  let currentLanguages = [];
   let currentTheme = 'light';
   let currentFontSizeRem = 1.25;
   const renderedText = new Map();
   let languageOrder = [];
+  let urlShowList = null;        // null = unconstrained; array = ordered codes from URL
+  let hiddenLanguages = new Set();
+  (function initShowListFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const showParam = params.get('show');
+    const layoutParam = params.get('layout');
+    if (showParam !== null) {
+      const langs = showParam.split(',').map(s => s.trim()).filter(Boolean);
+      urlShowList = langs.length ? langs : null;
+    } else if (layoutParam && layoutParam !== 'grid') {
+      urlShowList = [layoutParam];
+    }
+  })();
   const statusIndicator = document.getElementById('status-indicator');
   const statusText = document.getElementById('status-text');
   let initialized = false;
@@ -720,24 +726,111 @@
         applyTheme(value);
         document.querySelectorAll(`[data-param="theme"]`).forEach(b => b.classList.remove('active-param'));
         btn.classList.add('active-param');
-      } else if (param === 'layout') {
-        let layoutVal = value === 'grid' ? 'grid' : 'single-' + value;
-        document.getElementById('combined-select').value = layoutVal;
-        document.getElementById('combined-select').dispatchEvent(new Event('change'));
-        document.querySelectorAll(`[data-param="layout"]`).forEach(b => b.classList.remove('active-param'));
+      } else if (param === 'show') {
+        applyShowSelection(value);
+        document.querySelectorAll(`[data-param="show"]`).forEach(b => b.classList.remove('active-param'));
         btn.classList.add('active-param');
-        updateUrlParam('layout', value);
       }
       updateCurrentUrlDisplay();
     });
   });
 
   // ------------------------------------------------------------------ //
-  // Language order                                                      //
+  // Language visibility & order                                         //
   // ------------------------------------------------------------------ //
-  function getOrderedLanguages(languages) {
-    languages.forEach(l => { if (!languageOrder.includes(l)) languageOrder.push(l); });
-    return languageOrder.filter(l => languages.includes(l));
+  function discoverLanguages() {
+    let languages = null;
+    if (transcriptionsData?.partial?.result?.translated) {
+      languages = Object.keys(transcriptionsData.partial.result.translated || {});
+    } else if (transcriptionsData?.transcriptions) {
+      languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
+    }
+    if (!languages) return false;
+    let changed = false;
+    languages.forEach(l => {
+      if (!languageOrder.includes(l)) {
+        languageOrder.push(l);
+        if (urlShowList && !urlShowList.includes(l)) hiddenLanguages.add(l);
+        changed = true;
+      }
+    });
+    return changed;
+  }
+
+  function getVisibleOrderedLanguages() {
+    return languageOrder.filter(l => !hiddenLanguages.has(l));
+  }
+
+  function updateShowUrlParam() {
+    // Clear legacy layout param so we don't write conflicting state.
+    updateUrlParam('layout', null);
+    const visible = getVisibleOrderedLanguages();
+    if (hiddenLanguages.size === 0 || visible.length === 0) {
+      updateUrlParam('show', null);
+    } else {
+      updateUrlParam('show', visible.join(','));
+    }
+  }
+
+  function applyVisibilityChange() {
+    updateShowUrlParam();
+    const visible = getVisibleOrderedLanguages();
+    const nextLayout = visible.length === 1 ? 'single' : 'grid';
+    const singleView = document.getElementById('single-view');
+    const gridView = document.getElementById('grid-view');
+    if (nextLayout !== currentLayout) {
+      currentLayout = nextLayout;
+      if (nextLayout === 'single') {
+        singleView.classList.remove('hidden');
+        gridView.classList.add('hidden');
+      } else {
+        singleView.classList.add('hidden');
+        gridView.classList.remove('hidden');
+      }
+      // Reset single-view DOM so it rebuilds for the new visible language.
+      const dataContent = document.getElementById('single-content');
+      dataContent.innerHTML = '';
+      delete dataContent.dataset.language;
+      for (const k of renderedText.keys()) {
+        if (k.startsWith('single:')) renderedText.delete(k);
+      }
+    }
+    // Grid container may have stale children for languages that became hidden.
+    document.getElementById('grid-content').innerHTML = '';
+    languageOrder.forEach(l => renderedText.delete('grid:' + l));
+    initialized = false;
+    refreshView();
+    setTimeout(() => { initialized = true; }, 100);
+  }
+
+  function applyShowSelection(value) {
+    const langs = (value || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (langs.length === 0) {
+      urlShowList = null;
+      hiddenLanguages.clear();
+    } else {
+      urlShowList = langs;
+      hiddenLanguages = new Set(languageOrder.filter(l => !langs.includes(l)));
+    }
+    renderSortModal();
+    applyVisibilityChange();
+  }
+
+  function toggleLanguageVisibility(lang) {
+    if (hiddenLanguages.has(lang)) hiddenLanguages.delete(lang);
+    else hiddenLanguages.add(lang);
+    if (hiddenLanguages.size === 0) urlShowList = null;
+    else urlShowList = getVisibleOrderedLanguages();
+    renderSortModal();
+    applyVisibilityChange();
+  }
+
+  function showAllLanguages() {
+    if (hiddenLanguages.size === 0) return;
+    hiddenLanguages.clear();
+    urlShowList = null;
+    renderSortModal();
+    applyVisibilityChange();
   }
 
   function renderSortModal() {
@@ -752,8 +845,16 @@
       const item = document.createElement('div');
       item.className = 'sort-lang-item flex items-center gap-2 px-3 py-1.5';
 
+      const eyeBtn = document.createElement('button');
+      const visible = !hiddenLanguages.has(lang);
+      eyeBtn.className = 'icon-btn icon-btn-sm' + (visible ? '' : ' opacity-40');
+      eyeBtn.setAttribute('aria-label', visible ? 'Hide language' : 'Show language');
+      eyeBtn.title = visible ? 'Hide' : 'Show';
+      eyeBtn.innerHTML = `<iconify-icon icon="${visible ? 'ph:eye' : 'ph:eye-slash'}" width="16" height="16"></iconify-icon>`;
+      eyeBtn.addEventListener('click', () => toggleLanguageVisibility(lang));
+
       const label = document.createElement('span');
-      label.className = 'flex-1 text-sm font-mono';
+      label.className = 'flex-1 text-sm font-mono' + (visible ? '' : ' opacity-40');
       label.textContent = lang;
 
       const upBtn = document.createElement('button');
@@ -770,6 +871,7 @@
       downBtn.innerHTML = '<iconify-icon icon="ph:arrow-down" width="14" height="14"></iconify-icon>';
       downBtn.addEventListener('click', () => moveLang(idx, 1));
 
+      item.appendChild(eyeBtn);
       item.appendChild(label);
       item.appendChild(upBtn);
       item.appendChild(downBtn);
@@ -781,10 +883,9 @@
     const newIdx = idx + direction;
     if (newIdx < 0 || newIdx >= languageOrder.length) return;
     [languageOrder[idx], languageOrder[newIdx]] = [languageOrder[newIdx], languageOrder[idx]];
+    if (urlShowList) urlShowList = getVisibleOrderedLanguages();
     renderSortModal();
-    currentLanguages = [];
-    document.getElementById('grid-content').innerHTML = '';
-    populateCombinedSelect();
+    applyVisibilityChange();
   }
 
   const sortModal = document.getElementById('sort-modal');
@@ -794,6 +895,7 @@
   });
   document.getElementById('sort-close').addEventListener('click', () => sortModal.classList.add('hidden'));
   document.getElementById('sort-backdrop').addEventListener('click', () => sortModal.classList.add('hidden'));
+  document.getElementById('sort-show-all').addEventListener('click', showAllLanguages);
 
   // ------------------------------------------------------------------ //
   // Mobile language picker                                              //
@@ -804,10 +906,9 @@
   function maybeShowMobilePicker(languages) {
     if (mobilePickerShown) return;
     if (window.innerWidth >= 768) return;           // desktop — skip
-    if (currentLayout !== 'grid') return;            // already on single view
     const params = new URLSearchParams(window.location.search);
-    if (params.has('layout')) return;               // explicit URL param — respect it
-    if (languages.length === 0) return;
+    if (params.has('show') || params.has('layout')) return;  // explicit URL state — respect it
+    if (languages.length <= 1) return;
 
     mobilePickerShown = true;
     const list = document.getElementById('mobile-lang-list');
@@ -818,9 +919,7 @@
       btn.textContent = lang;
       btn.addEventListener('click', () => {
         mobileLangModal.classList.add('hidden');
-        const sel = document.getElementById('combined-select');
-        sel.value = 'single-' + lang;
-        sel.dispatchEvent(new Event('change'));
+        applyShowSelection(lang);
       });
       list.appendChild(btn);
     });
@@ -838,33 +937,18 @@
   // ------------------------------------------------------------------ //
   // View / layout                                                       //
   // ------------------------------------------------------------------ //
-  function populateCombinedSelect() {
-    let languages = null;
-    if (transcriptionsData?.partial?.result?.translated) {
-      languages = Object.keys(transcriptionsData.partial.result.translated || {});
-    } else if (transcriptionsData?.transcriptions) {
-      languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
+  function syncLanguagesFromData() {
+    const changed = discoverLanguages();
+    if (!changed) return;
+    if (!sortModal.classList.contains('hidden')) renderSortModal();
+    // Pick the layout based on what's currently visible. If a new language
+    // arrived and is visible, this may flip single → grid.
+    const visible = getVisibleOrderedLanguages();
+    const desiredLayout = visible.length === 1 ? 'single' : 'grid';
+    if (desiredLayout !== currentLayout) {
+      applyVisibilityChange();
     }
-    if (!languages) return;
-    const orderedLanguages = getOrderedLanguages(languages);
-    const combinedSelect = document.getElementById('combined-select');
-    if (orderedLanguages.length === currentLanguages.length && orderedLanguages.every((l, i) => currentLanguages[i] === l)) return;
-    let currentSelect = combinedSelect.value || 'grid';
-    currentLanguages = orderedLanguages;
-    combinedSelect.innerHTML = '';
-    const gridOption = document.createElement('option');
-    gridOption.value = 'grid';
-    gridOption.textContent = 'All languages';
-    combinedSelect.appendChild(gridOption);
-    orderedLanguages.forEach(language => {
-      const option = document.createElement('option');
-      option.value = `single-${language}`;
-      option.textContent = language;
-      combinedSelect.appendChild(option);
-    });
-    combinedSelect.value = currentSelect;
-    combinedSelect.dispatchEvent(new Event('change'));
-    maybeShowMobilePicker(currentLanguages);
+    maybeShowMobilePicker(languageOrder);
   }
 
   function refreshView() {
@@ -1081,14 +1165,7 @@
 
   function refreshSingleView() {
     const dataContent = document.getElementById('single-content');
-    const selectedValue = document.getElementById('combined-select').value;
-    let selectedLanguage;
-    if (selectedValue.startsWith('single-')) {
-      selectedLanguage = selectedValue.replace('single-', '');
-    } else {
-      const lastTrans = transcriptionsData.transcriptions?.[transcriptionsData.transcriptions.length - 1];
-      selectedLanguage = Object.keys(lastTrans?.result?.translated || transcriptionsData.partial?.result?.translated || {})[0];
-    }
+    const selectedLanguage = getVisibleOrderedLanguages()[0];
     if (!selectedLanguage) return;
 
     if (dataContent.dataset.language !== selectedLanguage) {
@@ -1118,14 +1195,8 @@
 
   function refreshGridView() {
     const gridContent = document.getElementById('grid-content');
-    let rawLanguages = [];
-    if (transcriptionsData?.partial?.result?.translated) {
-      rawLanguages = Object.keys(transcriptionsData.partial.result.translated || {});
-    } else if (transcriptionsData?.transcriptions?.length > 0) {
-      rawLanguages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
-    }
-    if (rawLanguages.length === 0) return;
-    const languages = getOrderedLanguages(rawLanguages);
+    const languages = getVisibleOrderedLanguages();
+    if (languages.length === 0) return;
     const languageCount = languages.length;
 
     let actualCols = 1;
@@ -1195,38 +1266,6 @@
     });
   }
 
-  function switchLayout(selectedValue) {
-    const singleView = document.getElementById('single-view');
-    const gridView = document.getElementById('grid-view');
-    if (selectedValue === 'grid') {
-      currentLayout = 'grid';
-      singleView.classList.add('hidden');
-      gridView.classList.remove('hidden');
-    } else {
-      currentLayout = 'single';
-      singleView.classList.remove('hidden');
-      gridView.classList.add('hidden');
-      const dataContent = document.getElementById('single-content');
-      dataContent.innerHTML = '';
-      delete dataContent.dataset.language;
-      for (const k of renderedText.keys()) {
-        if (k.startsWith('single:')) renderedText.delete(k);
-      }
-    }
-    refreshView();
-    // Sync URL
-    const langVal = selectedValue === 'grid' ? 'grid' : selectedValue.replace('single-', '');
-    updateUrlParam('layout', langVal === 'grid' ? null : langVal);
-  }
-
-  document.getElementById('combined-select').addEventListener('change', function () {
-    initialized = false;
-    switchLayout(this.value);
-    setTimeout(() => {
-      initialized = true;
-    }, 100);
-  });
-
   document.addEventListener('DOMContentLoaded', function () {
     let stream = null;
     let reconnectTimer = null;
@@ -1261,7 +1300,7 @@
           transcriptionsData["transcriptions"].sort((a, b) => a.start_time - b.start_time);
         }
       }
-      populateCombinedSelect();
+      syncLanguagesFromData();
       refreshView();
     }
 
@@ -1302,7 +1341,24 @@
 
     window.addEventListener('load', function () {
       const params = new URLSearchParams(window.location.search);
-      populateCombinedSelect();
+
+      discoverLanguages();
+      // Decide initial layout from current visibility, then render.
+      currentLayout = getVisibleOrderedLanguages().length === 1 ? 'single' : 'grid';
+      const singleView = document.getElementById('single-view');
+      const gridView = document.getElementById('grid-view');
+      if (currentLayout === 'single') {
+        singleView.classList.remove('hidden');
+        gridView.classList.add('hidden');
+      } else {
+        singleView.classList.add('hidden');
+        gridView.classList.remove('hidden');
+      }
+      // Migrate legacy layout URL param to show on first render.
+      if (params.has('layout')) updateShowUrlParam();
+      refreshView();
+      setTimeout(() => { initialized = true; }, 100);
+      maybeShowMobilePicker(languageOrder);
 
       // font-size
       const fontSizeParam = params.get('font-size');
@@ -1329,12 +1385,6 @@
       } else {
         applyTheme('light');
       }
-
-      // layout
-      let layoutParam = params.get('layout') || 'grid';
-      if (layoutParam !== 'grid' && !layoutParam.startsWith('single-')) layoutParam = 'single-' + layoutParam;
-      document.getElementById('combined-select').value = layoutParam;
-      switchLayout(layoutParam);
 
       updateCurrentUrlDisplay();
     });
