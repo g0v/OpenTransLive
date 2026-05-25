@@ -1,515 +1,132 @@
-# Live Server - OpenTransLive Web Server & API
+# Live Server — OpenTransLive 網頁伺服器
 
-The live_server is a FastAPI-based web server that provides real-time transcription display, translation management, and WebSocket communication for the OpenTransLive system.
+`live_server` 是 OpenTransLive 的核心：FastAPI + Socket.IO 網頁伺服器，提供 panel 控制台、觀眾頁、即時轉錄管理、翻譯流程、字幕儲存與匯出。
 
-## Features
+語言：繁體中文（[English](README.en.md)）
 
-- **FastAPI Web Framework**: Modern, high-performance web server with automatic API documentation
-- **WebSocket Communication**: Real-time bidirectional communication using Socket.IO with Redis backend
-- **MongoDB Integration**: Persistent storage for rooms, transcriptions, and session data
-- **Redis Caching**: Fast in-memory caching for real-time transcription data
-- **Real-time Translation**: Automatic translation management with multiple language support
-- **ElevenLabs Scribe Integration**: Support for real-time audio transcription via ElevenLabs
-- **Google Speech-to-Text Integration**: Alternative STT provider support
-- **Session Management**: Secure session handling with token-based authentication
-- **YouTube Integration**: Synchronized subtitles for YouTube videos and live streams
-- **Multi-view Modes**: Grid layout and single-column layout for different viewing scenarios
-- **QR Code Generation**: Easy mobile device access to transcription sessions
-- **Security Features**: Input sanitization, NoSQL injection prevention, HMAC authentication
+完整角色、流程、API 與 FAQ 請看 [../docs/USAGE.md](../docs/USAGE.md)。本檔案只說明伺服器本身的設定、啟動與運維細節。
 
-## Architecture
+## 安裝
 
-```
-live_server/
-├── app/
-│   ├── __init__.py              # Main FastAPI app, routes, and Socket.IO handlers
-│   ├── config.py                # Configuration management
-│   ├── database.py              # MongoDB connection and collections
-│   ├── logger_config.py         # Logging configuration
-│   ├── scribe_manager.py        # ElevenLabs Scribe session management
-│   ├── translator.py            # Translation service integration
-│   ├── static/                  # Static assets (CSS, JS, images)
-│   └── templates/               # Jinja2 HTML templates
-├── pyproject.toml               # Python dependencies
-├── Dockerfile                   # Docker container configuration
-├── docker-compose.yml           # Docker Compose setup
-└── README.md                    # This file
-```
+### 前置需求
 
-## Installation
+- Python 3.11+
+- MongoDB
+- Redis
+- 至少一組 AI provider API key
+- （選用）Docker 與 Docker Compose
+- （選用）ElevenLabs API key（即時麥克風轉錄）
+- （選用）YouTube API key（YouTube 同步直播時間）
 
-### Prerequisites
-
-- Python 3.11 or higher
-- MongoDB instance (local or remote)
-- Redis instance (for WebSocket scaling)
-- Optional: Docker and Docker Compose
-
-### Setup
-
-1. **Navigate to live_server directory**:
-   ```bash
-   cd live_server
-   ```
-
-2. **Install dependencies**:
-   ```bash
-   uv sync
-   ```
-
-3. **Create `app/config.py`**:
-
-   `live_server` currently uses `app/config.py` as the primary config source.
-   Start from the example file:
-
-   ```bash
-   cp app/config.example.py app/config.py
-   ```
-
-   Then edit values in `app/config.py` (for example `SECRET_KEY`, MongoDB/Redis, and API keys).
-   Keep secrets out of version control.
-
-4. **Start required services**:
-
-   Using Docker Compose (recommended):
-   ```bash
-   docker-compose up -d
-   ```
-
-   Or manually start MongoDB and Redis:
-   ```bash
-   # MongoDB
-   mongod --dbpath /path/to/data
-
-   # Redis
-   redis-server
-   ```
-
-5. **Run the server**:
-   ```bash
-   uv run uvicorn app:socket_app --host 0.0.0.0 --port 5000
-   ```
-
-   The server will be available at `http://localhost:5000`
-
-## Configuration Options
-
-### Primary config: `app/config.py`
-
-The server reads most settings from `app/config.py`:
-
-- `SETTINGS` (e.g. `SECRET_KEY`, `YOUTUBE_API_KEY`)
-- `EMAIL_SETTINGS` (admin emails / SMTP)
-- `MONGODB_SETTINGS` (db/host/port)
-- `REDIS_URL`
-- `REALTIME_SETTINGS` (AI providers, translation languages, ElevenLabs, etc.)
-
-Use `app/config.example.py` as the baseline schema.
-
-### Optional environment variables
-
-Some runtime options are still read from environment variables:
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ENVIRONMENT` | Set to `production` to force Secure cookies and strict Socket.IO CORS allowlist | `development` |
-| `SOCKET_CORS_ALLOWED_ORIGINS` | Comma-separated allowlist for Socket.IO in production | Built-in localhost allowlist (development) |
-| `SEGMENT_WRITE_WORKERS` | Number of MongoDB segment-write workers | `2` |
-| `SEGMENT_WRITE_QUEUE_MAXSIZE` | Max queued committed segments before backpressure applies | `500` |
-| `SEGMENT_WRITE_METRICS_LOG_INTERVAL_SEC` | Segment write queue metrics log interval (seconds) | `10` |
-
-### Committed Segment Backpressure Strategy
-
-Committed segments are persisted through a bounded in-process queue instead of
-creating an unbounded async task per segment.
-
-- Queue: fixed-size `asyncio.Queue` (`SEGMENT_WRITE_QUEUE_MAXSIZE`)
-- Workers: fixed concurrency (`SEGMENT_WRITE_WORKERS`)
-- Overflow behavior: if queue is full, the oldest queued committed segment is
-  dropped to keep memory bounded and preserve newer context
-- Metrics (logs): queue depth, drop count, processed count, failure count, and
-  average write latency (controlled by `SEGMENT_WRITE_METRICS_LOG_INTERVAL_SEC`)
-
-## API Documentation
-
-### HTTP Endpoints
-
-#### Web Views
-
-```http
-GET /                           # Main dashboard (WIP)
-GET /rt/{session_id}            # Real-time transcription view
-GET /yt/{session_id}            # YouTube integration view
-GET /demo                       # Demo page
-```
-
-#### API Endpoints
-
-```http
-# Transcription sync
-POST /api/sync/{session_id}
-Content-Type: application/json
-
-{
-  "message": "transcription text",
-  "start_time": 10.5,
-  "end_time": 12.3,
-  "created_at": "2024-01-01T12:00:00Z",
-  "result": {
-    "corrected": "corrected transcription",
-    "translated": {
-      "en": "Hello world",
-      "zh-Hant": "你好世界",
-      "ja": "こんにちは世界"
-    },
-    "special_keywords": ["keyword1", "keyword2"]
-  }
-}
-
-# Session management
-GET /api/sessions/{session_id}  # Get session details
-POST /api/sessions              # Create new session
-
-# Real-time tokens (for ElevenLabs/Google STT)
-POST /api/user_realtime_token   # Get authentication token
-```
-
-### Realtime Transport
-
-The server uses two realtime transports:
-
-- Viewer pages (`/rt/{session_id}`, `/yt/{session_id}`) use SSE via `GET /api/session/{session_id}/stream`.
-- The studio panel uses Socket.IO for authenticated bidirectional control and realtime transcription audio upload.
-
-#### Viewer SSE
-
-```javascript
-const stream = new EventSource('/api/session/test-session/stream');
-
-stream.addEventListener('transcription_update', (event) => {
-  const data = JSON.parse(event.data);
-  console.log('New transcription:', data);
-});
-
-stream.onerror = () => {
-  console.log('SSE reconnecting');
-};
-```
-
-#### Panel Socket.IO Client to Server Events
-
-```javascript
-// Join a session as an authenticated panel.
-socket.emit('join_session', {
-  'session_id': 'your_session_id',
-  'secret_key': 'required_secret_key'
-});
-
-// Sync transcription data
-socket.emit('sync', {
-  'id': 'session_id',
-  'message': 'transcription text',
-  'start_time': 10.5,
-  'end_time': 12.3,
-  'created_at': '2024-01-01T12:00:00Z',
-  'result': {
-    'corrected': 'corrected transcription',
-    'translated': {
-      'en': 'Hello world',
-      'zh-Hant': '你好世界',
-      'ja': 'こんにちは世界'
-    },
-    'special_keywords': ['keyword1', 'keyword2']
-  }
-});
-
-// Start the realtime transcription session.
-socket.emit('mic_on', {
-  'session_id': 'your_session_id',
-  'secret_key': 'required_secret_key'
-});
-
-// Send audio data (for ElevenLabs Scribe)
-socket.emit('audio_buffer_append', {
-  'secret_key': 'required_secret_key',
-  'audio': 'base64_encoded_audio_data'
-});
-
-// Stop the realtime transcription session.
-socket.emit('mic_off', {
-  'session_id': 'your_session_id'
-});
-```
-
-#### Panel Socket.IO Server to Client Events
-
-```javascript
-// Connection confirmation
-socket.on('connected', (data) => {
-  console.log('Connected:', data.client_id);
-});
-
-// Session join confirmation
-socket.on('joined_session', (data) => {
-  console.log('Joined session:', data.session_id);
-  console.log('Viewer count:', data.viewer_count);
-});
-
-// Real-time transcription updates for the panel flow view.
-socket.on('transcription_update', (data) => {
-  console.log('New transcription:', data);
-});
-
-socket.on('viewer_count_update', (data) => {
-  console.log('Viewer count:', data.viewer_count);
-});
-```
-
-## Database Schema
-
-### MongoDB Collections
-
-#### rooms
-Stores session/room information:
-```json
-{
-  "_id": "session_id",
-  "name": "Session Name",
-  "created_at": "2024-01-01T12:00:00Z",
-  "last_active": "2024-01-01T13:00:00Z",
-  "settings": {
-    "languages": ["en", "zh-Hant", "ja"],
-    "auto_translate": true
-  }
-}
-```
-
-#### transcription_store
-Stores transcription entries:
-```json
-{
-  "session_id": "session_id",
-  "message": "original transcription",
-  "start_time": 10.5,
-  "end_time": 12.3,
-  "created_at": "2024-01-01T12:00:00Z",
-  "result": {
-    "corrected": "corrected transcription",
-    "translated": {
-      "en": "Hello world",
-      "zh-Hant": "你好世界"
-    },
-    "special_keywords": ["keyword1"]
-  }
-}
-```
-
-#### realtime_tokens
-Stores authentication tokens for real-time services:
-```json
-{
-  "user_uid": "unique_user_id",
-  "token": "authentication_token",
-  "service": "elevenlabs",
-  "created_at": "2024-01-01T12:00:00Z",
-  "expires_at": "2024-01-01T13:00:00Z"
-}
-```
-
-### Redis Data Structures
-
-- **Session transcriptions**: `session:{session_id}:transcriptions` (List)
-- **Session metadata**: `session:{session_id}:metadata` (Hash)
-- **Active connections**: `session:{session_id}:clients` (Set)
-
-## View Modes
-
-### Real-time View (/rt/{session_id})
-
-Dedicated view for live transcription display with auto-scrolling.
-
-Features:
-- Multi-language grid layout
-- Single-column layout option
-- Language selection dropdown
-- Real-time SSE updates
-- QR code generation for mobile access
-- Responsive design for all screen sizes
-
-### YouTube Integration (/yt/{session_id})
-
-Embedded YouTube player with synchronized subtitles.
-
-Features:
-- YouTube player integration
-- Synchronized subtitle display
-- Live stream support
-- Automatic start time detection
-- Full-screen support
-
-## Translation System
-
-The server includes an advanced translation system with the following features:
-
-- **Context-aware translation**: Uses conversation history for better accuracy
-- **Keyword learning**: Automatically extracts and learns domain-specific keywords
-- **Multi-language support**: Translates to multiple target languages simultaneously
-- **Async processing**: Non-blocking translation using async HTTP client
-- **Error handling**: Graceful fallback and retry mechanisms
-
-Translation configuration in `app/config.py` (`REALTIME_SETTINGS`):
-
-Using Gemini:
-```python
-REALTIME_SETTINGS = {
-  "AI_PROVIDER": "gemini",
-  "GEMINI_API_KEY": "your-gemini-api-key",
-  "TRANSLATE_LANGUAGES": "zh-Hant-TW,en-US",
-  "COMMON_PROMPT": "Context about the conversation",
-}
-```
-
-Using OpenAI:
-```python
-REALTIME_SETTINGS = {
-  "AI_PROVIDER": "openai",
-  "OPENAI_API_KEY": "your-openai-api-key",
-  "TRANSLATE_LANGUAGES": "zh-Hant-TW,en-US",
-  "COMMON_PROMPT": "Context about the conversation",
-}
-```
-
-Also supported providers: `groq`, `cerebras`.
-
-## ElevenLabs Scribe Integration
-
-The server supports real-time transcription using ElevenLabs Scribe:
-
-1. Client requests authentication token via `/api/user_realtime_token`
-2. Client establishes WebSocket connection to server
-3. Client emits `start_scribe_session` event
-4. Server creates ScribeSessionManager and connects to ElevenLabs
-5. Client streams audio via `audio_data` events
-6. Server receives transcriptions and broadcasts to all session clients
-7. Transcriptions are automatically translated and stored
-
-## Google Speech-to-Text Integration
-
-Alternative to ElevenLabs, using Google Cloud STT:
-
-1. Configure `GOOGLE_APPLICATION_CREDENTIALS` and `GOOGLE_CLOUD_PROJECT`
-2. Client requests token via `/api/user_realtime_token`
-3. Use Google STT client (see `realtime_client/google_stt_v2.py`)
-4. Stream transcriptions to server via WebSocket
-
-## Security Features
-
-- **Input sanitization**: All user inputs are sanitized to prevent injection attacks
-- **NoSQL injection prevention**: Query parameter validation and type checking
-- **Session security**: HMAC-based authentication for admin operations
-- **Token-based auth**: Secure token generation for real-time services
-- **CORS configuration**: Configurable CORS policies
-- **Rate limiting**: Built-in protection against abuse (configurable)
-
-## Docker Deployment
-
-### Using Docker Compose
+### 步驟
 
 ```bash
 cd live_server
-docker-compose up -d
+uv sync
+cp app/config.example.py app/config.py
+# 編輯 app/config.py
+uv run uvicorn app:socket_app --host 0.0.0.0 --port 5000
 ```
 
-This starts:
-- FastAPI web server
-- MongoDB instance
-- Redis instance
-
-### Manual Docker Build
+開發模式（自動 reload）：
 
 ```bash
-docker build -t opentranslive-server .
-docker run -p 5000:5000 \
-  -v $(pwd)/app/config.py:/app/app/config.py:ro \
-  opentranslive-server
-```
-
-## Development
-
-### Running in Development Mode
-
-```bash
-# With auto-reload
 uv run uvicorn app:socket_app --reload --host 0.0.0.0 --port 5000
 ```
 
-### API Documentation
+### Docker Compose
 
-FastAPI provides automatic interactive API documentation:
-- Swagger UI: `http://localhost:5000/docs`
-- ReDoc: `http://localhost:5000/redoc`
-
-### Testing Realtime Viewer Connections
-
-Use the browser console:
-
-```javascript
-const stream = new EventSource('/api/session/test-session/stream');
-
-stream.addEventListener('transcription_update', (event) => {
-  console.log('Update:', JSON.parse(event.data));
-});
+```bash
+cp app/config.example.py app/config.py
+# 編輯 app/config.py
+docker-compose up -d
 ```
 
-## Troubleshooting
+Compose 會啟動 FastAPI server、MongoDB、Redis。
 
-### Common Issues
+## 設定
 
-1. **MongoDB connection failed**
-   - Verify MongoDB is running: `systemctl status mongod`
-   - Check `MONGODB_SETTINGS` in `app/config.py`
-   - Ensure network connectivity
+### 主設定檔 `app/config.py`
 
-2. **Redis connection failed**
-   - Verify Redis is running: `redis-cli ping`
-   - Check `REDIS_URL` in `app/config.py`
-   - Check firewall settings
+從 `app/config.example.py` 複製，編輯下列區塊：
 
-3. **WebSocket connection issues**
-   - Check CORS settings in code
-   - Verify Redis is accessible (required for Socket.IO)
-   - Check client-side Socket.IO version compatibility
+| 區塊 | 用途 |
+|---|---|
+| `SETTINGS.SECRET_KEY` | Session cookie 與安全相關 |
+| `SETTINGS.YOUTUBE_API_KEY` | 查詢 YouTube 直播開始時間 |
+| `EMAIL_SETTINGS.ADMIN_EMAILS` | 可進入 `/dashboard` 的管理員 email |
+| `EMAIL_SETTINGS.SMTP_*` | OTP 信件寄送；留空則 OTP 寫進 log（適合開發）|
+| `MONGODB_SETTINGS` | MongoDB 連線 |
+| `REDIS_URL` | Redis 連線 |
+| `REALTIME_SETTINGS.ELEVENLABS_API_KEY` | ElevenLabs Scribe |
+| `REALTIME_SETTINGS.AI_PROVIDER` | 預設修正／翻譯 provider (`openai` / `gemini` / `groq` / `cerebras`) |
+| `REALTIME_SETTINGS.CORRECT_PROVIDER` | （可選）修正流程專用 provider |
+| `REALTIME_SETTINGS.TRANSLATE_PROVIDER` | （可選）翻譯流程專用 provider |
+| `REALTIME_SETTINGS.TRANSLATE_LANGUAGES` | 預設翻譯目標語言 |
+| `REALTIME_SETTINGS.COMMON_PROMPT` | 活動背景或翻譯上下文 |
+| `REALTIME_SETTINGS.PARTIAL_INTERVAL` | partial 字幕 flush 間隔（秒）|
+| `REALTIME_SETTINGS.SKIP_CORRECTION` | 是否略過修正流程 |
 
-4. **Translation not working**
-   - Verify `GEMINI_API_KEY` is set correctly
-   - Check API quota and rate limits
-   - Review logs for API errors
+### 環境變數
 
-5. **ElevenLabs Scribe errors**
-   - Verify `ELEVENLABS_API_KEY` is valid
-   - Check API quota
-   - Ensure audio format is compatible (16-bit PCM, 16kHz)
+部分運維選項仍從環境變數讀取：
 
-## Dependencies
+| 變數 | 說明 | 預設 |
+|---|---|---|
+| `ENVIRONMENT` | 設為 `production` 會開啟 Secure cookie 與嚴格的 Socket.IO CORS | `development` |
+| `SOCKET_CORS_ALLOWED_ORIGINS` | production 模式下的 Socket.IO 允許來源（逗號分隔）| 內建 localhost 清單 |
+| `SEGMENT_WRITE_WORKERS` | MongoDB segment 寫入 worker 數 | `2` |
+| `SEGMENT_WRITE_QUEUE_MAXSIZE` | 寫入佇列容量上限 | `500` |
+| `SEGMENT_WRITE_METRICS_LOG_INTERVAL_SEC` | 寫入佇列 metrics log 間隔（秒）| `10` |
 
-Core dependencies (see `pyproject.toml` for full list):
+### Committed segment 寫入策略
 
-- `fastapi` - Web framework
-- `uvicorn` - ASGI server
-- `python-socketio` - WebSocket support
-- `aioredis` - Async Redis client
-- `motor` - Async MongoDB driver
-- `pymongo` - MongoDB driver
-- `elevenlabs` - ElevenLabs SDK
-- `jinja2` - Template engine
-- `qrcode` - QR code generation
-- `httpx` - Async HTTP client
+完成片段以固定大小佇列寫入 MongoDB，避免每段都產生獨立 async task：
 
-## License
+- 佇列：固定大小 `asyncio.Queue` (`SEGMENT_WRITE_QUEUE_MAXSIZE`)
+- Worker：固定數量 (`SEGMENT_WRITE_WORKERS`)
+- 滿載行為：佇列滿時丟棄最舊的 committed segment，以保住記憶體並保留較新內容
+- Metrics：佇列深度、丟棄數、處理數、失敗數、平均寫入延遲（由 `SEGMENT_WRITE_METRICS_LOG_INTERVAL_SEC` 控制 log 頻率）
 
-This project is part of g0v/opentranslive and is licensed under the GNU AGPL v3.0.
-See LICENSE for details.
+## 主要程式結構
 
-## Contributing
+```
+app/
+├── __init__.py              # FastAPI app、HTTP 路由、Socket.IO handler、SSE
+├── config.py                # 從 config.example.py 複製而來
+├── database.py              # MongoDB 連線與 collection
+├── email_auth.py            # Email OTP 登入
+├── http_client.py           # 共用 httpx client
+├── logger_config.py         # logging 設定
+├── scribe_manager.py        # ElevenLabs Scribe session 管理
+├── socket_schema.py         # Socket.IO 事件 schema 驗證
+├── translation_service.py   # 修正 + 翻譯流程與佇列管理
+├── translators/             # 各 AI provider 實作
+├── static/                  # CSS / JS / 圖示
+└── templates/               # Jinja2 模板
+```
 
-Contributions are welcome! Please submit issues and pull requests to the main repository.
+## 觀眾／Panel 通訊
+
+- **觀眾頁**（`/rt/{sid}`、`/yt/{sid}`）使用 SSE：`GET /api/session/{sid}/stream`，事件 `transcription_update`。
+- **Panel** 使用 Socket.IO 做雙向控制與音訊上傳。
+
+完整事件與 API 列表請看 [../docs/USAGE.md](../docs/USAGE.md#5-api-與即時通訊)。
+
+## 資料儲存
+
+詳細欄位請看 [../docs/USAGE.md](../docs/USAGE.md#6-資料儲存)。摘要：
+
+- **MongoDB**：`rooms`（session 設定 + 擁有者）、`transcription_segments`（committed 片段）、`transcription_store`（legacy）
+- **Redis**：`transcription:{sid}:list`（近期片段）、`transcription:{sid}:partial`（partial）、`transcription:{sid}:meta`、`keywords:{sid}`、`locked_keywords:{sid}`、`text_dictionary:{sid}`
+
+## 安全性
+
+- 觀眾頁完全公開、免登入。
+- Panel／編輯／管理員 API 透過 Email OTP 登入；session-level 操作需 secret key 或 owner／co-owner 權限。
+- production 模式（`ENVIRONMENT=production`）會啟用 Secure cookie 與嚴格 Socket.IO CORS 白名單。
+- Socket.IO 事件以 [socket_schema.py](app/socket_schema.py) 驗證輸入。
+
+## 疑難排解
+
+請看 [../docs/USAGE.md#8-常見問題](../docs/USAGE.md#8-常見問題)。
