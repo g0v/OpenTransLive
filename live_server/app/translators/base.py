@@ -28,6 +28,7 @@ class BaseTranslator(ABC):
         prev_translation: str,
         keywords: str,
         tone: str = "",
+        commit: bool = False,
     ) -> str | None:
         """Return *text* translated into *language*, or None if translation failed.
 
@@ -37,6 +38,8 @@ class BaseTranslator(ABC):
             context: Recent translated sentences for continuity.
             prev_translation: Previous partial translation to minimise diffs.
             keywords: Comma-separated domain keywords.
+            commit: True for durable committed segments, which retry harder
+                since an unrecovered translation is stored as a permanent gap.
         """
 
     @abstractmethod

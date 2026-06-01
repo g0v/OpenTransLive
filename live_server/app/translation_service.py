@@ -374,12 +374,21 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
                 prev_translation=pt_trans,
                 keywords=keywords_str,
                 tone=tone,
+                commit=not partial,
             )
         except Exception as e:
             log_exception(logger, e, f"Translation error for {language}")
             out = None
         if out is None:
             # Invariant: must not write source-language text into translated[language].
+            # Fall back to the last partial translation; for a committed segment with
+            # no prior partial this is empty, which the viewer renders as a gap marker
+            # rather than dropping the line entirely.
+            if not partial:
+                logger.warning(
+                    "Commit translation unrecovered for %s (start=%s); storing empty",
+                    language, data.get("start_time"),
+                )
             translated[language] = pt_trans or ""
             return
         translated[language] = _normalize_chinese_output(out, language)

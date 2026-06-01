@@ -7,6 +7,7 @@ the endpoint, auth, and per-operation request params.
 """
 import asyncio
 import json
+import random
 import re
 
 from ..http_client import get_async_client, close_async_client
@@ -15,8 +16,17 @@ from .base import BaseTranslator
 
 logger = setup_logger(__name__)
 
-_RETRY_DELAYS = [0.5, 1.0, 2.0]
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+_BASE_RETRY_DELAY = 0.4   # first retry waits up to this many seconds
+_MAX_RETRY_DELAY = 8.0    # cap on the exponential backoff window
+# Per-operation retry budgets. Partials are on the hot path and must fail fast
+# so the queue isn't blocked — a dropped partial is harmless because the client
+# keeps showing the previous one. Commits are durable and latency-tolerant, so
+# they retry harder: an unrecovered commit is stored with an empty translation
+# that the viewer can only render as a gap.
+_PARTIAL_RETRIES = 1
+_COMMIT_RETRIES = 4
+_DEFAULT_RETRIES = 3
 
 _CORRECT_PROMPT = (
     "Correct the user's ASR transcript literally. No styling/summaries. \n"
@@ -38,7 +48,7 @@ _TRANSLATE_PROMPT = (
     "Rules:\n"
     "1. Accurate and faithful first; Tone: {tone}.\n"
     "2. Adapt dates/numbers/nouns/etc. to target language conventions, then add punctuation.\n"
-    "3. Loosely follow previous translations.\n"
+    "3. Prefer continuity with the previous translation, don't rephrase the already-good parts.\n"
     "4. Output ONLY the processed translated text.\n\n"
     "Context: {keywords}\n\n"
     "Previous translation: {prev_translation}\n\n"
@@ -72,15 +82,18 @@ class ChatCompletionTranslator(BaseTranslator):
     def __init__(self, settings: dict):
         self._api_key = settings.get(self.api_key_setting)
 
-    async def _chat(self, body: dict) -> dict | None:
+    async def _chat(self, body: dict, max_retries: int = _DEFAULT_RETRIES) -> dict | None:
         if not self._api_key:
             return None
 
         cls_name = type(self).__name__
         client = get_async_client()
-        for attempt, delay in enumerate([0] + _RETRY_DELAYS):
-            if delay:
-                await asyncio.sleep(delay)
+        for attempt in range(max_retries + 1):
+            if attempt:
+                # Exponential backoff with full jitter so concurrent callers
+                # don't retry in lockstep against a rate-limited provider.
+                cap = min(_MAX_RETRY_DELAY, _BASE_RETRY_DELAY * (2 ** (attempt - 1)))
+                await asyncio.sleep(random.uniform(0, cap))
             try:
                 response = await client.post(
                     self.endpoint,
@@ -99,9 +112,9 @@ class ChatCompletionTranslator(BaseTranslator):
                     )
                     return None
                 logger.warning(
-                    "%s._chat attempt %d got %d, %s",
-                    cls_name, attempt + 1, response.status_code,
-                    "retrying" if delay != _RETRY_DELAYS[-1] else "giving up",
+                    "%s._chat attempt %d/%d got %d%s",
+                    cls_name, attempt + 1, max_retries + 1, response.status_code,
+                    ", giving up" if attempt == max_retries else ", retrying",
                 )
             except Exception as e:
                 log_exception(logger, e, f"HTTP request error in _chat (attempt {attempt + 1})")
@@ -139,6 +152,7 @@ class ChatCompletionTranslator(BaseTranslator):
         prev_translation: str,
         keywords: str,
         tone: str = "",
+        commit: bool = False,
     ) -> str | None:
         tone_desc = _TONE_MAP.get(tone, tone) if tone else _TONE_MAP["fluent"]
         body = {
@@ -159,7 +173,9 @@ class ChatCompletionTranslator(BaseTranslator):
                 },
             ],
         }
-        result = await self._chat(body)
+        result = await self._chat(
+            body, max_retries=_COMMIT_RETRIES if commit else _PARTIAL_RETRIES
+        )
         if result:
             raw = (
                 self._message_text(result)

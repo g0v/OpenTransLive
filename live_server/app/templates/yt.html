@@ -451,6 +451,9 @@
   const FONT_STEP = 0.125;
   const FONT_MIN = 0.5;
   const FONT_MAX = 5;
+  // Gap marker for a committed segment whose translation failed (key present
+  // but empty); keeps the line in place instead of dropping it.
+  const TRANSLATION_GAP = '⋯';
 
   function applyFontSize(rem) {
     currentFontSizeRem = Math.min(FONT_MAX, Math.max(FONT_MIN, rem));
@@ -659,8 +662,13 @@
         if (start < currentTime && end > currentTime) {
           if (lastSubtitle !== start) {
             lastSubtitle = start;
-            const text = transcription.result?.translated?.[selectedLanguage];
-            if (text) appendSubtitle(text);
+            // Render a gap marker for a committed segment whose translation
+            // failed (key present but empty) so its turn isn't silently dropped;
+            // segments predating the language (key absent) are skipped.
+            const translated = transcription.result?.translated;
+            if (translated && selectedLanguage in translated) {
+              appendSubtitle(translated[selectedLanguage] || TRANSLATION_GAP);
+            }
           }
           break;
         }

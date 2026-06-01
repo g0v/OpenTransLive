@@ -611,6 +611,31 @@
   const FONT_MIN = 0.5;
   const FONT_MAX = 5;
   const MAX_HISTORY = 30; // cap displayed transcription history to prevent lag
+  // Gap marker for a committed segment whose translation failed (key present but
+  // empty). Rendering this keeps the line in place instead of silently dropping
+  // it and merging neighbouring sentences. Segments predating the language (key
+  // absent) are skipped instead.
+  const TRANSLATION_GAP = '⋯';
+
+  // Build the rendered history/last/partial text for one language from the
+  // current transcription buffer. Segments missing the language key (predating
+  // it) are skipped; a committed segment with an empty translation renders the
+  // gap marker so its line isn't dropped.
+  function buildLanguageText(lang) {
+    const cropped = (transcriptionsData.transcriptions || []).slice(-MAX_HISTORY);
+    const historyItems = [];
+    let lastText = '';
+    for (let i = 0; i < cropped.length; i++) {
+      const translated = cropped[i]?.result?.translated;
+      if (!translated || !(lang in translated)) continue;
+      const text = translated[lang] || TRANSLATION_GAP;
+      if (i === cropped.length - 1) lastText = text + '\n';
+      else historyItems.push(text);
+    }
+    const partial = transcriptionsData?.partial?.result?.translated;
+    const partialText = partial ? (partial[lang] || '') + '\n' : '';
+    return { historyItems, lastText, partialText };
+  }
 
   function applyFontSize(rem) {
     currentFontSizeRem = Math.min(FONT_MAX, Math.max(FONT_MIN, rem));
@@ -1176,18 +1201,7 @@
       dataContent.appendChild(btn);
     }
 
-    const transcriptions = transcriptionsData.transcriptions || [];
-    const cropped = transcriptions.slice(-MAX_HISTORY);
-    const historyItems = [];
-    let lastText = '';
-    for (let i = 0; i < cropped.length; i++) {
-      const text = cropped[i]?.result?.translated?.[selectedLanguage];
-      if (!text) continue;
-      if (i === cropped.length - 1) lastText = text + '\n';
-      else historyItems.push(text);
-    }
-
-    const partialText = transcriptionsData?.partial?.result?.translated ? (transcriptionsData.partial.result.translated[selectedLanguage] || '') + '\n' : '';
+    const { historyItems, lastText, partialText } = buildLanguageText(selectedLanguage);
     const card = dataContent.querySelector('.language-card');
     const wrapper = card.children[0];
     updateContent(wrapper, 'single:' + selectedLanguage, historyItems, lastText, partialText, card);
@@ -1249,17 +1263,7 @@
     languages.forEach(language => {
       const languageBox = gridContent.querySelector(`[data-language="${language}"]`);
       if (!languageBox) return;
-      const transcriptions = transcriptionsData.transcriptions || [];
-      const cropped = transcriptions.slice(-MAX_HISTORY);
-      const historyItems = [];
-      let lastText = '';
-      for (let i = 0; i < cropped.length; i++) {
-        const text = cropped[i]?.result?.translated?.[language];
-        if (!text) continue;
-        if (i === cropped.length - 1) lastText = text + '\n';
-        else historyItems.push(text);
-      }
-      const partialText = transcriptionsData?.partial?.result?.translated ? (transcriptionsData.partial.result.translated[language] || '') + '\n' : '';
+      const { historyItems, lastText, partialText } = buildLanguageText(language);
       const card = languageBox.querySelector('.language-card');
       const wrapper = card.children[0];
       updateContent(wrapper, 'grid:' + language, historyItems, lastText, partialText, card);
