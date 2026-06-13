@@ -274,9 +274,10 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
         if existing is not None:
             asyncio.create_task(existing.stop())
 
-        from .translation_service import get_session_scribe_language
+        from .translation_service import get_session_scribe_language, get_session_partial_interval
         language_code = await get_session_scribe_language(redis_client, session_id)
-        manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code)
+        partial_interval = await get_session_partial_interval(session_id)
+        manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code, partial_interval=partial_interval)
         manager.yt_start_time = await get_youtube_start_time(session_id)
         active_scribe_managers[session_id] = manager
         asyncio.create_task(manager.start())
@@ -824,7 +825,13 @@ async def dashboard(request: Request):
             u["created_at"] = u["created_at"].isoformat()
         if isinstance(u.get("last_login_at"), datetime):
             u["last_login_at"] = u["last_login_at"].isoformat()
-    return templates.TemplateResponse("dashboard.html", {"request": request, "users": users, "current_email": _get_session_email(request)})
+    from .translators import AVAILABLE_PROVIDERS
+    return templates.TemplateResponse("dashboard.html", {
+        "request": request,
+        "users": users,
+        "current_email": _get_session_email(request),
+        "providers": AVAILABLE_PROVIDERS,
+    })
 
 
 @app.get("/user-dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
@@ -881,6 +888,78 @@ async def set_user_realtime(request: Request, email: str):
     if not result:
         raise HTTPException(status_code=404, detail="User not found")
     return {"email": result["email"], "realtime_enabled": result["realtime_enabled"]}
+
+
+@app.post("/api/users/{email}/settings", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def set_user_settings(request: Request, email: str):
+    """Set per-account overrides (ai_provider, partial_interval) for a user (admin only).
+    A null/empty value clears the override so the user falls back to config defaults."""
+    _require_admin_email(request)
+    if not validate_email_format(email):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    from .translators import AVAILABLE_PROVIDERS
+    body = await request.json()
+
+    update: dict = {"$set": {}, "$unset": {}}
+
+    if "ai_provider" in body:
+        provider = body["ai_provider"]
+        if provider in (None, ""):
+            update["$unset"]["ai_provider"] = ""
+        elif isinstance(provider, str) and provider.lower() in AVAILABLE_PROVIDERS:
+            update["$set"]["ai_provider"] = provider.lower()
+        else:
+            raise HTTPException(status_code=400, detail=f"'ai_provider' must be one of {AVAILABLE_PROVIDERS} or empty")
+
+    if "partial_interval" in body:
+        interval = body["partial_interval"]
+        if interval in (None, ""):
+            update["$unset"]["partial_interval"] = ""
+        else:
+            try:
+                interval = float(interval)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="'partial_interval' must be a number")
+            if not (0.1 <= interval <= 10):
+                raise HTTPException(status_code=400, detail="'partial_interval' must be between 0.1 and 10")
+            update["$set"]["partial_interval"] = interval
+
+    update = {op: fields for op, fields in update.items() if fields}
+    if not update:
+        raise HTTPException(status_code=400, detail="No settings provided")
+
+    from pymongo import ReturnDocument
+    result = await users_collection.find_one_and_update(
+        {"email": email.lower()},
+        update,
+        return_document=ReturnDocument.AFTER,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Invalidate cached ai_provider for this user's active sessions so the new
+    # provider takes effect without waiting for the 24h Redis TTL.
+    if "ai_provider" in body:
+        await _invalidate_user_ai_provider_cache(email.lower())
+
+    return {
+        "email": result["email"],
+        "ai_provider": result.get("ai_provider") or "",
+        "partial_interval": result.get("partial_interval"),
+    }
+
+
+async def _invalidate_user_ai_provider_cache(email_lc: str) -> None:
+    """Delete the cached ai_provider Redis keys for every room this user owns."""
+    try:
+        rooms = await rooms_collection.find(
+            {"admin_email": email_lc}, {"_id": 0, "sid": 1}
+        ).to_list(length=1000)
+        keys = [f"ai_provider:{r['sid']}" for r in rooms]
+        if keys:
+            await redis_client.delete(*keys)
+    except Exception as e:
+        log_exception(logger, e, "Failed to invalidate ai_provider cache")
 
 
 @app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_otp_email_identifier))])

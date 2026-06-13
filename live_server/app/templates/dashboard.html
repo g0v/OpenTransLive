@@ -17,9 +17,11 @@
   <main class="max-w-3xl mx-auto px-4 py-8">
 
     <div class="mb-6">
-      <h2 class="text-lg font-semibold text-gray-100">Realtime Transcription Access</h2>
+      <h2 class="text-lg font-semibold text-gray-100">User Settings</h2>
       <p class="mt-1 text-sm text-gray-500">
-        Toggle realtime transcription permission for each user.
+        Toggle realtime transcription access and per-account overrides for AI provider and partial
+        interval. Leave provider as <span class="text-gray-400">Default</span> or interval blank to use
+        the server config. Overrides apply to newly started sessions.
         Users must log in via <a href="/login" class="underline text-gray-400 hover:text-gray-200">/login</a> before
         they appear here.
       </p>
@@ -32,6 +34,8 @@
           <tr class="border-b border-gray-700 text-left text-xs text-gray-500 uppercase tracking-wider">
             <th class="px-4 py-3 font-semibold">Email</th>
             <th class="px-4 py-3 font-semibold">Last login</th>
+            <th class="px-4 py-3 font-semibold">AI provider</th>
+            <th class="px-4 py-3 font-semibold">Interval (s)</th>
             <th class="px-4 py-3 font-semibold text-right">Realtime access</th>
           </tr>
         </thead>
@@ -45,6 +49,23 @@
               {% else %}
               —
               {% endif %}
+            </td>
+            <td class="px-4 py-3">
+              <select
+                class="provider-select bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
+                data-email="{{ user.email }}">
+                <option value="" {% if not user.ai_provider %}selected{% endif %}>Default</option>
+                {% for p in providers %}
+                <option value="{{ p }}" {% if user.ai_provider == p %}selected{% endif %}>{{ p }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td class="px-4 py-3">
+              <input
+                type="number" step="0.1" min="0.1" max="10" placeholder="default"
+                value="{{ user.partial_interval if user.partial_interval is not none else '' }}"
+                class="interval-input bg-gray-900 border border-gray-700 rounded px-2 py-1 w-20 text-xs text-gray-200"
+                data-email="{{ user.email }}">
             </td>
             <td class="px-4 py-3 text-right">
               <button
@@ -79,6 +100,17 @@
     statusEl.style.color = isError ? '#f87171' : '#6b7280'
   }
 
+  async function postJson(email, path, payload) {
+    const res = await fetch(`/api/users/${encodeURIComponent(email)}/${path}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    const data = await res.json().catch(() => ({}))
+    return { ok: res.ok, data }
+  }
+
   document.querySelectorAll('.realtime-toggle').forEach(btn => {
     btn.addEventListener('click', async () => {
       const email = btn.dataset.email
@@ -90,19 +122,12 @@
       btn.textContent = '...'
 
       try {
-        const res = await fetch(`/api/users/${encodeURIComponent(email)}/realtime`, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: newEnabled })
-        })
-        if (!res.ok) {
-          const data = await res.json()
+        const { ok, data } = await postJson(email, 'realtime', { enabled: newEnabled })
+        if (!ok) {
           setStatus(data.detail || 'Error updating user.', true)
           btn.textContent = prev
           return
         }
-        const data = await res.json()
         btn.dataset.enabled = data.realtime_enabled ? 'true' : 'false'
         btn.textContent = data.realtime_enabled ? 'Enabled' : 'Disabled'
         if (data.realtime_enabled) {
@@ -118,6 +143,46 @@
         btn.disabled = false
       }
     })
+  })
+
+  async function saveSettings(email, payload, el) {
+    el.disabled = true
+    try {
+      const { ok, data } = await postJson(email, 'settings', payload)
+      if (!ok) {
+        setStatus(data.detail || 'Error updating user.', true)
+        return false
+      }
+      setStatus(`Updated ${email}.`, false)
+      return true
+    } catch (e) {
+      setStatus('Network error.', true)
+      return false
+    } finally {
+      el.disabled = false
+    }
+  }
+
+  document.querySelectorAll('.provider-select').forEach(sel => {
+    sel.addEventListener('change', () => {
+      saveSettings(sel.dataset.email, { ai_provider: sel.value }, sel)
+    })
+  })
+
+  function debounce(fn, wait) {
+    let t
+    return (...args) => {
+      clearTimeout(t)
+      t = setTimeout(() => fn(...args), wait)
+    }
+  }
+
+  document.querySelectorAll('.interval-input').forEach(input => {
+    const save = debounce(() => {
+      const raw = input.value.trim()
+      saveSettings(input.dataset.email, { partial_interval: raw === '' ? null : raw }, input)
+    }, 600)
+    input.addEventListener('input', save)
   })
 </script>
 {% endblock %}

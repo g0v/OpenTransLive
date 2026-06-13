@@ -27,7 +27,7 @@ class ScribeSessionManager:
     _LOG_INTERVAL_BYTES = 30 * 16000 * 2  # log every 30s of audio
     _AUDIO_QUEUE_MAXSIZE = 1000         # ~30s of audio; drop oldest when full
 
-    def __init__(self, session_id, callback, language_code: str = ""):
+    def __init__(self, session_id, callback, language_code: str = "", partial_interval: float | None = None):
         self.session_id = session_id
         # Initialize essential state before the API key guard so that stop(),
         # push_audio(), and is_running checks always find these attributes.
@@ -49,7 +49,7 @@ class ScribeSessionManager:
         self.last_partial_time = now
         self.last_partial_text = ""
         self.task_group = None
-        self.partial_interval = REALTIME_SETTINGS.get('PARTIAL_INTERVAL', 2)
+        self.partial_interval = partial_interval if partial_interval else REALTIME_SETTINGS.get('PARTIAL_INTERVAL', 2)
         self.should_commit = False
         # Prefix holding committed text from segments too short to stand alone.
         # Prepended to subsequent partials/commits so translation gets useful context.

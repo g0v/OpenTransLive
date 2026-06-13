@@ -44,7 +44,13 @@ _BACKENDS: dict[str, Callable[[dict], BaseTranslator]] = {
     "openai": OpenAITranslator,
 }
 
-_instance: BaseTranslator | None = None
+AVAILABLE_PROVIDERS: list[str] = list(_BACKENDS.keys())
+
+# Cache of translator instances keyed by provider name. The default (no
+# per-account override) is stored under ``_DEFAULT_KEY`` and honors the
+# AI_PROVIDER / CORRECT_PROVIDER / TRANSLATE_PROVIDER config split.
+_DEFAULT_KEY = "__default__"
+_instances: dict[str, BaseTranslator] = {}
 
 
 class _CompositeTranslator(BaseTranslator):
@@ -86,40 +92,52 @@ def _resolve_backend(provider: str) -> Callable[[dict], BaseTranslator]:
     return cls
 
 
-def get_translator() -> BaseTranslator:
-    """Return the singleton translator.
+def _build_default_translator() -> BaseTranslator:
+    """Build the default translator honoring the AI_PROVIDER / CORRECT_PROVIDER /
+    TRANSLATE_PROVIDER config split (composite when correct and translate differ)."""
+    from ..config import REALTIME_SETTINGS
 
-    When ``CORRECT_PROVIDER`` and ``TRANSLATE_PROVIDER`` differ, returns a
-    composite translator that routes each operation to the right backend.
+    default = REALTIME_SETTINGS.get("AI_PROVIDER", "gemini").lower()
+    correct_provider = REALTIME_SETTINGS.get("CORRECT_PROVIDER", default).lower()
+    translate_provider = REALTIME_SETTINGS.get("TRANSLATE_PROVIDER", default).lower()
+
+    correct_cls = _resolve_backend(correct_provider)
+    translate_cls = _resolve_backend(translate_provider)
+
+    if correct_provider == translate_provider:
+        return correct_cls(REALTIME_SETTINGS)
+    return _CompositeTranslator(
+        correct_backend=correct_cls(REALTIME_SETTINGS),
+        translate_backend=translate_cls(REALTIME_SETTINGS),
+    )
+
+
+def get_translator(provider: str | None = None) -> BaseTranslator:
+    """Return a cached translator instance.
+
+    When ``provider`` is given (a per-account override), returns a single-backend
+    translator for that provider. When ``None``, returns the default translator
+    which honors the CORRECT_PROVIDER / TRANSLATE_PROVIDER config split.
+    Instances are cached per provider so concurrent sessions on different
+    accounts reuse one backend each.
     """
-    global _instance
-    if _instance is None:
-        from ..config import REALTIME_SETTINGS
-
-        default = REALTIME_SETTINGS.get("AI_PROVIDER", "gemini").lower()
-        correct_provider = REALTIME_SETTINGS.get("CORRECT_PROVIDER", default).lower()
-        translate_provider = REALTIME_SETTINGS.get("TRANSLATE_PROVIDER", default).lower()
-
-        correct_cls = _resolve_backend(correct_provider)
-        translate_cls = _resolve_backend(translate_provider)
-
-        if correct_provider == translate_provider:
-            _instance = correct_cls(REALTIME_SETTINGS)
+    key = provider.lower() if provider else _DEFAULT_KEY
+    inst = _instances.get(key)
+    if inst is None:
+        if key == _DEFAULT_KEY:
+            inst = _build_default_translator()
         else:
-            _instance = _CompositeTranslator(
-                correct_backend=correct_cls(REALTIME_SETTINGS),
-                translate_backend=translate_cls(REALTIME_SETTINGS),
-            )
-
-    return _instance
+            from ..config import REALTIME_SETTINGS
+            inst = _resolve_backend(key)(REALTIME_SETTINGS)
+        _instances[key] = inst
+    return inst
 
 
 async def close_translator() -> None:
-    """Release resources held by the active translator."""
-    global _instance
-    if _instance is not None:
-        await _instance.close()
-        _instance = None
+    """Release resources held by all cached translators."""
+    instances = list(_instances.values())
+    _instances.clear()
+    await asyncio.gather(*(inst.close() for inst in instances), return_exceptions=True)
 
 
-__all__ = ["BaseTranslator", "get_translator", "close_translator"]
+__all__ = ["BaseTranslator", "get_translator", "close_translator", "AVAILABLE_PROVIDERS"]

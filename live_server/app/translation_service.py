@@ -2,7 +2,7 @@ import asyncio
 import json
 from opencc import OpenCC
 from .config import REALTIME_SETTINGS
-from .database import rooms_collection
+from .database import rooms_collection, users_collection
 from .logger_config import setup_logger, log_exception
 from .translators import get_translator
 
@@ -134,6 +134,58 @@ async def save_session_scribe_language(redis_client, session_id, language: str):
 
 
 # ---------------------------------------------------------------------------
+# Session: per-account overrides (ai_provider, partial_interval)
+# ---------------------------------------------------------------------------
+
+async def _resolve_owner_overrides(session_id) -> dict:
+    """Resolve the room owner's per-account override fields from the users
+    collection. Returns {} when there is no room/owner."""
+    try:
+        room = await rooms_collection.find_one(
+            {"sid": session_id}, {"admin_email": 1, "admin_uid": 1}
+        )
+        if not room:
+            return {}
+        email = room.get("admin_email")
+        if not email and room.get("admin_uid"):
+            doc = await users_collection.find_one({"user_uid": room["admin_uid"]}, {"email": 1})
+            email = doc.get("email") if doc else None
+        if not email:
+            return {}
+        user = await users_collection.find_one(
+            {"email": email.lower()}, {"ai_provider": 1, "partial_interval": 1}
+        )
+        return user or {}
+    except Exception as e:
+        log_exception(logger, e, "Resolve owner overrides error")
+        return {}
+
+
+async def get_session_ai_provider(redis_client, session_id) -> str:
+    """Return the owner's AI provider override for the session ('' = use default).
+    Cached in Redis to keep the translation hot path off MongoDB."""
+    key = f"ai_provider:{session_id}"
+    try:
+        cached = await redis_client.get(key)
+        if cached is not None:
+            return cached
+    except Exception:
+        pass
+    provider = (await _resolve_owner_overrides(session_id)).get("ai_provider") or ""
+    try:
+        await redis_client.set(key, provider, ex=86400)
+    except Exception:
+        pass
+    return provider
+
+
+async def get_session_partial_interval(session_id) -> float | None:
+    """Return the owner's PARTIAL_INTERVAL override (None = use config default)."""
+    pi = (await _resolve_owner_overrides(session_id)).get("partial_interval")
+    return pi if isinstance(pi, (int, float)) and not isinstance(pi, bool) else None
+
+
+# ---------------------------------------------------------------------------
 # Session: translate tone
 # ---------------------------------------------------------------------------
 
@@ -261,13 +313,13 @@ def apply_text_dictionary(text: str, mapping: dict[str, str]) -> str:
 # Keyword reranking (background task)
 # ---------------------------------------------------------------------------
 
-async def rerank_keywords(redis_client, session_id, keywords: dict[str, int], locked_list: list[str], recent_text: str):
+async def rerank_keywords(redis_client, session_id, keywords: dict[str, int], locked_list: list[str], recent_text: str, provider: str | None = None):
     """
     Extract new special nouns/names from recent_text, then increment/decrement keyword
     counts by presence in text. Locked keywords are always preserved at the front.
     Runs as a fire-and-forget background task; result is saved to Redis.
     """
-    translator = get_translator()
+    translator = get_translator(provider)
     locked_set = set(locked_list)
 
     try:
@@ -305,7 +357,8 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     data: the new transcription segment, e.g. {"partial": True, "text": "..."}
     cached_data: the history `{"transcriptions": [...]}`
     """
-    translator = get_translator()
+    provider = await get_session_ai_provider(redis_client, session_id) or None
+    translator = get_translator(provider)
 
     languages = await get_session_languages(redis_client, session_id)
     if not languages:
@@ -397,7 +450,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
 
     if not partial and languages:
         asyncio.create_task(
-            rerank_keywords(redis_client, session_id, dict(current_keywords), locked_list, result["corrected"])
+            rerank_keywords(redis_client, session_id, dict(current_keywords), locked_list, result["corrected"], provider)
         )
 
     result["translated"] = translated
