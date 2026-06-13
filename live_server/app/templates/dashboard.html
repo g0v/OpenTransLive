@@ -32,25 +32,29 @@
       <table class="w-full text-sm">
         <thead>
           <tr class="border-b border-gray-700 text-left text-xs text-gray-500 uppercase tracking-wider">
-            <th class="px-4 py-3 font-semibold">Email</th>
-            <th class="px-4 py-3 font-semibold">Last login</th>
-            <th class="px-4 py-3 font-semibold">AI provider</th>
-            <th class="px-4 py-3 font-semibold">Interval (s)</th>
-            <th class="px-4 py-3 font-semibold text-right">Realtime access</th>
+            <th class="px-2 py-1 font-semibold">Email</th>
+            <th class="px-2 py-1 font-semibold">Last login</th>
+            <th class="px-2 py-1 font-semibold">Transcribed</th>
+            <th class="px-2 py-1 font-semibold">Sessions</th>
+            <th class="px-2 py-1 font-semibold">AI provider</th>
+            <th class="px-2 py-1 font-semibold">Interval (s)</th>
+            <th class="px-2 py-1 font-semibold text-right">Realtime access</th>
           </tr>
         </thead>
         <tbody id="user-table-body">
           {% for user in users %}
           <tr class="border-b border-gray-700 last:border-0" data-email="{{ user.email }}">
-            <td class="px-4 py-3 font-mono text-xs text-gray-200 break-all">{{ user.email }}</td>
-            <td class="px-4 py-3 text-xs text-gray-500">
+            <td class="px-2 py-1 font-mono text-xs text-gray-200 break-keep">{{ user.email }}</td>
+            <td class="px-2 py-1 text-xs text-gray-500">
               {% if user.last_login_at %}
               {{ user.last_login_at[:19].replace('T', ' ') }} UTC
               {% else %}
               —
               {% endif %}
             </td>
-            <td class="px-4 py-3">
+            <td class="px-2 py-1 text-xs text-gray-300 whitespace-nowrap">{{ user.audio_display }}</td>
+            <td class="px-2 py-1 text-xs text-gray-300">{{ user.session_count }}</td>
+            <td class="px-2 py-1">
               <select
                 class="provider-select bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
                 data-email="{{ user.email }}">
@@ -60,14 +64,14 @@
                 {% endfor %}
               </select>
             </td>
-            <td class="px-4 py-3">
+            <td class="px-2 py-1">
               <input
                 type="number" step="0.1" min="0.1" max="10" placeholder="default"
                 value="{{ user.partial_interval if user.partial_interval is not none else '' }}"
                 class="interval-input bg-gray-900 border border-gray-700 rounded px-2 py-1 w-20 text-xs text-gray-200"
                 data-email="{{ user.email }}">
             </td>
-            <td class="px-4 py-3 text-right">
+            <td class="px-2 py-1 text-right">
               <button
                 class="realtime-toggle px-3 py-1 rounded text-xs font-semibold transition-colors {% if user.realtime_enabled %}bg-green-700 hover:bg-green-600 text-green-100{% else %}bg-gray-700 hover:bg-gray-600 text-gray-300{% endif %}"
                 data-email="{{ user.email }}" data-enabled="{{ 'true' if user.realtime_enabled else 'false' }}">

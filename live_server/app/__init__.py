@@ -819,12 +819,30 @@ async def logout(request: Request):
 async def dashboard(request: Request):
     _require_admin_email(request)
     users = await users_collection.find({}, {"_id": 0}).to_list(length=1000)
+
+    # Aggregate Scribe usage per owner in one pass (rooms accumulate audio
+    # duration via the heartbeat handler), keyed by lowercased admin_email.
+    usage_by_email: dict[str, dict] = {}
+    async for row in await rooms_collection.aggregate([
+        {"$match": {"admin_email": {"$ne": None}}},
+        {"$group": {
+            "_id": {"$toLower": "$admin_email"},
+            "total_audio_secs": {"$sum": {"$ifNull": ["$audio_duration_secs", 0]}},
+            "session_count": {"$sum": 1},
+        }},
+    ]):
+        usage_by_email[row["_id"]] = row
+
     # Convert datetimes to ISO strings for template rendering
     for u in users:
         if isinstance(u.get("created_at"), datetime):
             u["created_at"] = u["created_at"].isoformat()
         if isinstance(u.get("last_login_at"), datetime):
             u["last_login_at"] = u["last_login_at"].isoformat()
+        stats = usage_by_email.get((u.get("email") or "").lower(), {})
+        secs = round(stats.get("total_audio_secs", 0))
+        u["session_count"] = stats.get("session_count", 0)
+        u["audio_display"] = f"{secs / 3600:.1f} h" if secs >= 3600 else f"{secs // 60} m"
     from .translators import AVAILABLE_PROVIDERS
     return templates.TemplateResponse("dashboard.html", {
         "request": request,

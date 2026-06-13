@@ -12,6 +12,7 @@ users_collection = db['users']
 
 async def init_indexes():
     await rooms_collection.create_index([("sid", ASCENDING)], unique=True)
+    await rooms_collection.create_index([("admin_email", ASCENDING)])
     await transcription_store_collection.create_index([("sid", ASCENDING), ("created_at", DESCENDING)])
     await transcription_segments_collection.create_index([("sid", ASCENDING), ("start_time", ASCENDING)])
     await users_collection.create_index([("email", ASCENDING)], unique=True)
