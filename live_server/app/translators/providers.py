@@ -32,7 +32,7 @@ _CORRECT_PROMPT = (
     "Correct the user's ASR transcript literally. No styling/summaries. \n"
     "Remove speech disfluencies and redundant fillers. \n"
     "Output ONLY the corrected text.\n\n"
-    "Context: {keywords}"
+    "Context(ordered): {keywords}"
 )
 
 _TONE_MAP = {
@@ -50,7 +50,7 @@ _TRANSLATE_PROMPT = (
     "2. Adapt dates/numbers/nouns/etc. to target language conventions, then add punctuation.\n"
     "3. Prefer continuity with the previous translation, don't rephrase the already-good parts.\n"
     "4. Output ONLY the processed translated text.\n\n"
-    "Context: {keywords}\n\n"
+    "Context(ordered): {keywords}\n\n"
     "Previous translation: {prev_translation}\n\n"
 )
 
@@ -136,12 +136,16 @@ class ChatCompletionTranslator(BaseTranslator):
         }
         result = await self._chat(body)
         if result:
-            return (
-                self._message_text(result)
+            corrected = (
+                (self._message_text(result) or "")
                 .replace("<correct_this>", "")
                 .replace("</correct_this>", "")
                 .strip()
             )
+            # An empty model output (e.g. reasoning consumed the token budget)
+            # must not blank out the segment — fall back to the raw transcript.
+            if corrected:
+                return corrected
         return text
 
     async def translate(
@@ -178,12 +182,16 @@ class ChatCompletionTranslator(BaseTranslator):
         )
         if result:
             raw = (
-                self._message_text(result)
+                (self._message_text(result) or "")
                 .replace("<translate_this>", "")
                 .replace("</translate_this>", "")
                 .strip()
             )
-            return re.sub(r"[\n\r]+", " ", raw)
+            # Empty model output is treated as a failure (None) so the worker
+            # falls back to the previous partial translation rather than storing
+            # a blank gap.
+            if raw:
+                return re.sub(r"[\n\r]+", " ", raw)
         return None
 
     async def extract_keywords(
