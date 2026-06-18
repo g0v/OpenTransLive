@@ -4,6 +4,7 @@
 # See LICENSE for details.
 
 import re
+import os
 import secrets
 from datetime import datetime, timezone
 
@@ -12,6 +13,8 @@ from pymongo import ReturnDocument
 from .logger_config import setup_logger
 
 logger = setup_logger(__name__)
+
+_IS_DEVELOPMENT = os.environ.get("ENVIRONMENT", "development").lower() == "development"
 
 _EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
 
@@ -157,8 +160,9 @@ def _build_otp_email_html(otp: str) -> str:
 
 async def send_otp_email(email: str, otp: str, email_settings: dict) -> None:
     smtp_host = email_settings.get("SMTP_HOST", "")
-    if not smtp_host:
+    if _IS_DEVELOPMENT and not smtp_host:
         logger.info("[DEV MODE] OTP generated email=%s smtp_configured=false", _mask_email(email))
+        logger.info("[DEV MODE] OTP: %s", otp)
         return
 
     import aiosmtplib
