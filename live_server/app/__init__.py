@@ -136,10 +136,26 @@ active_translation_managers: TTLCache = _ManagerTTLCache(
 )
 # Pending debounce tasks for partial transcription broadcasts, keyed by session_id.
 _partial_debounce_tasks: dict = {}
+# Per-session locks serializing the read-modify-write on transcription:{sid}:partial so that
+# flow_only client partials, server scribe translation partials, and commits cannot interleave
+# across the read->write await gap and stomp each other. Valid only while SERVER_WORKERS == 1
+# (single uvicorn process / event loop); with multiple workers this must move to Redis-level CAS.
+# WeakValueDictionary so locks vanish once no coroutine holds or waits on them.
+_partial_rmw_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 # Per-session locks to prevent concurrent _get_or_create_scribe_manager calls from racing.
 # WeakValueDictionary so entries vanish once no caller is holding / waiting on the lock;
 # otherwise every session_id ever seen would leak an asyncio.Lock for the life of the process.
 _scribe_create_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
+
+
+def _get_or_create_lock(registry: "weakref.WeakValueDictionary[str, asyncio.Lock]", key: str) -> asyncio.Lock:
+    # Atomic in asyncio: no await between .get() and the assignment, so two concurrent
+    # callers cannot each install a separate Lock for the same key.
+    lock = registry.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        registry[key] = lock
+    return lock
 
 
 class SegmentWriteQueue:
@@ -260,13 +276,7 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
     """Return the existing running ScribeSessionManager for the session, or create a new one.
     Pass force_new=True to unconditionally restart (e.g. after a language change).
     """
-    # Atomic in asyncio: no await between .get() and the assignment, so two concurrent
-    # callers cannot each install a separate Lock.
-    lock = _scribe_create_locks.get(session_id)
-    if lock is None:
-        lock = asyncio.Lock()
-        _scribe_create_locks[session_id] = lock
-    async with lock:
+    async with _get_or_create_lock(_scribe_create_locks, session_id):
         existing: ScribeSessionManager | None = active_scribe_managers.get(session_id)
         if existing and existing.is_running and not force_new:
             return existing
@@ -2022,12 +2032,11 @@ async def time_sync(socket_id, data):
 
     Latency displays subtract a server-generated end_time from the viewer's
     local clock, so any skew between the browser and the (NTP-synced) server
-    leaks directly into the number. The client sends t0, we echo it back with
-    the server's current time t1; the client then derives
-    offset = t1 - (t0 + rtt/2) to correct its own clock. Returned as an ack.
+    leaks directly into the number. The client times its own t0/rtt locally;
+    we just return the server time t1 as an ack, from which the client derives
+    offset = t1 - (t0 + rtt/2) to correct its own clock.
     """
-    t0 = data.get("t0") if isinstance(data, dict) else None
-    return {"t0": t0, "t1": time.time() * 1000}
+    return {"t1": time.time() * 1000}
 
 @sio.event
 async def disconnect(socket_id):
@@ -2053,76 +2062,80 @@ async def _process_transcription_update(session_id, sync_data):
     manager = active_scribe_managers.get(session_id)
     yt_start_time = manager.yt_start_time if manager else await get_youtube_start_time(session_id)
 
-    pipe = redis_client.pipeline()
-    pipe.zrange(list_key, -1, -1)
-    pipe.get(meta_key)
-    pipe.get(partial_key)
-    pipe.expire(list_key, TRANSCRIPTION_TTL)
-    pipe.expire(meta_key, TRANSCRIPTION_TTL)
-    try:
-        last_json, meta_json, partial_json, *_ = await pipe.execute()
-        redis_rtts += 1
-    except Exception as e:
-        log_exception(logger, e, "Redis pipeline error in _process_transcription_update (read)")
-        last_json, meta_json, partial_json = [], None, None
-
-    last_committed = json.loads(last_json[0]) if last_json else None
-    stream_start_time = yt_start_time
-    if not stream_start_time and meta_json:
+    # Serialize the read-modify-write on partial_key per session so concurrent partials
+    # (flow_only client vs scribe translation) and commits can't interleave across the
+    # read->write await gap and stomp each other.
+    async with _get_or_create_lock(_partial_rmw_locks, session_id):
+        pipe = redis_client.pipeline()
+        pipe.zrange(list_key, -1, -1)
+        pipe.get(meta_key)
+        pipe.get(partial_key)
+        pipe.expire(list_key, TRANSCRIPTION_TTL)
+        pipe.expire(meta_key, TRANSCRIPTION_TTL)
         try:
-            stream_start_time = json.loads(meta_json).get("stream_start_time")
-        except (TypeError, ValueError):
-            pass
+            last_json, meta_json, partial_json, *_ = await pipe.execute()
+            redis_rtts += 1
+        except Exception as e:
+            log_exception(logger, e, "Redis pipeline error in _process_transcription_update (read)")
+            last_json, meta_json, partial_json = [], None, None
 
-    if is_partial:
-        if last_committed and sync_data["start_time"] < last_committed["start_time"]:
-            logger.debug(
-                "skip_older_partial sid_hash=%s incoming_start=%s last_committed_start=%s",
-                _hash_token(session_id),
-                sync_data.get("start_time"),
-                last_committed.get("start_time"),
-            )
-            return
-
-        if sync_data.get("flow_only") and partial_json:
+        last_committed = json.loads(last_json[0]) if last_json else None
+        stream_start_time = yt_start_time
+        if not stream_start_time and meta_json:
             try:
-                last_partial = json.loads(partial_json)
-                sync_data["result"]["translated"] = last_partial["result"]["translated"]
-            except (KeyError, TypeError, ValueError):
+                stream_start_time = json.loads(meta_json).get("stream_start_time")
+            except (TypeError, ValueError):
                 pass
 
-        await redis_client.setex(partial_key, TRANSCRIPTION_TTL, json.dumps(sync_data))
-        redis_rtts += 1
-    else:
-        pipe = redis_client.pipeline()
-        pipe.zadd(list_key, {json.dumps(sync_data): sync_data["start_time"]})
-        pipe.zremrangebyrank(list_key, 0, -(TRANSCRIPTION_ZSET_MAX + 1))
-        pipe.expire(list_key, TRANSCRIPTION_TTL)
-        # Skip meta write when we have no stream_start_time so a transient read
-        # failure (which zeroes stream_start_time) doesn't stomp good meta.
-        if stream_start_time is not None:
-            pipe.setex(meta_key, TRANSCRIPTION_TTL, json.dumps({"stream_start_time": stream_start_time}))
-        pipe.delete(partial_key)
-        pipe.zrange(list_key, -1, -1)
-        try:
-            results = await pipe.execute()
-            redis_rtts += 1
-            new_last_json = results[-1]
-            if new_last_json:
-                last_committed = json.loads(new_last_json[0])
-        except Exception as e:
-            log_exception(logger, e, "Redis pipeline error in _process_transcription_update (write)")
-            # sync_data shares the ZSET member shape — safe to use as last_committed.
-            if not last_committed or sync_data["start_time"] >= last_committed["start_time"]:
-                last_committed = sync_data
+        if is_partial:
+            if last_committed and sync_data["start_time"] < last_committed["start_time"]:
+                logger.debug(
+                    "skip_older_partial sid_hash=%s incoming_start=%s last_committed_start=%s",
+                    _hash_token(session_id),
+                    sync_data.get("start_time"),
+                    last_committed.get("start_time"),
+                )
+                return
 
-        accepted = segment_write_queue.enqueue(session_id, sync_data, stream_start_time)
-        if not accepted:
-            logger.warning(
-                "segment_write_queue dropped incoming segment sid_hash=%s start=%s",
-                _hash_token(session_id),
-                sync_data.get("start_time"),
-            )
+            if sync_data.get("flow_only") and partial_json:
+                try:
+                    last_partial = json.loads(partial_json)
+                    sync_data["result"]["translated"] = last_partial["result"]["translated"]
+                except (KeyError, TypeError, ValueError):
+                    pass
+
+            await redis_client.setex(partial_key, TRANSCRIPTION_TTL, json.dumps(sync_data))
+            redis_rtts += 1
+        else:
+            pipe = redis_client.pipeline()
+            pipe.zadd(list_key, {json.dumps(sync_data): sync_data["start_time"]})
+            pipe.zremrangebyrank(list_key, 0, -(TRANSCRIPTION_ZSET_MAX + 1))
+            pipe.expire(list_key, TRANSCRIPTION_TTL)
+            # Skip meta write when we have no stream_start_time so a transient read
+            # failure (which zeroes stream_start_time) doesn't stomp good meta.
+            if stream_start_time is not None:
+                pipe.setex(meta_key, TRANSCRIPTION_TTL, json.dumps({"stream_start_time": stream_start_time}))
+            pipe.delete(partial_key)
+            pipe.zrange(list_key, -1, -1)
+            try:
+                results = await pipe.execute()
+                redis_rtts += 1
+                new_last_json = results[-1]
+                if new_last_json:
+                    last_committed = json.loads(new_last_json[0])
+            except Exception as e:
+                log_exception(logger, e, "Redis pipeline error in _process_transcription_update (write)")
+                # sync_data shares the ZSET member shape — safe to use as last_committed.
+                if not last_committed or sync_data["start_time"] >= last_committed["start_time"]:
+                    last_committed = sync_data
+
+            accepted = segment_write_queue.enqueue(session_id, sync_data, stream_start_time)
+            if not accepted:
+                logger.warning(
+                    "segment_write_queue dropped incoming segment sid_hash=%s start=%s",
+                    _hash_token(session_id),
+                    sync_data.get("start_time"),
+                )
 
     payload = sync_data.copy()
     if last_committed:

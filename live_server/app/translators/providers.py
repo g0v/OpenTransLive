@@ -44,14 +44,15 @@ _TONE_MAP = {
 
 _TRANSLATE_PROMPT = (
     "Role: Expert Translator & Localizer.\n"
-    "Task: Translate <translate_this> into natural, native-level {language}.\n"
+    "Task: Translate <translate_this> into natural, native-level {language}.\n\n"
     "Rules:\n"
-    "1. Accurate and faithful first; Tone: {tone}.\n"
-    "2. Adapt dates/numbers/nouns/etc. to target language conventions, then add punctuation.\n"
-    "3. Prefer continuity with the previous translation, don't rephrase the already-good parts.\n"
-    "4. Output ONLY the processed translated text.\n\n"
-    "Context(ordered): {keywords}\n\n"
-    "Previous translation: {prev_translation}\n\n"
+    "1. Ensure accuracy first; Tone: {tone}.\n"
+    "2. Adapt dates, numbers, and nouns to target conventions. Fix punctuation.\n"
+    "3. Maintain continuity with the previous translation; do not rephrase consistent parts.\n"
+    "4. Use <context> for reference only. NEVER repeat or continue them.\n"
+    "5. Output ONLY the final translated text of <translate_this>. No explanations.\n\n"
+    "Keywords(ordered): {keywords}\n"
+    "Previous translation: {prev_translation}\n"
 )
 
 _EXTRACT_KEYWORDS_PROMPT = (
@@ -173,7 +174,7 @@ class ChatCompletionTranslator(BaseTranslator):
                 },
                 {
                     "role": "user",
-                    "content": f"{context[-50:]}\n<translate_this>\n{text}\n</translate_this>",
+                    "content": f"<context>{context[-50:]}</context>\n<translate_this>\n{text}\n</translate_this>",
                 },
             ],
         }
