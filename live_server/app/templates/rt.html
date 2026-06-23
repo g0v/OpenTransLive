@@ -27,6 +27,11 @@
             icon="mdi:format-font-size-decrease" width="18" height="18"></iconify-icon></button>
         <button id="font-increase" class="icon-btn icon-btn-sm" aria-label="Increase font size"><iconify-icon
             icon="mdi:format-font-size-increase" width="18" height="18"></iconify-icon></button>
+        <!-- Fade highlight toggle -->
+        <button id="fade-toggle" class="icon-btn icon-btn-sm active" aria-label="Toggle highlight fade"
+          title="Toggle highlight fade">
+          <iconify-icon icon="ph:highlighter-circle" width="18" height="18"></iconify-icon>
+        </button>
         <!-- Language settings button -->
         <button id="sort-btn" class="icon-btn icon-btn-sm" aria-label="Language settings" title="Language settings">
           <iconify-icon icon="ph:translate" width="18" height="18"></iconify-icon>
@@ -558,7 +563,7 @@
 
     0%,
     20% {
-      background-color: rgba(139, 92, 246, 0.25);
+      background-color: var(--hl-color, rgba(139, 92, 246, 0.25));
     }
 
     80%,
@@ -569,6 +574,16 @@
 
   .new-text {
     animation: new-text-highlight 2s ease-out forwards;
+  }
+
+  .new-text-commit {
+    --hl-color: rgba(34, 197, 94, 0.25);
+    animation: new-text-highlight 2s ease-out forwards;
+  }
+
+  #app-root.fade-off .new-text,
+  #app-root.fade-off .new-text-commit {
+    animation: none;
   }
 
   .language-card {
@@ -667,6 +682,18 @@
   document.getElementById('theme-light').addEventListener('click', () => applyTheme('light'));
   document.getElementById('theme-dark').addEventListener('click', () => applyTheme('dark'));
   document.getElementById('theme-hc').addEventListener('click', () => applyTheme('high-contrast'));
+
+  // ------------------------------------------------------------------ //
+  // Fade highlight toggle                                               //
+  // ------------------------------------------------------------------ //
+  function applyFade(enabled) {
+    document.getElementById('app-root').classList.toggle('fade-off', !enabled);
+    document.getElementById('fade-toggle').classList.toggle('active', enabled);
+    updateUrlParam('fade', enabled ? null : '0');
+  }
+
+  document.getElementById('fade-toggle').addEventListener('click', () =>
+    applyFade(document.getElementById('app-root').classList.contains('fade-off')));
 
   // ------------------------------------------------------------------ //
   // URL param helpers                                                   //
@@ -1090,9 +1117,9 @@
 
     if (lastEl.textContent !== lastText) {
       lastEl.textContent = lastText;
-      lastEl.classList.remove('new-text');
+      lastEl.classList.remove('new-text-commit');
       void lastEl.offsetWidth;
-      if (lastText) lastEl.classList.add('new-text');
+      if (lastText) lastEl.classList.add('new-text-commit');
       changed = true;
     }
 
@@ -1138,7 +1165,7 @@
     const history = document.createElement('span');
     const last = document.createElement('span');
     const partial = document.createElement('span');
-    last.addEventListener('animationend', () => last.classList.remove('new-text'));
+    last.addEventListener('animationend', () => last.classList.remove('new-text-commit'));
     partial.addEventListener('animationend', () => partial.classList.remove('new-text'));
     wrapper.appendChild(history);
     wrapper.appendChild(last);
@@ -1389,6 +1416,9 @@
       } else {
         applyTheme('light');
       }
+
+      // fade highlight
+      applyFade(params.get('fade') !== '0');
 
       updateCurrentUrlDisplay();
     });
