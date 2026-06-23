@@ -2017,6 +2017,19 @@ async def connect(socket_id, environ, auth):
     await sio.emit('connected', {'status': 'connected', 'client_id': socket_id}, to=socket_id)
 
 @sio.event
+async def time_sync(socket_id, data):
+    """NTP-style clock handshake.
+
+    Latency displays subtract a server-generated end_time from the viewer's
+    local clock, so any skew between the browser and the (NTP-synced) server
+    leaks directly into the number. The client sends t0, we echo it back with
+    the server's current time t1; the client then derives
+    offset = t1 - (t0 + rtt/2) to correct its own clock. Returned as an ack.
+    """
+    t0 = data.get("t0") if isinstance(data, dict) else None
+    return {"t0": t0, "t1": time.time() * 1000}
+
+@sio.event
 async def disconnect(socket_id):
     """Handle client disconnection"""
     _socket_limiter.cleanup(socket_id)

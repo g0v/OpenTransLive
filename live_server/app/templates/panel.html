@@ -1623,7 +1623,7 @@
         const p = document.createElement('p')
         p.className = 'flow-item flex justify-between items-start group'
 
-        const latency = (Date.now() / 1000) - segment.end_time
+        const latency = ((Date.now() + (window.serverClockOffsetMs || 0)) / 1000) - segment.end_time
         p.innerHTML = `<span class="flex-1">${escapeHtml(text)}</span><span class="text-[10px] text-gray-600 ml-2 tabular-nums">${latency.toFixed(2)}s</span>`
 
         flowContent.appendChild(p)
@@ -1655,7 +1655,7 @@
           partialEl.className = 'flow-item-partial flex justify-between items-start'
           flowContent.appendChild(partialEl)
         }
-        const latency = (Date.now() / 1000) - segment.end_time
+        const latency = ((Date.now() + (window.serverClockOffsetMs || 0)) / 1000) - segment.end_time
         partialEl.innerHTML = `<span class="flex-1">${escapeHtml(text)}</span><iconify-icon icon="mdi:loading" class="animate-spin text-gray-600 mt-0.5 ml-1" width="10"></iconify-icon><span class="text-[10px] text-gray-700 ml-1 tabular-nums">${latency.toFixed(2)}s</span>`
         scrollToBottom()
       }

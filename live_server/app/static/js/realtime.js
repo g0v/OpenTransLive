@@ -22,6 +22,40 @@ function updateViewerCountDisplay(count) {
   el.textContent = 'Viewers: ' + count;
 }
 
+// --- Server clock synchronization (NTP-style) ---
+// Latency readouts subtract a server-generated end_time from Date.now(); without
+// this, the viewer's clock skew vs the server is added straight into the number
+// (it only looked right locally because browser and server shared one clock).
+// We estimate serverClock - localClock and expose it for the flow panel to apply.
+window.serverClockOffsetMs = 0;
+let _clockSyncBestRtt = Infinity;
+
+function sampleServerClock() {
+  const t0 = Date.now();
+  socket.emit('time_sync', { t0 }, function (resp) {
+    if (!resp || typeof resp.t1 !== 'number') return;
+    const rtt = Date.now() - t0;
+    // Keep the lowest-RTT sample: least confounded by network jitter.
+    if (rtt < _clockSyncBestRtt) {
+      _clockSyncBestRtt = rtt;
+      window.serverClockOffsetMs = resp.t1 - (t0 + rtt / 2);
+    }
+  });
+}
+
+function syncServerClock(samples, gapMs) {
+  // Reset the best-RTT baseline so a fresh burst can re-converge after drift.
+  _clockSyncBestRtt = Infinity;
+  let n = 0;
+  (function tick() {
+    sampleServerClock();
+    if (++n < samples) setTimeout(tick, gapMs);
+  })();
+}
+
+// Re-measure periodically to track drift; bursts pick the cleanest sample.
+setInterval(function () { if (socket.connected) syncServerClock(3, 200); }, 30000);
+
 socket.on('connect', function () {
   // Show pending state — auth is not yet confirmed by the server
   statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-yellow-400';
@@ -30,6 +64,8 @@ socket.on('connect', function () {
 
   // Join the session room
   socket.emit('join_session', { session_id: sessionId, secret_key: user_secret_key });
+  // Establish the clock offset before latency numbers start rendering.
+  syncServerClock(5, 200);
 });
 
 socket.on('disconnect', function () {
