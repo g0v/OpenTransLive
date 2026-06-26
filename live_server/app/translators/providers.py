@@ -228,10 +228,10 @@ class GeminiTranslator(ChatCompletionTranslator):
     api_key_setting = "GEMINI_API_KEY"
     system_role = "developer"
 
-    _MODEL = "gemini-3.1-flash-lite-preview"
+    _MODEL = "gemini-3.1-flash-lite"
     correct_params = {
         "model": _MODEL,
-        "reasoning_effort": "minimal",
+        "reasoning_effort": "low",
         "temperature": 0,
     }
     translate_params = {

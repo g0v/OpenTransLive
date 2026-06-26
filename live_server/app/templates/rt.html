@@ -563,7 +563,7 @@
 
     0%,
     20% {
-      background-color: var(--hl-color, rgba(139, 92, 246, 0.25));
+      background-color: var(--hl-color, rgba(139, 92, 246, 0.2));
     }
 
     80%,
@@ -577,7 +577,7 @@
   }
 
   .new-text-commit {
-    --hl-color: rgba(34, 197, 94, 0.25);
+    --hl-color: rgba(139, 92, 246, 0.3);
     animation: new-text-highlight 2s ease-out forwards;
   }
 
@@ -809,6 +809,31 @@
     return changed;
   }
 
+  // Drop languages that no longer appear anywhere in the current buffer (e.g. the
+  // broadcaster switched translation targets). Without this their cards linger
+  // empty once the last segment carrying them scrolls past MAX_HISTORY.
+  function pruneStaleLanguages() {
+    const present = new Set();
+    const cropped = (transcriptionsData.transcriptions || []).slice(-MAX_HISTORY);
+    for (const t of cropped) {
+      const tr = t?.result?.translated;
+      if (tr) Object.keys(tr).forEach(k => present.add(k));
+    }
+    const partial = transcriptionsData?.partial?.result?.translated;
+    if (partial) Object.keys(partial).forEach(k => present.add(k));
+    let changed = false;
+    for (const l of [...languageOrder]) {
+      if (!present.has(l)) {
+        languageOrder = languageOrder.filter(x => x !== l);
+        hiddenLanguages.delete(l);
+        renderedText.delete('grid:' + l);
+        renderedText.delete('single:' + l);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   function getVisibleOrderedLanguages() {
     return languageOrder.filter(l => !hiddenLanguages.has(l));
   }
@@ -990,8 +1015,9 @@
   // View / layout                                                       //
   // ------------------------------------------------------------------ //
   function syncLanguagesFromData() {
-    const changed = discoverLanguages();
-    if (!changed) return;
+    const added = discoverLanguages();
+    const pruned = pruneStaleLanguages();
+    if (!added && !pruned) return;
     if (!sortModal.classList.contains('hidden')) renderSortModal();
     // Pick the layout based on what's currently visible. If a new language
     // arrived and is visible, this may flip single → grid.
@@ -1267,7 +1293,9 @@
     gridContent.style.setProperty('--grid-cols', actualCols);
     gridContent.style.setProperty('--grid-rows', actualRows);
 
-    if (gridContent.children.length !== languages.length) {
+    const existing = Array.from(gridContent.children).map(c => c.getAttribute('data-language'));
+    const mismatch = existing.length !== languages.length || existing.some((l, i) => l !== languages[i]);
+    if (mismatch) {
       gridContent.innerHTML = '';
       languages.forEach(lang => renderedText.delete('grid:' + lang));
       languages.forEach(language => {
