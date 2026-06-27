@@ -2,7 +2,7 @@ import asyncio
 import json
 from opencc import OpenCC
 from .config import REALTIME_SETTINGS
-from .database import rooms_collection, users_collection
+from .database import rooms_collection, users_collection, transcription_segments_collection
 from .logger_config import setup_logger, log_exception
 from .translators import get_translator
 
@@ -307,6 +307,82 @@ def apply_text_dictionary(text: str, mapping: dict[str, str]) -> str:
         if src:
             text = text.replace(src, mapping[src])
     return text
+
+
+async def retroactive_apply_text_dictionary(redis_client, session_id: str, mapping: dict[str, str]):
+    """Apply text dictionary retroactively to all committed segments for a session.
+    Updates MongoDB and refreshes the Redis ZSET cache."""
+    if not mapping:
+        return
+    from pymongo import UpdateOne
+
+    try:
+        segments = await transcription_segments_collection.find(
+            {"sid": session_id, "partial": {"$ne": True}, "result": {"$exists": True}}
+        ).to_list(length=10000)
+    except Exception as e:
+        log_exception(logger, e, "Retroactive text dict: segment fetch error")
+        return
+
+    if not segments:
+        return
+
+    bulk_ops = []
+    updated_for_cache = []
+
+    for seg in segments:
+        result = seg.get("result") or {}
+        corrected = result.get("corrected", "")
+        translated = result.get("translated") or {}
+
+        new_corrected = apply_text_dictionary(corrected, mapping)
+        new_translated = {
+            lang: apply_text_dictionary(text, mapping)
+            for lang, text in translated.items()
+        }
+
+        if new_corrected == corrected and new_translated == translated:
+            continue
+
+        set_fields = {}
+        if new_corrected != corrected:
+            set_fields["result.corrected"] = new_corrected
+        if new_translated != translated:
+            set_fields["result.translated"] = new_translated
+
+        bulk_ops.append(UpdateOne({"_id": seg["_id"]}, {"$set": set_fields}))
+
+        clean = {k: v for k, v in seg.items() if k not in ("_id", "sid", "created_at")}
+        clean.setdefault("result", {})
+        clean["result"]["corrected"] = new_corrected
+        clean["result"]["translated"] = new_translated
+        updated_for_cache.append(clean)
+
+    if not bulk_ops:
+        return
+
+    try:
+        await transcription_segments_collection.bulk_write(bulk_ops)
+    except Exception as e:
+        log_exception(logger, e, "Retroactive text dict: bulk write error")
+        return
+
+    zset_key = f"transcription:{session_id}:list"
+    try:
+        if await redis_client.exists(zset_key):
+            pipe = redis_client.pipeline()
+            for seg in updated_for_cache:
+                score = seg.get("start_time", 0)
+                pipe.zremrangebyscore(zset_key, score, score)
+                pipe.zadd(zset_key, {json.dumps(seg): score})
+            await pipe.execute()
+    except Exception as e:
+        log_exception(logger, e, "Retroactive text dict: Redis cache update error")
+
+    logger.info(
+        "Retroactive text dict applied: %d segments updated for session %s",
+        len(bulk_ops), session_id,
+    )
 
 
 # ---------------------------------------------------------------------------

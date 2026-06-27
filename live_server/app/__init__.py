@@ -1158,8 +1158,10 @@ async def update_session_text_dictionary_endpoint(request: Request, sid: str):
             raise HTTPException(status_code=400, detail="text_dictionary entries too long (max 200 chars)")
         cleaned[src_stripped] = dst
 
-    from .translation_service import save_text_dictionary
+    from .translation_service import save_text_dictionary, retroactive_apply_text_dictionary
     await save_text_dictionary(redis_client, sid, cleaned)
+    if cleaned:
+        asyncio.create_task(retroactive_apply_text_dictionary(redis_client, sid, cleaned))
     await _emit_session_settings_update(sid, "text-dictionary")
     return {"text_dictionary": cleaned}
 
