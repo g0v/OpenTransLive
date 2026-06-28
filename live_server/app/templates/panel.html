@@ -1165,10 +1165,12 @@
     }
     textDictionary.forEach(function (rule, idx) {
       const row = document.createElement('div')
-      row.className = 'flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300'
+      row.className = 'grid grid-cols-[1fr_auto_1fr_auto] items-center gap-1 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300'
       row.innerHTML = `
-        <span class="badge-target text-[10px] px-1 py-0.5 rounded bg-gray-700 text-gray-300 flex-shrink-0">${escapeHtml(targetLabel(rule.target))}</span>
-        <span class="flex-1 font-mono text-xs truncate text-gray-300">${escapeHtml(rule.from)}</span>
+        <div class="flex gap-1 items-center">
+          <span class="badge-target text-[10px] px-1 py-0.5 rounded bg-gray-700 text-gray-300 flex-shrink-0">${escapeHtml(targetLabel(rule.target))}</span>
+          <span class="flex-1 font-mono text-xs truncate text-gray-300">${escapeHtml(rule.from)}</span>
+        </div>
         <iconify-icon icon="mdi:arrow-right" width="14" height="14" class="text-gray-500 flex-shrink-0"></iconify-icon>
         <span class="flex-1 font-mono text-xs truncate text-blue-300">${escapeHtml(rule.to)}</span>
         <button class="td-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove mapping">
