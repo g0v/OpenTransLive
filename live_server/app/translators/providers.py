@@ -30,7 +30,7 @@ _DEFAULT_RETRIES = 3
 
 _CORRECT_PROMPT = (
     "Correct the user's ASR transcript literally. No styling/summaries. \n"
-    "Remove speech disfluencies and redundant fillers. \n"
+    "Remove speech disfluencies and redundant fillers and dirty words. \n"
     "Output ONLY the corrected text.\n\n"
     "Context(ordered): {keywords}"
 )
