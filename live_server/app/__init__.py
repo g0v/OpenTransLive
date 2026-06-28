@@ -1141,24 +1141,22 @@ async def update_session_text_dictionary_endpoint(request: Request, sid: str):
     await _verify_session_admin(request, sid)
 
     body = await request.json()
-    mapping = body.get("text_dictionary")
-    if not isinstance(mapping, dict):
-        raise HTTPException(status_code=400, detail="text_dictionary must be an object")
-    if len(mapping) > 200:
+    # normalize_text_dictionary owns format migration (legacy {from: to} dict ->
+    # rule list) and shape validation; the endpoint only enforces HTTP caps.
+    from .translation_service import normalize_text_dictionary, save_text_dictionary
+    rules = normalize_text_dictionary(body.get("text_dictionary"))
+    if len(rules) > 200:
         raise HTTPException(status_code=400, detail="text_dictionary too large (max 200 entries)")
 
-    cleaned: dict[str, str] = {}
-    for src, dst in mapping.items():
-        if not isinstance(src, str) or not isinstance(dst, str):
-            raise HTTPException(status_code=400, detail="text_dictionary keys and values must be strings")
-        src_stripped = src.strip()
-        if not src_stripped:
+    cleaned: list[dict[str, str]] = []
+    for r in rules:
+        r["from"] = r["from"].strip()
+        if not r["from"]:
             continue
-        if len(src_stripped) > 200 or len(dst) > 200:
+        if len(r["from"]) > 200 or len(r["to"]) > 200:
             raise HTTPException(status_code=400, detail="text_dictionary entries too long (max 200 chars)")
-        cleaned[src_stripped] = dst
+        cleaned.append(r)
 
-    from .translation_service import save_text_dictionary
     await save_text_dictionary(redis_client, sid, cleaned)
     await _emit_session_settings_update(sid, "text-dictionary")
     return {"text_dictionary": cleaned}

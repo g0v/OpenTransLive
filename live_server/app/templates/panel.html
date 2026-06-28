@@ -224,13 +224,17 @@
       </div>
       <div class="modal-body">
         <p class="text-[11px] text-gray-500 leading-snug">
-          Replace specific phrases in the transcript. Useful for fixing common mishearings or normalizing terms.
+          Replace specific phrases. Choose <span class="font-mono">Flow</span> to fix the source transcript, or a
+          language to rewrite that translation's output.
         </p>
         <div id="td-list" class="modal-list"></div>
         <div class="modal-add-row flex-col items-stretch gap-1">
           <div class="flex gap-1">
             <input id="td-from-input" type="text" placeholder="From" class="panel-input flex-1">
             <input id="td-to-input" type="text" placeholder="To" class="panel-input flex-1">
+          </div>
+          <div class="flex gap-1">
+            <select id="td-target-select" class="panel-input flex-1"></select>
             <button id="td-add-btn" type="button" class="panel-add-btn">Add</button>
           </div>
         </div>
@@ -891,6 +895,7 @@
           selectedLanguages = selectedLanguages.filter(c => c !== code)
         }
         updateDropdownLabel()
+        renderTargetOptions()
         debouncedSaveLanguages()
       })
       list.appendChild(row)
@@ -905,6 +910,7 @@
         selectedLanguages = data.languages
         updateDropdownLabel()
         renderCheckboxList()
+        renderTargetOptions()
       }
     } catch (e) {
       console.error('Failed to load languages:', e)
@@ -1115,40 +1121,62 @@
   }
 
   // ── Text mapping panel ───────────────────────────────────────────────────
-  let textDictionary = {}  // { from: to }
+  let textDictionary = []  // [{ from, to, target }] — target is 'flow' or a language code
   let textDictSaveTimer = null
+
+  // Resolve a language code to a human label using the language presets.
+  function langLabel(code) {
+    const preset = PRESET_LANGUAGES.find(l => l.code === code)
+    return preset ? preset.label : code
+  }
+
+  function targetLabel(target) {
+    return (!target || target === 'flow') ? 'Flow' : langLabel(target)
+  }
+
+  // Populate the add-row target <select> with Flow + the session's languages.
+  function renderTargetOptions() {
+    const sel = document.getElementById('td-target-select')
+    if (!sel) return
+    const prev = sel.value
+    const opts = ['<option value="flow">Flow (source)</option>']
+      .concat(selectedLanguages.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(langLabel(c))}</option>`))
+    sel.innerHTML = opts.join('')
+    if (prev && Array.from(sel.options).some(o => o.value === prev)) sel.value = prev
+  }
 
   function updateTextDictLabel() {
     const label = document.getElementById('td-dropdown-label')
-    const total = Object.keys(textDictionary).length
+    const total = textDictionary.length
     label.textContent = !total ? 'None'
       : total + ' mapping' + (total === 1 ? '' : 's')
   }
 
   function renderTextDictList() {
+    renderTargetOptions()
     const list = document.getElementById('td-list')
     list.innerHTML = ''
-    const entries = Object.entries(textDictionary)
-    if (!entries.length) {
+    if (!textDictionary.length) {
       const empty = document.createElement('div')
       empty.className = 'text-xs text-gray-500 px-2 py-1'
       empty.textContent = 'No text mappings set.'
       list.appendChild(empty)
       return
     }
-    entries.forEach(function ([from, to]) {
+    textDictionary.forEach(function (rule, idx) {
       const row = document.createElement('div')
       row.className = 'flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300'
       row.innerHTML = `
-        <span class="flex-1 font-mono text-xs truncate text-gray-300">${escapeHtml(from)}</span>
+        <span class="badge-target text-[10px] px-1 py-0.5 rounded bg-gray-700 text-gray-300 flex-shrink-0">${escapeHtml(targetLabel(rule.target))}</span>
+        <span class="flex-1 font-mono text-xs truncate text-gray-300">${escapeHtml(rule.from)}</span>
         <iconify-icon icon="mdi:arrow-right" width="14" height="14" class="text-gray-500 flex-shrink-0"></iconify-icon>
-        <span class="flex-1 font-mono text-xs truncate text-blue-300">${escapeHtml(to)}</span>
-        <button class="td-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove mapping" data-from="${escapeHtml(from)}">
+        <span class="flex-1 font-mono text-xs truncate text-blue-300">${escapeHtml(rule.to)}</span>
+        <button class="td-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove mapping">
           <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
         </button>
       `
       row.querySelector('.td-remove-btn').addEventListener('click', function () {
-        delete textDictionary[from]
+        textDictionary.splice(idx, 1)
         updateTextDictLabel()
         renderTextDictList()
         debouncedSaveTextDict()
@@ -1162,7 +1190,7 @@
       const res = await fetch(`/api/session/${sid}/text-dictionary`, { credentials: 'same-origin' })
       if (res.ok) {
         const data = await res.json()
-        textDictionary = data.text_dictionary || {}
+        textDictionary = Array.isArray(data.text_dictionary) ? data.text_dictionary : []
         updateTextDictLabel()
         renderTextDictList()
       }
@@ -1480,8 +1508,12 @@
       const toInput = document.getElementById('td-to-input')
       const from = fromInput.value.trim()
       const to = toInput.value
+      const target = document.getElementById('td-target-select').value || 'flow'
       if (!from) return
-      textDictionary[from] = to
+      // Same (from, target) replaces in place; otherwise append a new rule.
+      const existing = textDictionary.find(r => r.from === from && (r.target || 'flow') === target)
+      if (existing) existing.to = to
+      else textDictionary.push({ from, to, target })
       updateTextDictLabel()
       renderTextDictList()
       saveTextDictionary()
