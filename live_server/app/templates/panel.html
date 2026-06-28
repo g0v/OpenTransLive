@@ -1532,12 +1532,14 @@
     // Add custom keyword
     document.getElementById('kw-custom-add-btn').addEventListener('click', function () {
       const input = document.getElementById('kw-custom-input')
-      const kw = input.value.trim()
-      if (!kw) return
-      if (!currentKeywords.includes(kw)) {
-        currentKeywords.push(kw)
+      const kws = input.value.split(',').map(s => s.trim()).filter(Boolean)
+      if (!kws.length) return
+      for (const kw of kws) {
+        if (!currentKeywords.includes(kw)) {
+          currentKeywords.push(kw)
+        }
+        lockedKeywords.add(kw)
       }
-      lockedKeywords.add(kw)
       updateKeywordLabel()
       renderKeywordList()
       saveKeywords()
