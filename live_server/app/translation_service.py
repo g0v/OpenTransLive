@@ -7,8 +7,8 @@ from .logger_config import setup_logger, log_exception
 from .translators import get_translator
 
 logger = setup_logger(__name__)
-_cc_s2twp = OpenCC('s2twp')
-_cc_tw2sp = OpenCC('tw2sp')
+_cc_s2tw = OpenCC('s2tw')
+_cc_tw2s = OpenCC('tw2s')
 
 
 def _normalize_chinese_output(text: str, language: str) -> str:
@@ -21,9 +21,9 @@ def _normalize_chinese_output(text: str, language: str) -> str:
         return text
     lang = language.lower()
     if "hant" in lang or lang.endswith("-tw"):
-        return _cc_s2twp.convert(text)
+        return _cc_s2tw.convert(text)
     if "hans" in lang or lang.endswith("-cn"):
-        return _cc_tw2sp.convert(text)
+        return _cc_tw2s.convert(text)
     return text
 
 _KEYWORD_CAP = 30          # max keywords sent in prompts
@@ -329,6 +329,12 @@ async def get_text_dictionary(redis_client, session_id) -> list[dict[str, str]]:
         log_exception(logger, e, "MongoDB get text_dictionary error")
 
     return []
+
+
+async def get_language_maps(redis_client, session_id) -> dict[str, dict[str, str]]:
+    """Per-language replacement maps for a session (flow/source rules dropped)."""
+    _flow_map, by_lang = split_text_dictionary(await get_text_dictionary(redis_client, session_id))
+    return by_lang
 
 
 async def save_text_dictionary(redis_client, session_id, rules: list[dict[str, str]]):

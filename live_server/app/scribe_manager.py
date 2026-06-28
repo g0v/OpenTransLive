@@ -8,9 +8,11 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
 from datetime import datetime, timezone
 from .config import REALTIME_SETTINGS
 from .logger_config import setup_logger, log_exception
+from opencc import OpenCC
 
 logger = setup_logger(__name__)
 encoding = tiktoken.get_encoding("o200k_base")
+_cc_s2tw = OpenCC('s2tw')
 
 _MAX_RECONNECT_RETRIES = 5
 _RECONNECT_BASE_DELAY = 2.0   # seconds; doubles each attempt, capped at 60s
@@ -184,6 +186,8 @@ class ScribeSessionManager:
 
     def _build_transcription(self, text: str, partial: bool, end_time: datetime) -> dict:
         if self.seg_start_time is None: return {}
+        if self.language_code.startswith('zh'):
+            text = _cc_s2tw.convert(text)
         return {
             "text": text,
             "partial": partial,

@@ -1162,6 +1162,20 @@ async def update_session_text_dictionary_endpoint(request: Request, sid: str):
     return {"text_dictionary": cleaned}
 
 
+@app.get("/api/session/{sid}/display-dictionary", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def get_session_display_dictionary_endpoint(sid: str):
+    """Public per-language replacement maps for viewers (rt.html) to apply at
+    render time, so rules added mid-session also reflow already-displayed lines.
+
+    Only language-target rules are exposed; flow (source) rules never reach the
+    viewer since rt.html renders translated text only. No admin auth: this is the
+    public viewer surface, same as /stream and /rt.
+    """
+    sid = sanitize_query_param(sid, "session ID")
+    from .translation_service import get_language_maps
+    return {"language_maps": await get_language_maps(redis_client, sid)}
+
+
 @app.get("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def get_session_scribe_language_endpoint(request: Request, sid: str):
     """Get the forced detect language for Scribe (empty means auto-detect)."""
@@ -1784,12 +1798,19 @@ async def rt(request: Request, id: str):
         }
     sliced_data = data.copy()
     sliced_data["transcriptions"] = sliced_data["transcriptions"][-50:]
+    # Per-language replacement maps applied client-side at render time so rules
+    # added mid-session also reflow lines already on screen (see rt.html).
+    from .translation_service import get_language_maps
+    language_maps = await get_language_maps(redis_client, id)
     logger.debug(
         "rt_view sid_hash=%s segment_count=%s",
         _hash_token(id),
         len(sliced_data["transcriptions"]),
     )
-    return templates.TemplateResponse("rt.html", {"request": request, "id": id, "data": sliced_data})
+    return templates.TemplateResponse(
+        "rt.html",
+        {"request": request, "id": id, "data": sliced_data, "language_maps": language_maps},
+    )
   
 @app.get("/panel/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def panel(request: Request, sid: str):

@@ -596,6 +596,10 @@
 {% endblock %} {% block scripts %}
 <script>
   let transcriptionsData = {{ data | tojson(indent = 2) }};
+  // Per-language replacement maps ({ lang: { from: to } }). Applied at render
+  // time so mappings added mid-session reflow lines already on screen, not just
+  // newly translated ones. Refreshed by pollDisplayDictionary().
+  let languageMaps = {{ language_maps | tojson }};
   let lastSubtitle = null;
   let currentLayout = 'grid';
   let currentTheme = 'light';
@@ -632,6 +636,42 @@
   // absent) are skipped instead.
   const TRANSLATION_GAP = '⋯';
 
+  // Apply the per-language replacement map at render time. The server already
+  // maps newly-translated lines before storing, so this exists to retro-fix
+  // lines that were on screen before a rule was added. It must therefore be
+  // idempotent: re-running it over already-mapped text must be a no-op, even
+  // when the replacement contains the original (e.g. "AI" -> "AI助手", which a
+  // naive replace would grow to "AI助手助手"). We guard those by masking any
+  // existing `to` occurrences before substituting, then restoring them.
+  const DICT_SENTINEL = '\u0000';
+  // Memoise results: translated text per segment is stable, so the 30 history
+  // lines re-rendered every refresh become cache hits and only the live partial
+  // is actually recomputed. Cleared when the rules change (see poll); bounded so
+  // a long session's churn of unique partials can't grow it without limit.
+  const dictCache = new Map();
+  function applyLangDict(lang, text) {
+    if (!text) return text;
+    const map = languageMaps[lang];
+    if (!map) return text;
+    const key = lang + DICT_SENTINEL + text;
+    const cached = dictCache.get(key);
+    if (cached !== undefined) return cached;
+    let out = text;
+    // Longest source first so overlapping keys resolve like the server.
+    const keys = Object.keys(map).filter(k => k).sort((a, b) => b.length - a.length);
+    for (const src of keys) {
+      const dst = map[src];
+      if (dst && dst.indexOf(src) !== -1) {
+        out = out.split(dst).join(DICT_SENTINEL).split(src).join(dst).split(DICT_SENTINEL).join(dst);
+      } else {
+        out = out.split(src).join(dst);
+      }
+    }
+    if (dictCache.size > 1000) dictCache.clear();
+    dictCache.set(key, out);
+    return out;
+  }
+
   // Build the rendered history/last/partial text for one language from the
   // current transcription buffer. Segments missing the language key (predating
   // it) are skipped; a committed segment with an empty translation renders the
@@ -643,12 +683,13 @@
     for (let i = 0; i < cropped.length; i++) {
       const translated = cropped[i]?.result?.translated;
       if (!translated || !(lang in translated)) continue;
-      const text = translated[lang] || TRANSLATION_GAP;
+      const raw = translated[lang];
+      const text = raw ? applyLangDict(lang, raw) : TRANSLATION_GAP;
       if (i === cropped.length - 1) lastText = text + '\n';
       else historyItems.push(text);
     }
     const partial = transcriptionsData?.partial?.result?.translated;
-    const partialText = partial ? (partial[lang] || '') + '\n' : '';
+    const partialText = partial ? applyLangDict(lang, partial[lang] || '') + '\n' : '';
     return { historyItems, lastText, partialText };
   }
 
@@ -1393,6 +1434,27 @@
     }
 
     connectStream();
+
+    // Poll the (public) per-language replacement maps so rules the broadcaster
+    // edits mid-session reflow the on-screen text. Edits are rare, so a slow
+    // interval is plenty; on change we re-render in place (no reload).
+    let languageMapsJson = JSON.stringify(languageMaps);
+    async function pollDisplayDictionary() {
+      try {
+        const res = await fetch(`/api/session/{{ id }}/display-dictionary`, { credentials: 'same-origin' });
+        if (!res.ok) return;
+        const data = await res.json();
+        const next = data && data.language_maps ? data.language_maps : {};
+        const nextJson = JSON.stringify(next);
+        if (nextJson !== languageMapsJson) {
+          languageMaps = next;
+          languageMapsJson = nextJson;
+          dictCache.clear();
+          refreshView();
+        }
+      } catch (e) { /* transient; next tick retries */ }
+    }
+    setInterval(pollDisplayDictionary, 15000);
 
     window.addEventListener('resize', function () {
       if (currentLayout === 'grid') refreshGridView();
