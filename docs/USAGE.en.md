@@ -196,7 +196,7 @@ Requires session management permission.
 
 ### 7.1 Startup
 
-- `live_server/app/config.py` exists.
+- `live_server/app/secret/config.toml` exists (copied from `secret/config.example.toml`).
 - MongoDB is reachable.
 - Redis is reachable.
 - At least one AI provider API key is set.

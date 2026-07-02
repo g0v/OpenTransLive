@@ -196,7 +196,7 @@ Server to client：
 
 ### 7.1 啟動檢查
 
-- `live_server/app/config.py` 已存在。
+- `live_server/app/secret/config.toml` 已存在（從 `secret/config.example.toml` 複製）。
 - MongoDB 可連線。
 - Redis 可連線。
 - 至少一組 AI provider API key 已設定。

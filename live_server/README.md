@@ -23,8 +23,8 @@
 ```bash
 cd live_server
 uv sync
-cp app/config.example.py app/config.py
-# 編輯 app/config.py
+cp app/secret/config.example.toml app/secret/config.toml
+# 編輯 app/secret/config.toml
 uv run uvicorn app:socket_app --host 0.0.0.0 --port 5000
 ```
 
@@ -37,8 +37,8 @@ uv run uvicorn app:socket_app --reload --host 0.0.0.0 --port 5000
 ### Docker Compose
 
 ```bash
-cp app/config.example.py app/config.py
-# 編輯 app/config.py
+cp app/secret/config.example.toml app/secret/config.toml
+# 編輯 app/secret/config.toml
 docker-compose up -d
 ```
 
@@ -46,26 +46,28 @@ Compose 會啟動 FastAPI server、MongoDB、Redis。
 
 ## 設定
 
-### 主設定檔 `app/config.py`
+### 主設定檔 `app/secret/config.toml`
 
-從 `app/config.example.py` 複製，編輯下列區塊：
+從 `app/secret/config.example.toml` 複製成 `app/secret/config.toml`，編輯下列區塊（`app/config.py` 是讀取這個 TOML 的載入器，通常不用改）：
 
 | 區塊 | 用途 |
 |---|---|
-| `SETTINGS.SECRET_KEY` | Session cookie 與安全相關 |
-| `SETTINGS.YOUTUBE_API_KEY` | 查詢 YouTube 直播開始時間 |
-| `EMAIL_SETTINGS.ADMIN_EMAILS` | 可進入 `/dashboard` 的管理員 email |
-| `EMAIL_SETTINGS.SMTP_*` | OTP 信件寄送；留空則 OTP 寫進 log（適合開發）|
-| `MONGODB_SETTINGS` | MongoDB 連線 |
-| `REDIS_URL` | Redis 連線 |
-| `REALTIME_SETTINGS.ELEVENLABS_API_KEY` | ElevenLabs Scribe |
-| `REALTIME_SETTINGS.AI_PROVIDER` | 預設修正／翻譯 provider (`openai` / `gemini` / `groq` / `cerebras`) |
-| `REALTIME_SETTINGS.CORRECT_PROVIDER` | （可選）修正流程專用 provider |
-| `REALTIME_SETTINGS.TRANSLATE_PROVIDER` | （可選）翻譯流程專用 provider |
-| `REALTIME_SETTINGS.TRANSLATE_LANGUAGES` | 預設翻譯目標語言 |
-| `REALTIME_SETTINGS.COMMON_PROMPT` | 活動背景或翻譯上下文 |
-| `REALTIME_SETTINGS.PARTIAL_INTERVAL` | partial 字幕 flush 間隔（秒）|
-| `REALTIME_SETTINGS.SKIP_CORRECTION` | 是否略過修正流程 |
+| `[settings].SECRET_KEY` | Session cookie 與安全相關 |
+| `[settings].YOUTUBE_API_KEY` | 查詢 YouTube 直播開始時間 |
+| `[email_settings].ADMIN_EMAILS` | 可進入 `/dashboard` 的管理員 email |
+| `[email_settings].SMTP_*` | OTP 信件寄送；留空則 OTP 寫進 log（適合開發）|
+| `[mongodb_settings]` | MongoDB 連線 |
+| `redis_url` | Redis 連線 |
+| `[realtime_settings].ELEVENLABS_API_KEY` | ElevenLabs Scribe |
+| `[realtime_settings].AI_PROVIDER` | 預設修正／翻譯 provider (`openai` / `gemini` / `groq` / `cerebras`) |
+| `[realtime_settings].CORRECT_PROVIDER` | （可選）修正流程專用 provider |
+| `[realtime_settings].TRANSLATE_PROVIDER` | （可選）翻譯流程專用 provider |
+| `[realtime_settings].TRANSLATE_LANGUAGES` | 預設翻譯目標語言 |
+| `[realtime_settings].COMMON_PROMPT` | 活動背景或翻譯上下文 |
+| `[realtime_settings].PARTIAL_INTERVAL` | partial 字幕 flush 間隔（秒）|
+| `[realtime_settings].SKIP_CORRECTION` | 是否略過修正流程 |
+
+> 各 AI provider 的模型與 prompt 預設在 `app/secret/models.example.toml`。要自訂時,複製成 `app/secret/models.toml` 編輯即可(存在就優先載入,否則 fallback 回 example);`models.toml` 已被 gitignore。
 
 ### 環境變數
 
@@ -93,7 +95,8 @@ Compose 會啟動 FastAPI server、MongoDB、Redis。
 ```
 app/
 ├── __init__.py              # FastAPI app、HTTP 路由、Socket.IO handler、SSE
-├── config.py                # 從 config.example.py 複製而來
+├── config.py                # 設定載入器（讀取 secret/config.toml）
+├── secret/                   # config.toml（機密）、models.toml（override）、*.example.toml
 ├── database.py              # MongoDB 連線與 collection
 ├── email_auth.py            # Email OTP 登入
 ├── http_client.py           # 共用 httpx client

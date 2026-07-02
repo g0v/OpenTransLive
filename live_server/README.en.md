@@ -23,8 +23,8 @@ For full roles, flows, APIs, and FAQ, see [../docs/USAGE.en.md](../docs/USAGE.en
 ```bash
 cd live_server
 uv sync
-cp app/config.example.py app/config.py
-# Edit app/config.py
+cp app/secret/config.example.toml app/secret/config.toml
+# Edit app/secret/config.toml
 uv run uvicorn app:socket_app --host 0.0.0.0 --port 5000
 ```
 
@@ -37,8 +37,8 @@ uv run uvicorn app:socket_app --reload --host 0.0.0.0 --port 5000
 ### Docker Compose
 
 ```bash
-cp app/config.example.py app/config.py
-# Edit app/config.py
+cp app/secret/config.example.toml app/secret/config.toml
+# Edit app/secret/config.toml
 docker-compose up -d
 ```
 
@@ -46,26 +46,31 @@ Compose starts the FastAPI server, MongoDB, and Redis.
 
 ## Configuration
 
-### Primary config: `app/config.py`
+### Primary config: `app/secret/config.toml`
 
-Copy from `app/config.example.py` and edit:
+Copy `app/secret/config.example.toml` to `app/secret/config.toml` and edit the sections
+below (`app/config.py` is just the loader that reads this TOML; you rarely touch it):
 
 | Section | Purpose |
 |---|---|
-| `SETTINGS.SECRET_KEY` | Session cookie and signing |
-| `SETTINGS.YOUTUBE_API_KEY` | Look up YouTube live-stream start time |
-| `EMAIL_SETTINGS.ADMIN_EMAILS` | Emails granted `/dashboard` access |
-| `EMAIL_SETTINGS.SMTP_*` | OTP delivery; leave empty to log the OTP (dev) |
-| `MONGODB_SETTINGS` | MongoDB connection |
-| `REDIS_URL` | Redis connection |
-| `REALTIME_SETTINGS.ELEVENLABS_API_KEY` | ElevenLabs Scribe |
-| `REALTIME_SETTINGS.AI_PROVIDER` | Default correction / translation provider (`openai` / `gemini` / `groq` / `cerebras`) |
-| `REALTIME_SETTINGS.CORRECT_PROVIDER` | (Optional) provider used for correction only |
-| `REALTIME_SETTINGS.TRANSLATE_PROVIDER` | (Optional) provider used for translation only |
-| `REALTIME_SETTINGS.TRANSLATE_LANGUAGES` | Default translation targets |
-| `REALTIME_SETTINGS.COMMON_PROMPT` | Event context / translation prompt |
-| `REALTIME_SETTINGS.PARTIAL_INTERVAL` | Partial subtitle flush interval (seconds) |
-| `REALTIME_SETTINGS.SKIP_CORRECTION` | Skip the correction step |
+| `[settings].SECRET_KEY` | Session cookie and signing |
+| `[settings].YOUTUBE_API_KEY` | Look up YouTube live-stream start time |
+| `[email_settings].ADMIN_EMAILS` | Emails granted `/dashboard` access |
+| `[email_settings].SMTP_*` | OTP delivery; leave empty to log the OTP (dev) |
+| `[mongodb_settings]` | MongoDB connection |
+| `redis_url` | Redis connection |
+| `[realtime_settings].ELEVENLABS_API_KEY` | ElevenLabs Scribe |
+| `[realtime_settings].AI_PROVIDER` | Default correction / translation provider (`openai` / `gemini` / `groq` / `cerebras`) |
+| `[realtime_settings].CORRECT_PROVIDER` | (Optional) provider used for correction only |
+| `[realtime_settings].TRANSLATE_PROVIDER` | (Optional) provider used for translation only |
+| `[realtime_settings].TRANSLATE_LANGUAGES` | Default translation targets |
+| `[realtime_settings].COMMON_PROMPT` | Event context / translation prompt |
+| `[realtime_settings].PARTIAL_INTERVAL` | Partial subtitle flush interval (seconds) |
+| `[realtime_settings].SKIP_CORRECTION` | Skip the correction step |
+
+> Each AI provider's model and prompt defaults live in `app/secret/models.example.toml`.
+> To customize, copy it to `app/secret/models.toml` and edit (loaded when present,
+> otherwise it falls back to the example). `models.toml` is gitignored.
 
 ### Environment Variables
 
@@ -93,7 +98,8 @@ Committed segments are persisted through a bounded queue rather than spawning on
 ```
 app/
 ├── __init__.py              # FastAPI app, HTTP routes, Socket.IO handlers, SSE
-├── config.py                # Copied from config.example.py
+├── config.py                # Config loader (reads secret/config.toml)
+├── secret/                   # config.toml (secret), models.toml (override), *.example.toml
 ├── database.py              # MongoDB client + collections
 ├── email_auth.py            # Email OTP login
 ├── http_client.py           # Shared httpx client

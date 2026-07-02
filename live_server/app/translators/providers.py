@@ -10,6 +10,7 @@ import json
 import random
 import re
 
+from ..config import load_secret_toml
 from ..http_client import get_async_client, close_async_client
 from ..logger_config import setup_logger, log_exception
 from .base import BaseTranslator
@@ -28,38 +29,17 @@ _PARTIAL_RETRIES = 1
 _COMMIT_RETRIES = 4
 _DEFAULT_RETRIES = 3
 
-_CORRECT_PROMPT = (
-    "Correct the user's ASR transcript literally. No styling/summaries. \n"
-    "Remove speech disfluencies and redundant fillers and dirty words. \n"
-    "Output ONLY the corrected text.\n\n"
-    "Context(ordered): {keywords}"
-)
+# Prompts and per-provider model settings live in app/secret/models.toml so
+# they can be tuned without editing code. Deployers may drop in their own
+# models.toml to override; when absent we fall back to the committed
+# models.example.toml defaults. Loaded once at import.
+_CONFIG = load_secret_toml("models", example_fallback=True)
 
-_TONE_MAP = {
-    "formal": "formal business",
-    "fluent": "natural and fluency",
-    "casual": "casual and conversational",
-    "literal": "literal and word-for-word",
-}
-
-_TRANSLATE_PROMPT = (
-    "Role: Expert Translator & Localizer.\n"
-    "Task: Translate <translate_this> into natural, native-level {language}.\n\n"
-    "Rules:\n"
-    "1. Ensure accuracy first; Tone: {tone}.\n"
-    "2. Adapt dates, numbers, and nouns to target conventions. Fix punctuation.\n"
-    "3. Maintain continuity with the previous translation; do not rephrase consistent parts.\n"
-    "4. Use <context> for reference only. NEVER repeat or continue them.\n"
-    "5. Output ONLY the final translated text of <translate_this>. No explanations.\n\n"
-    "Keywords(ordered): {keywords}\n"
-    "Previous translation: {prev_translation}\n"
-)
-
-_EXTRACT_KEYWORDS_PROMPT = (
-    "If there are special nouns or names in the provided text, add them to the special_keywords list.\n"
-    "Exclude time, numbers, and common words.\n"
-    'Return in json format:\n{"special_keywords": []}'
-)
+_CORRECT_PROMPT = _CONFIG["prompts"]["correct"]
+_TRANSLATE_PROMPT = _CONFIG["prompts"]["translate"]
+_EXTRACT_KEYWORDS_PROMPT = _CONFIG["prompts"]["extract_keywords"]
+_TONE_MAP = _CONFIG["tone_map"]
+_PROVIDER_PARAMS = _CONFIG["providers"]
 
 
 class ChatCompletionTranslator(BaseTranslator):
@@ -69,16 +49,25 @@ class ChatCompletionTranslator(BaseTranslator):
         endpoint         - full chat completions URL
         api_key_setting  - REALTIME_SETTINGS key holding the bearer token
         system_role      - "system" or "developer" (provider dependent)
-        correct_params   - request body fragment for correction calls
-        translate_params - request body fragment for translation calls
-        extract_params   - request body fragment for keyword extraction
+        provider_key     - key into models.toml's [providers] table; the base
+                           class derives the correct/translate/extract
+                           request-body fragments from it at subclass creation.
     """
     endpoint: str
     api_key_setting: str
     system_role: str = "system"
+    provider_key: str
     correct_params: dict
     translate_params: dict
     extract_params: dict
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if provider_key := getattr(cls, "provider_key", None):
+            p = _PROVIDER_PARAMS[provider_key]
+            cls.correct_params, cls.translate_params, cls.extract_params = (
+                p["correct"], p["translate"], p["extract"],
+            )
 
     def __init__(self, settings: dict):
         self._api_key = settings.get(self.api_key_setting)
@@ -227,80 +216,25 @@ class GeminiTranslator(ChatCompletionTranslator):
     endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
     api_key_setting = "GEMINI_API_KEY"
     system_role = "developer"
-
-    _MODEL = "gemini-3.1-flash-lite"
-    correct_params = {
-        "model": _MODEL,
-        "reasoning_effort": "low",
-        "temperature": 0,
-    }
-    translate_params = {
-        "model": _MODEL,
-        "reasoning_effort": "minimal",
-        "temperature": 0,
-    }
-    extract_params = {
-        "model": _MODEL,
-        "response_format": {"type": "json_object"},
-        "temperature": 0,
-    }
+    provider_key = "gemini"
 
 
 class OpenAITranslator(ChatCompletionTranslator):
     endpoint = "https://api.openai.com/v1/chat/completions"
     api_key_setting = "OPENAI_API_KEY"
     system_role = "developer"
-
-    correct_params = {
-        "model": "gpt-5.4-nano",
-        "max_completion_tokens": 300,
-        "reasoning_effort": "none",
-    }
-    translate_params = {
-        "model": "gpt-5.4-nano",
-        "max_completion_tokens": 300,
-        "reasoning_effort": "none",
-    }
-    extract_params = {
-        "model": "gpt-5.4-mini",
-        "response_format": {"type": "json_object"},
-    }
+    provider_key = "openai"
 
 
 class GroqTranslator(ChatCompletionTranslator):
     endpoint = "https://api.groq.com/openai/v1/chat/completions"
     api_key_setting = "GROQ_API_KEY"
     system_role = "system"
-
-    correct_params = {
-        "model": "openai/gpt-oss-120b",
-        "reasoning_effort": "low",
-    }
-    translate_params = {
-        "model": "openai/gpt-oss-120b",
-        "reasoning_effort": "low",
-    }
-    extract_params = {
-        "model": "openai/gpt-oss-120b",
-        "response_format": {"type": "json_object"},
-    }
+    provider_key = "groq"
 
 
 class CerebrasTranslator(ChatCompletionTranslator):
     endpoint = "https://api.cerebras.ai/v1/chat/completions"
     api_key_setting = "CEREBRAS_API_KEY"
     system_role = "system"
-
-    _MODEL = "gpt-oss-120b"
-    correct_params = {
-        "model": _MODEL,
-        "reasoning_effort": "low",
-    }
-    translate_params = {
-        "model": _MODEL,
-        "reasoning_effort": "low",
-    }
-    extract_params = {
-        "model": _MODEL,
-        "response_format": {"type": "json_object"},
-    }
+    provider_key = "cerebras"
