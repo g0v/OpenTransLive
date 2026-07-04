@@ -2,6 +2,8 @@ services:
   redis:
     image: redis:${REDIS_VERSION:-latest}
     container_name: opentranslive-redis
+    networks:
+      - opentranslive-net
     command:
       - redis-server
       - --maxmemory
@@ -16,6 +18,8 @@ services:
       - "127.0.0.1:${MONGO_PORT:-27017}:27017"
     volumes:
       - ./mongo_data:/data/db
+    networks:
+      - opentranslive-net
 
   backend:
     build: .
@@ -33,4 +37,9 @@ services:
     depends_on:
       - redis
       - mongodb
+    networks:
+      - opentranslive-net
 
+networks:
+  opentranslive-net:
+    name: opentranslive-net
