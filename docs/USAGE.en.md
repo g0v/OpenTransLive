@@ -132,7 +132,7 @@ Client to server:
 
 | Event | Purpose |
 |---|---|
-| `join_session` | Join a session with `session_id` and `secret_key` |
+| `join_session` | Join a session with `session_id` plus either `secret_key` or `api_key` |
 | `sync` | Submit externally generated transcription data |
 | `realtime_connect` | Initialize the realtime transcription manager |
 | `mic_on` | Start realtime transcription |
@@ -177,6 +177,26 @@ Requires session management permission.
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/api/users/{email}/realtime` | Toggle realtime transcription permission for a user |
+
+> Admin APIs accept only cookie-session admins; **API-key authentication is always refused**, even when the key's owner is an admin.
+
+### 5.5 API Key Authentication (Programmatic Clients)
+
+Non-browser clients (transcribe/realtime) authenticate with a personal API key instead of a session secret key.
+
+- **Obtain**: generate one at `/user-dashboard` after logging in; one key per user. The server stores only the SHA-256 hash and shows the plaintext once at creation (if lost, rotate to get a new one).
+- **HTTP**: send the header `Authorization: Bearer otl_…`.
+- **Socket.IO**: pass `auth={'session_id': ..., 'api_key': 'otl_…'}` on connect, or include `api_key` in `join_session`. The key is verified once at the handshake; afterwards the verified session is trusted, so `sync` and other events **do not resend** it.
+- **Permissions (derived live from the user record)**: owning (or co-owning) the target room is enough to push subtitles (`sync`); pushing audio (`audio_buffer_append`/`mic_on`) additionally requires realtime access. Revoking realtime/room takes effect on the next (re)connection.
+- **Management exception**: admin management APIs (creating accounts, rotating others, changing settings) are refused for key-authenticated callers even when the owner is an admin. So broadcast machines should use a **dedicated non-admin account** that merely owns the target room.
+
+Key management API:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/apikey` | Create or rotate your own key (returns the plaintext once) |
+| `DELETE` | `/api/apikey` | Revoke your own key |
+| `GET` | `/api/me` | Read your identity, permission list, and key id |
 
 ## 6. Data Storage
 

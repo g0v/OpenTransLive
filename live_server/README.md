@@ -127,6 +127,9 @@ app/
 
 - 觀眾頁完全公開、免登入。
 - Panel／編輯／管理員 API 透過 Email OTP 登入；session-level 操作需 secret key 或 owner／co-owner 權限。
+- **程式化 client**（transcribe/realtime）以個人 API key 認證（HTTP `Authorization: Bearer otl_…` 或 Socket.IO 連線 `auth`）。每位使用者一把,於 `/user-dashboard` 產生;伺服器只存 SHA-256 hash,明文僅在產生時顯示一次。key 只在連線握手驗證一次,之後靠已驗證的 session,不隨每筆更新重送。
+- key 的權限**即時**從使用者紀錄推導（realtime + room 擁有權），不寫死在 key 裡 —— 撤銷 realtime／room 下次請求即生效。**唯一例外**:管理端點（建立帳號、rotate 他人、改設定)對 key 認證一律拒絕,即使擁有者是 admin。因此廣播機請用**專用非 admin 帳號**（只需擁有目標 room）。
+- dashboard 顯示的 key 識別碼是從 hash 衍生的指紋（`otl_` + hash 前綴），不洩漏任何機密字元。
 - production 模式（`ENVIRONMENT=production`）會啟用 Secure cookie 與嚴格 Socket.IO CORS 白名單。
 - Socket.IO 事件以 [socket_schema.py](app/socket_schema.py) 驗證輸入。
 

@@ -130,6 +130,9 @@ Field details in [../docs/USAGE.en.md](../docs/USAGE.en.md#6-data-storage). Summ
 
 - Viewer pages are fully public — no login required.
 - Panel / editor / admin APIs use Email OTP login; session-level operations require the secret key or owner / co-owner permission.
+- **Programmatic clients** (transcribe/realtime) authenticate with a personal API key (HTTP `Authorization: Bearer otl_…` or the Socket.IO connect `auth`). One key per user, generated at `/user-dashboard`; the server stores only its SHA-256 hash and shows the plaintext once at creation. The key is verified once at the connection handshake and not resent on every update.
+- A key's permissions are derived **live** from the user record (realtime + room ownership), never baked into the key — revoking realtime/room takes effect on the next request. **One exception**: admin *management* endpoints (creating accounts, rotating others, changing settings) are refused for key-authenticated callers even when the owning account is an admin. So broadcast machines should use a **dedicated non-admin account** that merely owns the target room.
+- The key id shown in the dashboard is a fingerprint derived from the hash (`otl_` + hash prefix); it leaks no character of the secret.
 - `ENVIRONMENT=production` enables Secure cookies and a strict Socket.IO CORS allowlist.
 - Socket.IO events are validated via [socket_schema.py](app/socket_schema.py).
 

@@ -73,7 +73,7 @@ with open(f"output/current_keywords.txt", "w", encoding="utf-8") as f:
 def connect():
     logger.info("Connected to server")
     if args.target_sid:
-        sio.emit('join_session', {'session_id': args.target_sid, 'secret_key': os.getenv('SECRET_KEY')})
+        sio.emit('join_session', {'session_id': args.target_sid, 'api_key': os.getenv('API_KEY')})
 
 @sio.event
 def disconnect():
@@ -90,6 +90,9 @@ def send_transcription_via_websocket(transcription_data):
             # Add the session ID to the transcription data
             websocket_data = transcription_data.copy()
             websocket_data['id'] = args.target_sid
+            # The API key is sent once at connect (auth=) and join_session; the
+            # server trusts the verified session afterwards. Re-sending a long-lived
+            # credential on every sync would only widen its exposure.
             sio.emit('sync', websocket_data)
         except Exception as e:
             logger.error(f"Error sending via WebSocket: {type(e).__name__}", exc_info=True)
@@ -439,7 +442,7 @@ if __name__ == "__main__":
     # Connect to WebSocket server if target session ID is provided
     if args.target_sid:
         try:
-            sio.connect(f"{server_url}", auth={'secret_key': os.getenv('SECRET_KEY')})
+            sio.connect(f"{server_url}", auth={'session_id': args.target_sid, 'api_key': os.getenv('API_KEY')})
             logger.info(f"Connected to WebSocket server at {server_url}")
         except Exception as e:
             logger.error(f"Failed to connect to WebSocket server: {type(e).__name__}\nFalling back to HTTP POST mode", exc_info=True)

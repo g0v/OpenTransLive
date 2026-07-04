@@ -16,6 +16,23 @@
 
   <main class="container py-8">
 
+    <div class="mb-6 p-6 dark-card">
+      <h3 class="text-md font-semibold text-gray-100 mb-3">Create Account</h3>
+      <p class="text-sm text-gray-500 mb-4">Pre-create an account for an email so it exists before the user's first
+        login. Optionally grant realtime access immediately.</p>
+      <form id="create-user-form" class="flex flex-col sm:flex-row gap-3 sm:items-center">
+        <input type="email" id="new-user-email" required placeholder="user@example.com"
+          class="flex-grow px-4 py-2 rounded bg-gray-900 border border-gray-700 text-gray-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+        <label class="flex items-center gap-2 text-xs text-gray-400 whitespace-nowrap">
+          <input type="checkbox" id="new-user-realtime" class="accent-indigo-600"> Realtime access
+        </label>
+        <button type="submit"
+          class="px-6 py-2 bg-indigo-700 hover:bg-indigo-600 text-indigo-100 font-semibold rounded transition-colors text-sm whitespace-nowrap">
+          Create
+        </button>
+      </form>
+    </div>
+
     <div class="mb-6">
       <h2 class="text-lg font-semibold text-gray-100">User Settings</h2>
       <p class="mt-1 text-sm text-gray-500">
@@ -113,6 +130,30 @@
     })
     const data = await res.json().catch(() => ({}))
     return { ok: res.ok, data }
+  }
+
+  const createUserForm = document.getElementById('create-user-form')
+  if (createUserForm) {
+    createUserForm.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      const email = document.getElementById('new-user-email').value.trim()
+      const realtime = document.getElementById('new-user-realtime').checked
+      if (!email) return
+      try {
+        const res = await fetch('/api/users', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, realtime_enabled: realtime })
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) { setStatus(data.detail || 'Error creating account.', true); return }
+        setStatus(data.created ? `Created ${data.email}.` : `${data.email} already exists.`, false)
+        if (data.created) setTimeout(() => location.reload(), 800)
+      } catch (e) {
+        setStatus('Network error.', true)
+      }
+    })
   }
 
   document.querySelectorAll('.realtime-toggle').forEach(btn => {

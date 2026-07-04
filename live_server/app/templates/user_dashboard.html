@@ -22,6 +22,59 @@
 
   <main class="container py-8">
 
+    <!-- API Key & Permissions -->
+    <div class="mb-8 p-6 dark-card">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-md font-semibold text-gray-100">API Key &amp; Permissions</h3>
+      </div>
+
+      <div class="mb-5">
+        <p class="text-xs text-gray-500 uppercase tracking-wider mb-2">Your permissions</p>
+        <div class="flex flex-wrap gap-2">
+          {% for perm in permissions %}
+          <span class="perm-badge px-2 py-1 rounded bg-gray-700 text-gray-200 text-[11px] font-medium" data-perm="{{ perm }}">{{ perm }}</span>
+          {% else %}
+          <span class="text-xs text-gray-500">No permissions</span>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div>
+        <p class="text-xs text-gray-500 uppercase tracking-wider mb-2">API key</p>
+        <p class="text-xs text-gray-500 mb-3">One key per account. Use it as <span class="font-mono text-gray-400">Authorization: Bearer &lt;key&gt;</span> for the API, or as the client's <span class="font-mono text-gray-400">API_KEY</span>. The full key is shown only once when generated.</p>
+
+        <div id="apikey-status" class="flex items-center gap-3 mb-3">
+          {% if api_key_prefix %}
+          <span class="font-mono text-sm text-gray-300">{{ api_key_prefix }}…</span>
+          <span class="text-xs text-emerald-400">active</span>
+          {% else %}
+          <span class="text-sm text-gray-500">No key generated</span>
+          {% endif %}
+        </div>
+
+        <div id="apikey-reveal" class="hidden mb-3 p-3 rounded bg-gray-900 border border-indigo-700">
+          <p class="text-[11px] text-amber-300 mb-2">Copy this now — it won't be shown again.</p>
+          <div class="flex items-center gap-2">
+            <code id="apikey-plaintext" class="flex-grow font-mono text-xs text-emerald-300 break-all"></code>
+            <button type="button" onclick="copyApiKey()" class="px-2 py-1 rounded text-xs bg-gray-700 hover:bg-gray-600 text-gray-200">Copy</button>
+          </div>
+        </div>
+
+        <div class="flex gap-2">
+          <button type="button" id="apikey-generate" onclick="generateApiKey()"
+            class="px-4 py-1.5 rounded text-xs font-semibold bg-indigo-700 hover:bg-indigo-600 text-indigo-100 transition-colors">
+            {% if api_key_prefix %}Rotate key{% else %}Generate key{% endif %}
+          </button>
+          {% if api_key_prefix %}
+          <button type="button" id="apikey-revoke" onclick="revokeApiKey()"
+            class="px-4 py-1.5 rounded text-xs font-semibold bg-red-900 hover:bg-red-800 text-red-200 transition-colors">
+            Revoke
+          </button>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
     <h1 class="text-gray-100 mb-8">Session Rooms</h1>
     <div class="mb-8 p-6 dark-card">
       <h3 class="text-md font-semibold text-gray-100 mb-4">Start New Session</h3>
@@ -101,6 +154,61 @@
 
 {% block scripts %}
 <script>
+  // Human-readable labels for permission slugs shown as badges.
+  const PERM_LABELS = {
+    'admin:users': 'Admin · manage users',
+    'admin:accounts': 'Admin · create accounts',
+    'admin:settings': 'Admin · user settings',
+    'room:create': 'Create rooms',
+    'room:manage': 'Manage room settings',
+    'audio:push': 'Send audio',
+    'subtitle:push': 'Send subtitles',
+    'room:list': 'List rooms',
+  }
+  document.querySelectorAll('.perm-badge').forEach(el => {
+    const label = PERM_LABELS[el.dataset.perm]
+    if (label) el.textContent = label
+  })
+
+  async function generateApiKey() {
+    const btn = document.getElementById('apikey-generate')
+    const existing = btn.textContent.trim().startsWith('Rotate')
+    if (existing && !confirm('Rotate your API key? The current key will stop working immediately.')) return
+    btn.disabled = true
+    try {
+      const resp = await fetch('/api/apikey', { method: 'POST' })
+      const data = await resp.json().catch(() => ({}))
+      if (!resp.ok) { alert('Failed: ' + (data.detail || resp.statusText)); btn.disabled = false; return }
+      const reveal = document.getElementById('apikey-reveal')
+      document.getElementById('apikey-plaintext').textContent = data.api_key
+      reveal.classList.remove('hidden')
+      document.getElementById('apikey-status').innerHTML =
+        '<span class="font-mono text-sm text-gray-300">' + data.prefix + '…</span>' +
+        '<span class="text-xs text-emerald-400 ml-3">active</span>'
+      btn.textContent = 'Rotate key'
+      btn.disabled = false
+    } catch (e) {
+      alert('Request failed: ' + e.message)
+      btn.disabled = false
+    }
+  }
+
+  async function revokeApiKey() {
+    if (!confirm('Revoke your API key? Any client using it will stop working.')) return
+    const btn = document.getElementById('apikey-revoke')
+    btn.disabled = true
+    try {
+      const resp = await fetch('/api/apikey', { method: 'DELETE' })
+      if (resp.ok) { location.reload() }
+      else { alert('Failed to revoke'); btn.disabled = false }
+    } catch (e) { alert('Request failed: ' + e.message); btn.disabled = false }
+  }
+
+  function copyApiKey() {
+    const text = document.getElementById('apikey-plaintext').textContent
+    navigator.clipboard.writeText(text).then(() => {}, () => {})
+  }
+
   async function deleteSession(sid, btn) {
     if (!confirm('Remove "' + sid + '" from My Sessions? Others will be able to claim this room.')) return
     btn.disabled = true

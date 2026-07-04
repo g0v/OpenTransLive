@@ -132,7 +132,7 @@ Client to server：
 
 | Event | 用途 |
 |---|---|
-| `join_session` | 使用 `session_id` 與 `secret_key` 加入 session |
+| `join_session` | 使用 `session_id` 加入 session（`secret_key` 或 `api_key` 擇一） |
 | `sync` | 送出外部轉錄資料 |
 | `realtime_connect` | 初始化即時轉錄管理器 |
 | `mic_on` | 啟動即時轉錄 |
@@ -177,6 +177,26 @@ Server to client：
 | Method | Path | 用途 |
 |---|---|---|
 | `POST` | `/api/users/{email}/realtime` | 開啟或關閉指定使用者的即時轉錄權限 |
+
+> 管理員 API 僅接受 cookie session 登入的 admin;**API key 認證一律被拒絕**,即使 key 的擁有者是 admin。
+
+### 5.5 API key 認證（程式化 client）
+
+transcribe／realtime 等非瀏覽器 client 以個人 API key 認證,不需要 session secret key。
+
+- **取得**：登入後於 `/user-dashboard` 產生;每位使用者一把。伺服器只存 SHA-256 hash,明文只在產生當下顯示一次(遺失只能 rotate 重產)。
+- **HTTP**：帶標頭 `Authorization: Bearer otl_…`。
+- **Socket.IO**：連線時以 `auth={'session_id': ..., 'api_key': 'otl_…'}` 傳入,或在 `join_session` 帶 `api_key`。key 只在握手驗證一次,之後靠已驗證的 session,`sync` 等事件**不需重送** key。
+- **權限（即時從使用者紀錄推導）**：擁有(或共同擁有)目標 room 即可推字幕(`sync`);具 realtime 權限才可推音訊(`audio_buffer_append`／`mic_on`)。撤銷 realtime／room 於下次(重)連線即生效。
+- **管理端點例外**：建立帳號、rotate 他人、改設定等管理 API 對 key 認證一律拒絕,即使擁有者是 admin。因此廣播機請用**專用非 admin 帳號**(只需擁有目標 room)。
+
+Key 管理 API：
+
+| Method | Path | 用途 |
+|---|---|---|
+| `POST` | `/api/apikey` | 產生或 rotate 自己的 key（回傳明文一次） |
+| `DELETE` | `/api/apikey` | 撤銷自己的 key |
+| `GET` | `/api/me` | 讀取自己的身分、權限清單與 key 識別碼 |
 
 ## 6. 資料儲存
 

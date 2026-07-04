@@ -22,7 +22,7 @@ cp .env.example .env
 | Variable | Description |
 |---|---|
 | `SERVER_ENDPOINT` | OpenTransLive server URL |
-| `SECRET_KEY` | Session secret key |
+| `API_KEY` | Personal API key (generate at /user-dashboard; the account must own or co-own the target room) |
 | `TRANSCRIBER` | `whisperx` / `openai` / `groq` |
 | `TRANSCRIBE_MODEL` | Whisper model name (e.g. `deepdml/faster-whisper-large-v3-turbo-ct2`) |
 | `TRANSCRIBE_DEVICE` | `cuda` or `cpu` |
@@ -34,6 +34,8 @@ cp .env.example .env
 | `RECORD_TIMEOUT` | Recording timeout in seconds |
 | `RECORD_ENERGY_THRESHOLD` | Voice activity threshold |
 | `RECORD_PAUSE_THRESHOLD_MS` | Sentence pause threshold in milliseconds |
+
+> **API_KEY security**: use a **dedicated non-admin account** for this machine. The key only needs to own (or co-own) the target room to push subtitles — nothing more. Admin management endpoints (creating accounts, rotating, settings) are refused for key-authenticated callers even if the account is an admin, but least privilege is still the right posture. The key is sent once at connect, not resent on every update.
 
 ## Run
 
