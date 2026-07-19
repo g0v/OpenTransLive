@@ -1123,6 +1123,10 @@
   // ── Text mapping panel ───────────────────────────────────────────────────
   let textDictionary = []  // [{ from, to, target }] — target is 'flow' or a language code
   let textDictSaveTimer = null
+  // Re-run the flow dictionary over on-screen flow lines. Assigned by the flow
+  // panel IIFE; called whenever textDictionary changes so a rule added to fix a
+  // mistake retro-fixes the committed lines already shown, not just future ones.
+  let reapplyFlowDict = function () {}
 
   // Resolve a language code to a human label using the language presets.
   function langLabel(code) {
@@ -1181,6 +1185,7 @@
         textDictionary.splice(idx, 1)
         updateTextDictLabel()
         renderTextDictList()
+        reapplyFlowDict()
         debouncedSaveTextDict()
       })
       list.appendChild(row)
@@ -1195,6 +1200,7 @@
         textDictionary = Array.isArray(data.text_dictionary) ? data.text_dictionary : []
         updateTextDictLabel()
         renderTextDictList()
+        reapplyFlowDict()
       }
     } catch (e) {
       console.error('Failed to load text dictionary:', e)
@@ -1518,6 +1524,7 @@
       else textDictionary.push({ from, to, target })
       updateTextDictLabel()
       renderTextDictList()
+      reapplyFlowDict()
       saveTextDictionary()
       fromInput.value = ''
       toInput.value = ''
@@ -1657,15 +1664,39 @@
         return ((Date.now() + (window.serverClockOffsetMs || 0)) / 1000) - segment.end_time
       }
 
+      // Apply the flow-target text dictionary to source text at render time.
+      // Mirrors the server's apply_text_dictionary (longest `from` first) so the
+      // panel shows the same result the server would produce, and re-runs after a
+      // rule changes. Lines keep their original source in data-src, so re-applying
+      // always starts from the raw text — no compounding on repeated runs.
+      function applyFlowDict(text) {
+        if (!text) return text
+        const rules = textDictionary
+          .filter(r => (r.target || 'flow') === 'flow' && r.from)
+          .sort((a, b) => b.from.length - a.from.length)
+        for (const r of rules) text = text.split(r.from).join(r.to)
+        return text
+      }
+
+      // Re-render every on-screen flow line (committed + partial) from its stored
+      // source through the current dictionary. Exposed to the outer scope.
+      reapplyFlowDict = function () {
+        flowContent.querySelectorAll('[data-src]').forEach(function (el) {
+          const span = el.querySelector('.flex-1')
+          if (span) span.textContent = applyFlowDict(el.dataset.src)
+        })
+      }
+
       function appendCommitted(segment) {
-        const text = segment.result?.corrected || segment.text || ''
-        if (!text) return
+        const src = segment.result?.corrected || segment.text || ''
+        if (!src) return
         if (partialEl) { partialEl.remove(); partialEl = null }
         const p = document.createElement('p')
         p.className = 'flow-item flex justify-between items-start group'
+        p.dataset.src = src
 
         const latency = segmentLatency(segment)
-        p.innerHTML = `<span class="flex-1">${escapeHtml(text)}</span><span class="text-[10px] text-gray-600 ml-2 tabular-nums">${latency.toFixed(2)}s</span>`
+        p.innerHTML = `<span class="flex-1">${escapeHtml(applyFlowDict(src))}</span><span class="text-[10px] text-gray-600 ml-2 tabular-nums">${latency.toFixed(2)}s</span>`
 
         flowContent.appendChild(p)
         segmentCount++
@@ -1686,8 +1717,8 @@
           if (partialEl) { partialEl.remove(); partialEl = null }
           return
         }
-        const text = segment.result?.corrected || segment.text || ''
-        if (!text) {
+        const src = segment.result?.corrected || segment.text || ''
+        if (!src) {
           if (partialEl) { partialEl.remove(); partialEl = null }
           return
         }
@@ -1696,8 +1727,9 @@
           partialEl.className = 'flow-item-partial flex justify-between items-start'
           flowContent.appendChild(partialEl)
         }
+        partialEl.dataset.src = src
         const latency = segmentLatency(segment)
-        partialEl.innerHTML = `<span class="flex-1">${escapeHtml(text)}</span><iconify-icon icon="mdi:loading" class="animate-spin text-gray-600 mt-0.5 ml-1" width="10"></iconify-icon><span class="text-[10px] text-gray-700 ml-1 tabular-nums">${latency.toFixed(2)}s</span>`
+        partialEl.innerHTML = `<span class="flex-1">${escapeHtml(applyFlowDict(src))}</span><iconify-icon icon="mdi:loading" class="animate-spin text-gray-600 mt-0.5 ml-1" width="10"></iconify-icon><span class="text-[10px] text-gray-700 ml-1 tabular-nums">${latency.toFixed(2)}s</span>`
         scrollToBottom()
       }
 
