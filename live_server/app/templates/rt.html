@@ -572,6 +572,12 @@
     }
   }
 
+  /* Persistent opacity for the live partial region — kept on the span itself
+     so it survives the remove/add of .new-text used to replay the animation. */
+  .partial-text {
+    opacity: 0.85;
+  }
+
   .new-text {
     animation: new-text-highlight 2s ease-out forwards;
   }
@@ -1232,6 +1238,7 @@
     const history = document.createElement('span');
     const last = document.createElement('span');
     const partial = document.createElement('span');
+    partial.className = 'partial-text';
     last.addEventListener('animationend', () => last.classList.remove('new-text-commit'));
     partial.addEventListener('animationend', () => partial.classList.remove('new-text'));
     wrapper.appendChild(history);
