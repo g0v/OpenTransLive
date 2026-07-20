@@ -120,7 +120,10 @@ class ChatCompletionTranslator(BaseTranslator):
         body = {
             **self.correct_params,
             "messages": [
-                {"role": self.system_role, "content": _CORRECT_PROMPT.format(keywords=keywords)},
+                {
+                    "role": self.system_role,
+                    "content": _CORRECT_PROMPT.format(keywords=keywords, prev_corrected=context),
+                },
                 {"role": "user", "content": text},
             ],
         }
