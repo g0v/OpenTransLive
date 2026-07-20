@@ -431,21 +431,19 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     unpinned_kws = [kw for kw in sorted_kws if kw not in locked_set]
     keywords_str = ', '.join(pinned_kws + unpinned_kws[:max(0, _KEYWORD_CAP - len(pinned_kws))])
 
-    context = {
-        "corrected": [],
-        "translated": {language: [] for language in languages},
-    }
-
-    history = cached_data.get("transcriptions", [])
-    for transcription in history:
+    translated_lists = {language: [] for language in languages}
+    for transcription in cached_data.get("transcriptions", []):
         if "result" in transcription:
-            context["corrected"].append(transcription["result"].get("corrected", ""))
             translated_dict = transcription["result"].get("translated", {})
             for language in languages:
-                context["translated"][language].append(translated_dict.get(language, ""))
+                translated_lists[language].append(translated_dict.get(language, ""))
 
-    corrected_context = ' '.join(context['corrected'])
-    translated_context = {lang: ' '.join(context['translated'][lang]) for lang in languages}
+    translated_context = {lang: ' '.join(translated_lists[lang]) for lang in languages}
+    # Previous partial's result, shared by the correction and translation stages
+    # so both keep the in-progress line consistent instead of re-editing it on
+    # each partial.
+    partial_result = cached_data.get("partial", {}).get("result", {})
+    prev_corrected = partial_result.get("corrected", "")
 
     result = {"corrected": text}
 
@@ -454,7 +452,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         if not skip_correction:
             result["corrected"] = await translator.correct(
                 text=text,
-                context=corrected_context,
+                prev_corrected=prev_corrected,
                 keywords=keywords_str,
             )
         else:
@@ -467,7 +465,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
 
     async def _translation_worker(language):
         lang_map = lang_maps.get(language)
-        pt_trans = cached_data.get("partial", {}).get("result", {}).get("translated", {}).get(language, "")
+        pt_trans = partial_result.get("translated", {}).get(language, "")
         lang_context = translated_context[language]
         # Apply language-scoped replacements to the prior committed context and
         # previous partial too, so the LLM sees consistent terms (and won't

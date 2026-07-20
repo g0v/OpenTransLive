@@ -6,7 +6,7 @@ Usage
     from .translators import get_translator
 
     translator = get_translator()
-    corrected = await translator.correct(text, context, keywords)
+    corrected = await translator.correct(text, prev_corrected, keywords)
 
 Adding a new backend
 --------------------
@@ -60,8 +60,8 @@ class _CompositeTranslator(BaseTranslator):
         self._correct = correct_backend
         self._translate = translate_backend
 
-    async def correct(self, text: str, context: str, keywords: str) -> str:
-        return await self._correct.correct(text, context, keywords)
+    async def correct(self, text: str, prev_corrected: str, keywords: str) -> str:
+        return await self._correct.correct(text, prev_corrected, keywords)
 
     async def translate(
         self,

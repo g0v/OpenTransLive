@@ -116,13 +116,13 @@ class ChatCompletionTranslator(BaseTranslator):
     def _message_text(response_json: dict) -> str:
         return response_json["choices"][0]["message"]["content"]
 
-    async def correct(self, text: str, context: str, keywords: str) -> str:
+    async def correct(self, text: str, prev_corrected: str, keywords: str) -> str:
         body = {
             **self.correct_params,
             "messages": [
                 {
                     "role": self.system_role,
-                    "content": _CORRECT_PROMPT.format(keywords=keywords, prev_corrected=context),
+                    "content": _CORRECT_PROMPT.format(keywords=keywords, prev_corrected=prev_corrected),
                 },
                 {"role": "user", "content": text},
             ],
