@@ -416,10 +416,11 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     if not text:
         return data
 
-    (current_keywords, locked_list), tone, text_dict = await asyncio.gather(
+    (current_keywords, locked_list), tone, text_dict, scribe_language = await asyncio.gather(
         get_keywords_and_locked(redis_client, session_id),
         get_session_translate_tone(redis_client, session_id),
         get_text_dictionary(redis_client, session_id),
+        get_session_scribe_language(redis_client, session_id),
     )
     flow_map, lang_maps = split_text_dictionary(text_dict)
     if flow_map:
@@ -459,6 +460,12 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
             result["corrected"] = text.strip()
     except Exception as e:
         log_exception(logger, e, "Correction error")
+
+    # The correction LLM can reintroduce Simplified characters even when scribe
+    # already handed us Traditional; re-apply the same s2tw gate scribe uses so
+    # the flow (source) panel stays consistent downstream (translate + rerank).
+    if scribe_language.startswith("zh"):
+        result["corrected"] = _cc_s2tw.convert(result["corrected"])
 
     # 2. Parallel translations
     translated = {}
