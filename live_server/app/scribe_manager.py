@@ -1,5 +1,6 @@
 import asyncio
 import json
+import random
 import time
 import tiktoken
 from urllib.parse import urlencode
@@ -17,9 +18,18 @@ _cc_s2tw = OpenCC('s2tw')
 _MAX_RECONNECT_RETRIES = 5
 _RECONNECT_BASE_DELAY = 2.0   # seconds; doubles each attempt, capped at 60s
 _RECONNECT_MAX_DELAY = 60.0
+_WS_PING_INTERVAL = 15        # keepalive ping cadence; primary dead-socket detector
+_WS_PING_TIMEOUT = 10         # drop the connection if a pong is missing this long
+_RECV_POLL_INTERVAL = 2.0     # seconds; recv() timeout granularity for stall checks
+# Application-level backstop for a socket that stays ping-alive but stops producing
+# transcripts. Must stay comfortably above _WS_PING_TIMEOUT so keepalive detects real
+# dead sockets first and the two layers don't race into false reconnects.
+_OUTPUT_STALL_TIMEOUT = 25    # force reconnect if a mid-flight segment gets no server message for this long
 _SEGMENT_START_OFFSET = 0.3   # seconds subtracted from seg_start_time to account for ASR processing latency
 _IDLE_TIMEOUT_SECS = 60       # stop session after 1 minute with no audio
 _IDLE_CHECK_INTERVAL = 30     # how often the watchdog checks (seconds)
+_MAX_SESSION_SECS = 300       # while audio keeps flowing, proactively restart a connection older than this
+                              # to bound ElevenLabs session length (avoids long-run buildup / queue_overflow)
 _MAX_PARTIAL_TOKENS = 150     # maximum length of partial transcript
 _MIN_COMMIT_TOKENS = 50       # commits shorter than this are buffered and merged into the next segment
 _COMMIT_TIMEOUT_SECS = 10     # force-flush buffered short commits after this delay if no follow-up arrives
@@ -50,6 +60,9 @@ class ScribeSessionManager:
         self.init_time = now
         self.last_partial_time = now
         self.last_partial_text = ""
+        self.last_recv_mono = time.monotonic()  # last time any message arrived from Scribe
+        self._connection_start_mono: float | None = None  # set on each successful ws connect
+        self._intentional_restart = False  # set when we deliberately drop the ws to reconnect
         self.task_group = None
         self.partial_interval = partial_interval if partial_interval else REALTIME_SETTINGS.get('PARTIAL_INTERVAL', 2)
         self.should_commit = False
@@ -127,6 +140,22 @@ class ScribeSessionManager:
                 f"[reconnect] drained {drained} stale audio chunks for {self.session_id}"
             )
 
+    def _reset_segment_state(self):
+        """Clear per-connection transcript state so a reconnect starts a clean segment.
+        The audio that would have continued the open segment is drained on reconnect, so
+        keeping seg_start_time / pending text around only leaks stale state into the new
+        connection (and can false-trigger the output-stall watchdog)."""
+        self.seg_start_time = None
+        self.pending_commit_text = ""
+        self.last_partial_text = ""
+        self.should_commit = False
+        self._cancel_commit_timeout()
+
+    def _cancel_commit_timeout(self):
+        """Cancel the pending short-commit flush task, if any is scheduled."""
+        if self._commit_timeout_task and not self._commit_timeout_task.done():
+            self._commit_timeout_task.cancel()
+
     async def send_audio_loop(self):
         try:
             while True:
@@ -155,7 +184,25 @@ class ScribeSessionManager:
                     await asyncio.sleep(0.1)
                     continue
 
-                message = await self.ws.recv()
+                try:
+                    message = await asyncio.wait_for(self.ws.recv(), timeout=_RECV_POLL_INTERVAL)
+                except asyncio.TimeoutError:
+                    # No message this interval. If a segment is mid-flight and audio is
+                    # still arriving but the server has gone silent, the socket is wedged
+                    # (keepalive can stay green) — return to force a clean reconnect.
+                    now_mono = time.monotonic()
+                    if (self.seg_start_time is not None
+                            and now_mono - self.last_recv_mono >= _OUTPUT_STALL_TIMEOUT
+                            and now_mono - self._last_audio_mono < _RECV_POLL_INTERVAL * 2):
+                        logger.warning(
+                            f"Scribe output stalled ({now_mono - self.last_recv_mono:.0f}s) "
+                            f"for {self.session_id}, forcing reconnect"
+                        )
+                        self._intentional_restart = True
+                        return
+                    continue
+
+                self.last_recv_mono = time.monotonic()
                 data = json.loads(message)
 
                 msg_type = data.get("message_type")
@@ -165,6 +212,10 @@ class ScribeSessionManager:
                     await self.handle_transcript(data)
                 elif msg_type in ["error", "auth_error", "quota_exceeded_error"]:
                     logger.error(f"Scribe Error: {data.get('error')}")
+                elif msg_type == "queue_overflow":
+                    # Server-side audio buffer overflowed; it will close the socket next.
+                    # Log and let the reconnect path recover instead of misreporting Unknown.
+                    logger.warning(f"Scribe queue_overflow for {self.session_id}; server dropping audio")
                 else:
                     logger.error(f"Scribe Unknown message type: {msg_type}")
         except (asyncio.CancelledError, ConnectionClosed, ConnectionClosedOK):
@@ -260,8 +311,7 @@ class ScribeSessionManager:
                 self.pending_commit_text = ""
                 self.seg_start_time = None
                 self.should_commit = False
-                if self._commit_timeout_task and not self._commit_timeout_task.done():
-                    self._commit_timeout_task.cancel()
+                self._cancel_commit_timeout()
                 asyncio.create_task(self.callback(self.session_id, transcription))
 
         except Exception as e:
@@ -289,17 +339,32 @@ class ScribeSessionManager:
             log_exception(logger, e, "Error in commit timeout handler")
 
     async def idle_watchdog_loop(self):
-        """Stop the session automatically after _IDLE_TIMEOUT_SECS with no audio."""
+        """Watchdog: stop the session after _IDLE_TIMEOUT_SECS with no audio, and
+        proactively restart a still-active connection older than _MAX_SESSION_SECS."""
         while self.is_running:
             if await self._reconnect_delay(_IDLE_CHECK_INTERVAL):
                 break  # stop_event fired — session is already stopping
-            idle_secs = time.monotonic() - self._last_audio_mono
+            now_mono = time.monotonic()
+            idle_secs = now_mono - self._last_audio_mono
             if idle_secs >= _IDLE_TIMEOUT_SECS:
                 logger.info(
                     f"Scribe idle timeout ({idle_secs:.0f}s) for {self.session_id}, stopping"
                 )
                 await self.stop()
                 break
+            # Audio still flowing but this connection has run too long: close it so the
+            # start() loop reconnects with a fresh ElevenLabs session.
+            if (self.ws is not None and self._connection_start_mono is not None
+                    and now_mono - self._connection_start_mono >= _MAX_SESSION_SECS):
+                logger.info(
+                    f"Scribe max session ({now_mono - self._connection_start_mono:.0f}s) "
+                    f"for {self.session_id}, restarting connection"
+                )
+                self._intentional_restart = True
+                try:
+                    await self.ws.close()
+                except Exception:
+                    pass
 
     async def _reconnect_delay(self, delay: float) -> bool:
         """Sleep for `delay` seconds, or return early if stop() was called.
@@ -329,19 +394,29 @@ class ScribeSessionManager:
                     break
 
                 if retry_count > 0:
-                    delay = min(
-                        _RECONNECT_BASE_DELAY * (2 ** (retry_count - 1)),
+                    # First reconnect is immediate to minimize the transcription gap after
+                    # a server-initiated close (queue_overflow / idle drop); later attempts
+                    # back off exponentially.
+                    delay = 0.0 if retry_count == 1 else min(
+                        _RECONNECT_BASE_DELAY * (2 ** (retry_count - 2)),
                         _RECONNECT_MAX_DELAY,
                     )
-                    logger.warning(
-                        f"[reconnect] waiting {delay:.1f}s before attempt "
-                        f"{retry_count}/{_MAX_RECONNECT_RETRIES} for {self.session_id}"
-                    )
+                    if delay:
+                        # Jitter (±25%) so many sessions dropped together don't reconnect in lockstep.
+                        delay *= 0.75 + random.random() * 0.5
+                        logger.warning(
+                            f"[reconnect] waiting {delay:.1f}s before attempt "
+                            f"{retry_count}/{_MAX_RECONNECT_RETRIES} for {self.session_id}"
+                        )
+                    # delay==0 still yields control; a concurrent stop() is caught by the
+                    # is_running check below (stop() clears it before setting _stop_event).
                     should_stop = await self._reconnect_delay(delay)
                     if should_stop or not self.is_running:
                         break
-                    # Discard audio that piled up while we were disconnected.
+                    # Discard audio that piled up while we were disconnected, and reset the
+                    # open segment so stale state doesn't leak into the new connection.
                     self._drain_audio_queue()
+                    self._reset_segment_state()
 
                 try:
                     params_dict = {
@@ -362,8 +437,16 @@ class ScribeSessionManager:
                     params = urlencode(params_dict)
                     url = f"{self.ws_url}?{params}"
 
-                    async with ws_connect(url, additional_headers={"xi-api-key": self.api_key}) as ws:
+                    async with ws_connect(
+                        url,
+                        additional_headers={"xi-api-key": self.api_key},
+                        ping_interval=_WS_PING_INTERVAL,
+                        ping_timeout=_WS_PING_TIMEOUT,
+                    ) as ws:
                         self.ws = ws
+                        now_mono = time.monotonic()
+                        self.last_recv_mono = now_mono          # fresh baseline for stall detection
+                        self._connection_start_mono = now_mono  # fresh baseline for max-session restart
                         if retry_count > 0:
                             logger.info(
                                 f"Reconnected to Scribe for {self.session_id} "
@@ -382,9 +465,13 @@ class ScribeSessionManager:
                     self.ws = None
                     if self.is_running and not self._stop_event.is_set():
                         retry_count += 1
-                        logger.warning(
-                            f"Scribe WebSocket closed unexpectedly for {self.session_id}"
-                        )
+                        if self._intentional_restart:
+                            self._intentional_restart = False
+                            logger.info(f"Scribe reconnecting for {self.session_id} (intentional restart)")
+                        else:
+                            logger.warning(
+                                f"Scribe WebSocket closed unexpectedly for {self.session_id}"
+                            )
 
                 except asyncio.CancelledError:
                     break
@@ -407,8 +494,7 @@ class ScribeSessionManager:
     async def stop(self):
         self.is_running = False
         self._stop_event.set()
-        if self._commit_timeout_task and not self._commit_timeout_task.done():
-            self._commit_timeout_task.cancel()
+        self._cancel_commit_timeout()
         if self.ws:
             try:
                 await self.ws.close()
