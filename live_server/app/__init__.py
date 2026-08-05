@@ -2254,6 +2254,25 @@ async def yt(request: Request, id: str):
     data["stream_start_time"] = await get_youtube_start_time(id) 
     return templates.TemplateResponse("yt.html", {"request": request, "id": id, "data": data})
 
+@app.get("/rt-demo", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def rt_demo(request: Request):
+    """The RT viewer driven by a client-side fake feed.
+
+    Same template and same render path as /rt/{id}; only the event source
+    differs (static/js/rt_demo.js). Touches neither Redis nor Mongo, so it
+    works for demos and for eyeballing viewer changes with no live session.
+    """
+    return templates.TemplateResponse(
+        "rt.html",
+        {
+            "request": request,
+            "id": "demo",
+            "data": {"stream_start_time": None, "transcriptions": []},
+            "language_maps": {},
+            "demo": True,
+        },
+    )
+
 @app.get("/rt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def rt(request: Request, id: str):
     # Sanitize id parameter to prevent NoSQL injection

@@ -600,7 +600,14 @@
 
 </style>
 {% endblock %} {% block scripts %}
+{% set demo_mode = demo | default(false) %}
+{% if demo_mode %}
+<script src="/static/js/rt_demo.js?v={{ timestamp }}" defer></script>
+{% endif %}
 <script>
+  // Demo mode replaces the SSE feed with a local generator; everything else on
+  // this page is untouched. See static/js/rt_demo.js.
+  const DEMO_MODE = {{ 'true' if demo_mode else 'false' }};
   let transcriptionsData = {{ data | tojson(indent = 2) }};
   // Per-language replacement maps ({ lang: { from: to } }). Applied at render
   // time so mappings added mid-session reflow lines already on screen, not just
@@ -1440,7 +1447,17 @@
       };
     }
 
-    connectStream();
+    if (DEMO_MODE) {
+      // Feed synthetic events through the very same handler the SSE stream
+      // uses, so the demo exercises the real render path end to end.
+      statusIndicator.className = 'status-dot-sm bg-emerald-500';
+      statusText.textContent = 'Demo';
+      startDemoFeed(function (payload) {
+        handleTranscriptionUpdate({ data: JSON.stringify(payload) });
+      });
+    } else {
+      connectStream();
+    }
 
     // Poll the (public) per-language replacement maps so rules the broadcaster
     // edits mid-session reflow the on-screen text. Edits are rare, so a slow
@@ -1461,7 +1478,7 @@
         }
       } catch (e) { /* transient; next tick retries */ }
     }
-    setInterval(pollDisplayDictionary, 15000);
+    if (!DEMO_MODE) setInterval(pollDisplayDictionary, 15000);
 
     window.addEventListener('resize', function () {
       if (currentLayout === 'grid') refreshGridView();
