@@ -291,6 +291,10 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
             return existing
 
         if existing is not None:
+            # The manager built below takes over this session's panel status, so the
+            # outgoing one has to stop speaking for it first — synchronously, before
+            # its stop() task gets a chance to run.
+            existing.mark_superseded()
             asyncio.create_task(existing.stop())
 
         from .translation_service import get_session_scribe_language, get_session_partial_interval

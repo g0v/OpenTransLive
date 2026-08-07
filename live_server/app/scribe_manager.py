@@ -166,6 +166,18 @@ class ScribeSessionManager:
         """Keys reported with `status`, replayed alongside it. See _status_extra."""
         return self._status_extra
 
+    def mark_superseded(self):
+        """Hand this session's panel status over to a replacement manager.
+
+        Call it synchronously when restarting a session (e.g. an operator changing the
+        detect language), before stop(). Otherwise this manager's terminal "stopped"
+        still reaches the room, and because the replacement must stay healthy for
+        _HEALTHY_CONNECTION_SECS before it reports "connected", the panel paints
+        Transcribe as disconnected for 30s over a restart that took under a second.
+        Shutdown itself is unaffected — only the reporting stops.
+        """
+        self.status_callback = None
+
     async def _emit_status(self, state: str, **extra):
         """Report transcription health to the panel; deduped so repeated reconnect
         attempts don't spam the room. Never raises into the reconnect loop."""
