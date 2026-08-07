@@ -1418,26 +1418,46 @@
       return url.toString();
     }
 
+    // Strip the partial envelope so a parked line looks like any other committed
+    // segment to the renderer, and flag it so its real commit can replace it.
+    function provisionalCopy(partialPayload) {
+      const seg = Object.assign({}, partialPayload, { provisional: true });
+      delete seg.partial;
+      delete seg.last_committed;
+      return seg;
+    }
+
+    function upsertSegment(seg, provisional) {
+      const list = transcriptionsData["transcriptions"];
+      const i = list.findIndex(t => t.start_time === seg.start_time);
+      if (i === -1) {
+        list.push(provisional ? provisionalCopy(seg) : seg);
+        list.sort((a, b) => a.start_time - b.start_time);
+      } else if (!provisional && list[i].provisional) {
+        // The real commit lands: replace the placeholder in place.
+        list[i] = seg;
+      }
+    }
+
     function handleTranscriptionUpdate(event) {
       if (event.lastEventId) lastEventId = event.lastEventId;
       const data = JSON.parse(event.data);
-      if (data.last_committed) {
-        const last_committed = data.last_committed;
-        const exists = !!transcriptionsData["transcriptions"].findLast(t => t.start_time === last_committed.start_time);
-        if (!exists) {
-          transcriptionsData["transcriptions"].push(last_committed);
-          transcriptionsData["transcriptions"].sort((a, b) => a.start_time - b.start_time);
-        }
-      }
+      if (data.last_committed) upsertSegment(data.last_committed, false);
       if (data.partial) {
+        // A segment's commit is translated while the *next* segment's partials are
+        // already flowing, so the single partial slot gets overwritten seconds
+        // before the outgoing segment's commit arrives. Park the outgoing partial
+        // in the list as a provisional line, or that segment vanishes from screen
+        // for the whole length of its commit translation.
+        const outgoing = transcriptionsData["partial"];
+        if (outgoing && outgoing.start_time !== data.start_time) upsertSegment(outgoing, true);
         transcriptionsData["partial"] = data;
       } else {
-        transcriptionsData["partial"] = null;
-        const exists = !!transcriptionsData["transcriptions"].findLast(t => t.start_time === data.start_time);
-        if (!exists) {
-          transcriptionsData["transcriptions"].push(data);
-          transcriptionsData["transcriptions"].sort((a, b) => a.start_time - b.start_time);
-        }
+        upsertSegment(data, false);
+        // Clear the partial slot only when this commit closes the segment sitting
+        // in it — by now the slot usually holds the next segment's live line.
+        const current = transcriptionsData["partial"];
+        if (!current || current.start_time <= data.start_time) transcriptionsData["partial"] = null;
       }
       syncLanguagesFromData();
       refreshView();

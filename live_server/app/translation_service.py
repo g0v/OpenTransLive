@@ -4,6 +4,7 @@ from opencc import OpenCC
 from .config import REALTIME_SETTINGS
 from .database import rooms_collection, users_collection
 from .logger_config import setup_logger, log_exception
+from .socket_schema import is_finite_number
 from .translators import get_translator
 
 logger = setup_logger(__name__)
@@ -33,6 +34,18 @@ _KEYWORD_STORE_CAP = _KEYWORD_CAP * 2  # store 2x so low-freq words can recover
 # wastes calls and is a major source of caption flicker; the LLM tends to
 # rewrite the whole sentence even when only one word was added.
 _MIN_PARTIAL_DELTA_CHARS = 4
+
+
+def segment_start(transcription) -> float | None:
+    """Identity of the segment a transcription belongs to, or None if unusable.
+
+    scribe clears seg_start_time on every commit, so all partials of a segment
+    and the commit that closes it share one start_time, and each segment scribe
+    opens gets a strictly larger one. That makes start_time the segment id, and
+    `a <= b` read as "segment a is the same as, or older than, segment b".
+    """
+    start = (transcription or {}).get("start_time")
+    return float(start) if is_finite_number(start) else None
 
 
 # ---------------------------------------------------------------------------
@@ -360,39 +373,63 @@ def apply_text_dictionary(text: str, mapping: dict[str, str]) -> str:
 # Keyword reranking (background task)
 # ---------------------------------------------------------------------------
 
-async def rerank_keywords(redis_client, session_id, keywords: dict[str, int], locked_list: list[str], recent_text: str, provider: str | None = None):
+def rank_keywords(keywords: dict[str, int], locked_list: list[str], cap: int) -> dict[str, int]:
+    """
+    Order keywords pinned-first, then by score descending, capped to `cap`.
+    Only the unpinned tail is trimmed, so a pin is never dropped by the cap.
+    Keyed off locked_list rather than the score map so a freshly pinned keyword
+    that has not been scored yet is restored instead of lost.
+    """
+    pinned = {kw: keywords.get(kw, 1) for kw in locked_list}
+    unpinned = sorted(
+        ((kw, v) for kw, v in keywords.items() if kw not in pinned),
+        key=lambda x: x[1], reverse=True,
+    )
+    return {
+        **dict(sorted(pinned.items(), key=lambda x: x[1], reverse=True)),
+        **dict(unpinned[:max(0, cap - len(pinned))]),
+    }
+
+
+async def rerank_keywords(redis_client, session_id, extraction_context: dict[str, int], recent_text: str, provider: str | None = None):
     """
     Extract new special nouns/names from recent_text, then increment/decrement keyword
-    counts by presence in text. Locked keywords are always preserved at the front.
+    counts by presence in text. `extraction_context` is the caller's keyword snapshot,
+    used only to prime extraction; the state that gets rewritten is re-read from Redis.
+    Locked keywords are always preserved: they never decay and are never trimmed.
     Runs as a fire-and-forget background task; result is saved to Redis.
     """
     translator = get_translator(provider)
-    locked_set = set(locked_list)
 
+    new_kws = []
     try:
-        new_kws = await translator.extract_keywords(recent_text, keywords)
-        for kw in new_kws:
-            if isinstance(kw, str) and kw not in keywords:
-                keywords[kw] = 1
+        new_kws = await translator.extract_keywords(recent_text, extraction_context)
     except Exception as e:
         log_exception(logger, e, "Keyword extraction error")
+
+    # Re-read instead of writing back the caller's snapshot: extraction and the
+    # translation before it take seconds, and the panel may have added, removed
+    # or pinned keywords meanwhile. Saving the stale snapshot would drop those.
+    keywords, locked_list = await get_keywords_and_locked(redis_client, session_id)
+    locked_set = set(locked_list)
+
+    for kw in new_kws:
+        if isinstance(kw, str) and kw not in keywords:
+            keywords[kw] = 1
 
     recent_lower = recent_text.lower()
     for kw in list(keywords.keys()):
         if kw.lower() in recent_lower:
             keywords[kw] += 1
-        else:
+        elif kw not in locked_set:
+            # Pinned keywords never decay: going unmentioned is not evidence
+            # against a keyword the user explicitly asked us to keep.
             keywords[kw] -= 1
 
-    locked_kws = {kw: keywords[kw] for kw in keywords if kw in locked_set}
-    unlocked_kws = {kw: v for kw, v in keywords.items() if kw not in locked_set and v > -100}
-    final = {
-        **dict(sorted(locked_kws.items(), key=lambda x: x[1], reverse=True)),
-        **dict(sorted(unlocked_kws.items(), key=lambda x: x[1], reverse=True)),
-    }
-    trimmed_final = dict(list(final.items())[:_KEYWORD_STORE_CAP])
+    kept = {kw: v for kw, v in keywords.items() if v > -100 or kw in locked_set}
+    trimmed_final = rank_keywords(kept, locked_list, _KEYWORD_STORE_CAP)
     await save_current_keywords(redis_client, session_id, trimmed_final)
-    print("keywords saved: ", trimmed_final)
+    logger.debug("keywords saved (%d, %d pinned): %s", len(trimmed_final), len(locked_list), trimmed_final)
 
 
 # ---------------------------------------------------------------------------
@@ -426,11 +463,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     if flow_map:
         text = apply_text_dictionary(text, flow_map)
         data["text"] = text
-    locked_set = set(locked_list)
-    sorted_kws = sorted(current_keywords, key=lambda k: current_keywords[k], reverse=True)
-    pinned_kws = [kw for kw in sorted_kws if kw in locked_set]
-    unpinned_kws = [kw for kw in sorted_kws if kw not in locked_set]
-    keywords_str = ', '.join(pinned_kws + unpinned_kws[:max(0, _KEYWORD_CAP - len(pinned_kws))])
+    keywords_str = ', '.join(rank_keywords(current_keywords, locked_list, _KEYWORD_CAP))
 
     translated_lists = {language: [] for language in languages}
     for transcription in cached_data.get("transcriptions", []):
@@ -440,10 +473,14 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
                 translated_lists[language].append(translated_dict.get(language, ""))
 
     translated_context = {lang: ' '.join(translated_lists[lang]) for lang in languages}
-    # Previous partial's result, shared by the correction and translation stages
-    # so both keep the in-progress line consistent instead of re-editing it on
-    # each partial.
-    partial_result = cached_data.get("partial", {}).get("result", {})
+    # Previous partial's result, shared by the correction and translation stages so
+    # both keep the in-progress line consistent instead of re-editing it on each
+    # partial. Only usable when it belongs to *this* segment — the cached partial can
+    # be an older segment's, and feeding that in as prev_translation asks the LLM to
+    # continue a sentence that already ended.
+    cached_partial = cached_data.get("partial") or {}
+    same_segment = segment_start(cached_partial) == segment_start(data)
+    partial_result = (cached_partial.get("result") or {}) if same_segment else {}
     prev_corrected = partial_result.get("corrected", "")
 
     result = {"corrected": text}
@@ -514,7 +551,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
 
     if not partial and languages:
         asyncio.create_task(
-            rerank_keywords(redis_client, session_id, dict(current_keywords), locked_list, result["corrected"], provider)
+            rerank_keywords(redis_client, session_id, current_keywords, result["corrected"], provider)
         )
 
     result["translated"] = translated
@@ -534,11 +571,19 @@ class TranslationQueueManager:
         self.partial_task = None
         self._pending_partial = None  # latest partial waiting for in-flight to finish
         self.commit_queue = asyncio.Queue(maxsize=self._COMMIT_QUEUE_MAXSIZE)
-        self._commit_in_flight = False
-        # Source text of the most recently dispatched partial. Used to gate
-        # tiny extensions that would only cause LLM rewrites without giving
-        # the reader meaningful new content. Reset on every commit.
-        self._last_dispatched_partial_text = ""
+        # Most recently dispatched partial. Its text gates tiny extensions that would
+        # only cause LLM rewrites without giving the reader new content; its segment
+        # decides whether a commit gets to drop the claim.
+        self._claimed_partial = None
+        # Segment of the partial currently translating, so a commit tears down only
+        # partial work it actually supersedes instead of killing the live segment's.
+        self._inflight_partial_start: float | None = None
+        # Segment of the newest commit accepted into the queue: everything at or
+        # before it is superseded. Partials for *later* segments keep flowing while
+        # that commit translates — a commit can hold the queue for tens of seconds
+        # (correct() plus _COMMIT_RETRIES worth of translate()), and parking every
+        # partial behind it froze the caption on a segment scribe had already closed.
+        self._committed_through = float("-inf")
         self.is_running = False
         self.task = None
 
@@ -549,7 +594,9 @@ class TranslationQueueManager:
     async def stop(self):
         self.is_running = False
         self._pending_partial = None
-        self._last_dispatched_partial_text = ""
+        self._claimed_partial = None
+        self._inflight_partial_start = None
+        self._committed_through = float("-inf")
         if self.partial_task:
             self.partial_task.cancel()
             try:
@@ -563,28 +610,41 @@ class TranslationQueueManager:
             except (asyncio.CancelledError, Exception):
                 pass
 
+    def _superseded(self, start: float | None) -> bool:
+        """True when a commit we already accepted closed the segment at `start`."""
+        return start is not None and start <= self._committed_through
+
+    def _stale(self, sync_data) -> bool:
+        """True when this transcription's segment has already been committed."""
+        return self._superseded(segment_start(sync_data))
+
+    def _claimed_text(self) -> str:
+        return (self._claimed_partial or {}).get("text", "") or ""
+
     def should_dispatch(self, sync_data):
         """Gate a transcription before the caller fetches its cached context.
 
         Commits always pass. Call it exactly once per transcription, immediately
-        before put(): on a True return it *claims* the partial slot by recording
-        the dispatched text, so put() does no further gating. Staying synchronous
-        is what makes that safe — the check and the claim happen in one event-loop
-        step, so two concurrent partials can't both pass on the same text.
+        before put(): on a True return it *claims* the partial slot, so put() only
+        re-checks what can change across the caller's cache fetch. Staying
+        synchronous is what makes that safe — the check and the claim happen in one
+        event-loop step, so two concurrent partials can't both pass on the same text.
         """
         if sync_data.get("partial") is not True:
             return True
-        if self._commit_in_flight or not self.commit_queue.empty():
+        # Drop partials for a segment scribe has already closed; the broadcast path
+        # would reject them again as skip_older_partial.
+        if self._stale(sync_data):
             return False
         # Throttle by content delta: skip partials whose source text grew
         # by fewer than _MIN_PARTIAL_DELTA_CHARS chars. A shrinking text
         # (negative delta) means ASR corrected itself — always pass that
         # through since it's a meaningful change worth re-translating.
         new_text = sync_data.get("text", "") or ""
-        delta = len(new_text) - len(self._last_dispatched_partial_text)
+        delta = len(new_text) - len(self._claimed_text())
         if 0 <= delta < _MIN_PARTIAL_DELTA_CHARS:
             return False
-        self._last_dispatched_partial_text = new_text
+        self._claimed_partial = sync_data
         return True
 
     async def put(self, session_id, sync_data, cached_data, redis_client):
@@ -594,21 +654,34 @@ class TranslationQueueManager:
             # text; anything claimed since means this one is stale. The caller awaits a
             # cache fetch between the two calls and scribe_manager fires those callbacks
             # concurrently, so a slow fetch can land here after a newer partial's and
-            # would otherwise push the older text out as the newest one. A commit also
-            # clears the claim, which is how it supersedes partials still in flight.
-            if (sync_data.get("text", "") or "") != self._last_dispatched_partial_text:
+            # would otherwise push the older text out as the newest one.
+            if (sync_data.get("text", "") or "") != self._claimed_text():
+                return
+            # The commit closing this segment can also land in that same window, and
+            # only put() sees it. Re-check rather than spend an LLM call on text the
+            # broadcast path would just reject as skip_older_partial.
+            if self._stale(sync_data):
                 return
             if self.partial_task and not self.partial_task.done():
                 # Replace pending slot with the latest partial; it will be
                 # dispatched as soon as the in-flight translation finishes.
                 self._pending_partial = item
             else:
+                self._inflight_partial_start = segment_start(sync_data)
                 self.partial_task = asyncio.create_task(self._process_partial(*item))
         else:
-            if self.partial_task and not self.partial_task.done():
+            start = segment_start(sync_data)
+            if start is not None:
+                self._committed_through = max(self._committed_through, start)
+            # Tear down only the partial work this commit supersedes; partials for the
+            # segment scribe opened after it have to survive.
+            if (self.partial_task and not self.partial_task.done()
+                    and self._superseded(self._inflight_partial_start)):
                 self.partial_task.cancel()
-            self._pending_partial = None  # commit supersedes any pending partial
-            self._last_dispatched_partial_text = ""
+            if self._pending_partial is not None and self._stale(self._pending_partial[1]):
+                self._pending_partial = None
+            if self._stale(self._claimed_partial):
+                self._claimed_partial = None
             if self.commit_queue.full():
                 try:
                     self.commit_queue.get_nowait()
@@ -625,37 +698,31 @@ class TranslationQueueManager:
         while self.is_running:
             try:
                 item = await self.commit_queue.get()
-                self._commit_in_flight = True
                 await self._process(*item)
                 self.commit_queue.task_done()
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 log_exception(logger, e, "Queue loop error")
-            finally:
-                self._commit_in_flight = False
             await asyncio.sleep(0.01)
 
     async def _process_partial(self, session_id, sync_data, cached_data, redis_client):
         await self._process(session_id, sync_data, cached_data, redis_client)
-        # Dispatch the next queued partial if one arrived while we were in-flight
-        # and no commit has since taken priority.
-        if self._pending_partial and not self._commit_in_flight and self.commit_queue.empty():
-            item = self._pending_partial
-            self.partial_task = asyncio.create_task(self._process_partial(*item))
-        self._pending_partial = None
+        # Dispatch the next queued partial if one arrived while we were in-flight,
+        # unless a commit has since closed its segment.
+        pending, self._pending_partial = self._pending_partial, None
+        self._inflight_partial_start = None
+        if pending is not None and not self._stale(pending[1]):
+            self._inflight_partial_start = segment_start(pending[1])
+            self.partial_task = asyncio.create_task(self._process_partial(*pending))
 
     async def _process(self, session_id, sync_data, cached_data, redis_client):
         try:
             result_data = await translate_transcription(
                 session_id, sync_data, cached_data, redis_client, skip_correction=REALTIME_SETTINGS.get('SKIP_CORRECTION', False)
             )
-            if not sync_data.get("partial"):
-                # Eagerly clear the partial key so the next partial's prev_translation is clean.
-                try:
-                    await redis_client.delete(f"transcription:{session_id}:partial")
-                except Exception as e:
-                    log_exception(logger, e, f"Failed to clear partial after commit for {session_id}")
+            # The partial key is cleared by the callback's broadcast path, which owns
+            # it and holds the per-session lock (see _should_delete_partial).
             asyncio.create_task(self.callback(session_id, result_data))
         except asyncio.CancelledError:
             logger.debug(f"Translation task cancelled for session {session_id}")
