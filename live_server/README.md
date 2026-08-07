@@ -75,7 +75,7 @@ Compose 會啟動 FastAPI server、MongoDB、Redis。
 
 | 變數 | 說明 | 預設 |
 |---|---|---|
-| `ENVIRONMENT` | 設為 `production` 會開啟 Secure cookie 與嚴格的 Socket.IO CORS | `development` |
+| `ENVIRONMENT` | 設為 `production` 會開啟 Secure cookie 與嚴格的 Socket.IO CORS，並停止在 log 印出 OTP | `development` |
 | `SOCKET_CORS_ALLOWED_ORIGINS` | production 模式下的 Socket.IO 允許來源（逗號分隔）| 內建 localhost 清單 |
 | `SEGMENT_WRITE_WORKERS` | MongoDB segment 寫入 worker 數 | `2` |
 | `SEGMENT_WRITE_QUEUE_MAXSIZE` | 寫入佇列容量上限 | `500` |
@@ -131,6 +131,7 @@ app/
 - key 的權限**即時**從使用者紀錄推導（realtime + room 擁有權），不寫死在 key 裡 —— 撤銷 realtime／room 下次請求即生效。**唯一例外**:管理端點（建立帳號、rotate 他人、改設定)對 key 認證一律拒絕,即使擁有者是 admin。因此廣播機請用**專用非 admin 帳號**（只需擁有目標 room）。
 - dashboard 顯示的 key 識別碼是從 hash 衍生的指紋（`otl_` + hash 前綴），不洩漏任何機密字元。
 - production 模式（`ENVIRONMENT=production`）會啟用 Secure cookie 與嚴格 Socket.IO CORS 白名單。
+- 未設定 `SMTP_HOST` 時不寄信;此時只有非 production 才會把 OTP 明文寫進 log 供本機測試,production 改為記錄一筆 error。**正式部署務必設定 `ENVIRONMENT=production`**,docker compose 會從 `.env` 帶進容器。
 - Socket.IO 事件以 [socket_schema.py](app/socket_schema.py) 驗證輸入。
 
 ## 疑難排解

@@ -78,7 +78,7 @@ Some runtime options still come from environment variables:
 
 | Variable | Description | Default |
 |---|---|---|
-| `ENVIRONMENT` | `production` enables Secure cookies and a strict Socket.IO CORS allowlist | `development` |
+| `ENVIRONMENT` | `production` enables Secure cookies and a strict Socket.IO CORS allowlist, and stops OTPs from being logged | `development` |
 | `SOCKET_CORS_ALLOWED_ORIGINS` | Comma-separated Socket.IO allowlist in production | Built-in localhost allowlist |
 | `SEGMENT_WRITE_WORKERS` | MongoDB segment-write worker count | `2` |
 | `SEGMENT_WRITE_QUEUE_MAXSIZE` | Max segments queued before backpressure | `500` |
@@ -134,6 +134,7 @@ Field details in [../docs/USAGE.en.md](../docs/USAGE.en.md#6-data-storage). Summ
 - A key's permissions are derived **live** from the user record (realtime + room ownership), never baked into the key — revoking realtime/room takes effect on the next request. **One exception**: admin *management* endpoints (creating accounts, rotating others, changing settings) are refused for key-authenticated callers even when the owning account is an admin. So broadcast machines should use a **dedicated non-admin account** that merely owns the target room.
 - The key id shown in the dashboard is a fingerprint derived from the hash (`otl_` + hash prefix); it leaks no character of the secret.
 - `ENVIRONMENT=production` enables Secure cookies and a strict Socket.IO CORS allowlist.
+- With `SMTP_HOST` unset no mail is sent; outside production the OTP is written to the log in plaintext for local testing, while production logs an error instead. **Always set `ENVIRONMENT=production` for real deployments** — docker compose passes it into the container from `.env`.
 - Socket.IO events are validated via [socket_schema.py](app/socket_schema.py).
 
 ## Troubleshooting

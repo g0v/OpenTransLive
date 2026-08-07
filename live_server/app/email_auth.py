@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from pymongo import ReturnDocument
 
+from .config import IS_PRODUCTION
 from .logger_config import setup_logger
 
 logger = setup_logger(__name__)
@@ -158,7 +159,21 @@ def _build_otp_email_html(otp: str) -> str:
 async def send_otp_email(email: str, otp: str, email_settings: dict) -> None:
     smtp_host = email_settings.get("SMTP_HOST", "")
     if not smtp_host:
-        logger.info("[DEV MODE] OTP generated email=%s smtp_configured=false", _mask_email(email))
+        if IS_PRODUCTION:
+            # Never log the OTP here: production logs are shipped and retained,
+            # and a plaintext code is enough to take over the account.
+            logger.error(
+                "SMTP_HOST is not configured, OTP email not sent email=%s",
+                _mask_email(email),
+            )
+        else:
+            # One record so concurrent requests can't interleave a code with
+            # the wrong address.
+            logger.info(
+                "[DEV MODE] OTP generated email=%s otp=%s smtp_configured=false",
+                _mask_email(email),
+                otp,
+            )
         return
 
     import aiosmtplib
