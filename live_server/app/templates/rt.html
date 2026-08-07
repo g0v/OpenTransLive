@@ -621,13 +621,17 @@
   let languageOrder = [];
   let urlShowList = null;        // null = unconstrained; array = ordered codes from URL
   let hiddenLanguages = new Set();
+  let mobilePickerShown = false;
   (function initShowListFromUrl() {
     const params = new URLSearchParams(window.location.search);
     const showParam = params.get('show');
     const layoutParam = params.get('layout');
     if (showParam !== null) {
       const langs = showParam.split(',').map(s => s.trim()).filter(Boolean);
-      urlShowList = langs.length ? langs : null;
+      urlShowList = (langs.length && !(langs.length === 1 && langs[0] === 'all')) ? langs : null;
+      if (langs.length === 0 || (langs.length === 1 && langs[0] === 'all')) {
+        mobilePickerShown = true;
+      }
     } else if (layoutParam && layoutParam !== 'grid') {
       urlShowList = [layoutParam];
     }
@@ -936,7 +940,7 @@
 
   function applyShowSelection(value) {
     const langs = (value || '').split(',').map(s => s.trim()).filter(Boolean);
-    if (langs.length === 0) {
+    if (langs.length === 0 || (langs.length === 1 && langs[0] === 'all')) {
       urlShowList = null;
       hiddenLanguages.clear();
     } else {
@@ -1031,14 +1035,11 @@
   // ------------------------------------------------------------------ //
   // Mobile language picker                                              //
   // ------------------------------------------------------------------ //
-  let mobilePickerShown = false;
   const mobileLangModal = document.getElementById('mobile-lang-modal');
 
   function maybeShowMobilePicker(languages) {
     if (mobilePickerShown) return;
-    if (window.innerWidth >= 768) return;           // desktop — skip
-    const params = new URLSearchParams(window.location.search);
-    if (params.has('show') || params.has('layout')) return;  // explicit URL state — respect it
+    // if (window.innerWidth >= 768) return;           // desktop — skip
     if (languages.length <= 1) return;
 
     mobilePickerShown = true;
@@ -1501,6 +1502,11 @@
       }
       // Migrate legacy layout URL param to show on first render.
       if (params.has('layout')) updateShowUrlParam();
+      // Clean up show=all or empty show param from URL
+      const showParam = params.get('show');
+      if (showParam === 'all' || showParam === '') {
+        updateUrlParam('show', null);
+      }
       refreshView();
       setTimeout(() => { initialized = true; }, 100);
       maybeShowMobilePicker(languageOrder);
