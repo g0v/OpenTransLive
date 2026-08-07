@@ -34,9 +34,18 @@ _WS_PING_INTERVAL = 15        # keepalive ping cadence; primary dead-socket dete
 _WS_PING_TIMEOUT = 10         # drop the connection if a pong is missing this long
 _RECV_POLL_INTERVAL = 2.0     # seconds; recv() timeout granularity for stall checks
 # Application-level backstop for a socket that stays ping-alive but stops producing
-# transcripts. Must stay comfortably above _WS_PING_TIMEOUT so keepalive detects real
-# dead sockets first and the two layers don't race into false reconnects.
-_OUTPUT_STALL_TIMEOUT = 25    # force reconnect if a mid-flight segment gets no server message for this long
+# transcripts. Two thresholds, because how long a silence is normal depends on whether a
+# segment is open:
+#   - mid-segment: partials should keep coming, and a short commit closes the segment
+#     within _COMMIT_TIMEOUT_SECS, so a tight timeout is both safe and fast.
+#   - between segments: while audio flows but nobody speaks, Scribe's only output is a
+#     periodic empty committed_transcript, measured at ~36s intervals against the live
+#     API. The threshold has to clear that heartbeat with margin, otherwise every quiet
+#     stretch would force a reconnect.
+# Both must stay comfortably above _WS_PING_TIMEOUT so keepalive detects real dead
+# sockets first and the two layers don't race into false reconnects.
+_OUTPUT_STALL_TIMEOUT = 25       # mid-segment: no server message for this long -> reconnect
+_IDLE_OUTPUT_STALL_TIMEOUT = 60  # no open segment: same, but past the ~36s empty-commit heartbeat
 _SEGMENT_START_OFFSET = 0.3   # seconds subtracted from seg_start_time to account for ASR processing latency
 _IDLE_TIMEOUT_SECS = 60       # stop session after 1 minute with no audio
 _IDLE_CHECK_INTERVAL = 30     # how often the watchdog checks (seconds)
@@ -241,12 +250,16 @@ class ScribeSessionManager:
                 try:
                     message = await asyncio.wait_for(self.ws.recv(), timeout=_RECV_POLL_INTERVAL)
                 except asyncio.TimeoutError:
-                    # No message this interval. If a segment is mid-flight and audio is
-                    # still arriving but the server has gone silent, the socket is wedged
-                    # (keepalive can stay green) — return to force a clean reconnect.
+                    # No message this interval. If audio is still arriving but the server
+                    # has gone silent for longer than it ever legitimately does, the socket
+                    # is wedged (keepalive can stay green) — return to force a clean
+                    # reconnect. Deliberately not gated on an open segment: the wedge is
+                    # just as likely to start right after a commit, and that state used to
+                    # be invisible here until the _MAX_SESSION_SECS restart 5 minutes later.
                     now_mono = time.monotonic()
-                    if (self.seg_start_time is not None
-                            and now_mono - self.last_recv_mono >= _OUTPUT_STALL_TIMEOUT
+                    stall_timeout = (_OUTPUT_STALL_TIMEOUT if self.seg_start_time is not None
+                                     else _IDLE_OUTPUT_STALL_TIMEOUT)
+                    if (now_mono - self.last_recv_mono >= stall_timeout
                             and now_mono - self._last_audio_mono < _RECV_POLL_INTERVAL * 2):
                         logger.warning(
                             f"Scribe output stalled ({now_mono - self.last_recv_mono:.0f}s) "
