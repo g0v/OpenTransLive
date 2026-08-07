@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 dotenv.load_dotenv(override=True)
 
-from .config import SETTINGS, REDIS_URL
+from .config import SETTINGS, REDIS_URL, IS_PRODUCTION
 try:
     from .config import EMAIL_SETTINGS
 except ImportError:
@@ -481,12 +481,11 @@ app.openapi = _public_api_openapi
 # SameSite=Lax blocks cross-site POST/DELETE cookie attachment — the main CSRF
 # mitigation for /api/session/{sid}/..., /heartbeat, /release-admin. Secure is
 # enabled in production so the cookie is never sent over plain HTTP.
-_IS_PRODUCTION = os.environ.get("ENVIRONMENT", "development").lower() == "production"
 app.add_middleware(
     SessionMiddleware,
     secret_key=SETTINGS["SECRET_KEY"],
     same_site="lax",
-    https_only=_IS_PRODUCTION,
+    https_only=IS_PRODUCTION,
 )
 
 # Setup templates
@@ -512,7 +511,7 @@ def _parse_socket_cors_origins() -> list[str] | str:
     """
     raw = os.environ.get("SOCKET_CORS_ALLOWED_ORIGINS", "").strip()
 
-    if _IS_PRODUCTION:
+    if IS_PRODUCTION:
         if not raw:
             raise RuntimeError(
                 "SOCKET_CORS_ALLOWED_ORIGINS must be set in production. "

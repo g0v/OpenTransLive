@@ -4,17 +4,15 @@
 # See LICENSE for details.
 
 import re
-import os
 import secrets
 from datetime import datetime, timezone
 
 from pymongo import ReturnDocument
 
+from .config import IS_PRODUCTION
 from .logger_config import setup_logger
 
 logger = setup_logger(__name__)
-
-_IS_DEVELOPMENT = os.environ.get("ENVIRONMENT", "development").lower() == "development"
 
 _EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
 
@@ -160,9 +158,22 @@ def _build_otp_email_html(otp: str) -> str:
 
 async def send_otp_email(email: str, otp: str, email_settings: dict) -> None:
     smtp_host = email_settings.get("SMTP_HOST", "")
-    if _IS_DEVELOPMENT and not smtp_host:
-        logger.info("[DEV MODE] OTP generated email=%s smtp_configured=false", _mask_email(email))
-        logger.info("[DEV MODE] OTP: %s", otp)
+    if not smtp_host:
+        if IS_PRODUCTION:
+            # Never log the OTP here: production logs are shipped and retained,
+            # and a plaintext code is enough to take over the account.
+            logger.error(
+                "SMTP_HOST is not configured, OTP email not sent email=%s",
+                _mask_email(email),
+            )
+        else:
+            # One record so concurrent requests can't interleave a code with
+            # the wrong address.
+            logger.info(
+                "[DEV MODE] OTP generated email=%s otp=%s smtp_configured=false",
+                _mask_email(email),
+                otp,
+            )
         return
 
     import aiosmtplib
