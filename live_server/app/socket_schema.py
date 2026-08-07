@@ -35,7 +35,7 @@ _MAX_TIMESTAMP = 10**12
 _BASE64_RE = re.compile(r'^[A-Za-z0-9+/]*={0,2}$')
 
 
-def _is_finite_number(value: Any) -> bool:
+def is_finite_number(value: Any) -> bool:
     # isinstance(True, int) is True in Python, so guard booleans explicitly.
     if isinstance(value, bool):
         return False
@@ -47,7 +47,7 @@ def _is_finite_number(value: Any) -> bool:
 
 
 def _check_timestamp(value: Any, name: str) -> tuple[bool, str]:
-    if not _is_finite_number(value):
+    if not is_finite_number(value):
         return False, f"{name} must be a finite number"
     if value < 0 or value > _MAX_TIMESTAMP:
         return False, f"{name} out of range"
