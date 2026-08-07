@@ -588,9 +588,16 @@ class TranslationQueueManager:
         return True
 
     async def put(self, session_id, sync_data, cached_data, redis_client):
-        # Partials are already gated (and claimed) by should_dispatch().
         item = (session_id, sync_data, cached_data, redis_client)
         if sync_data.get("partial") is True:
+            # should_dispatch() already gated this partial and claimed the slot for its
+            # text; anything claimed since means this one is stale. The caller awaits a
+            # cache fetch between the two calls and scribe_manager fires those callbacks
+            # concurrently, so a slow fetch can land here after a newer partial's and
+            # would otherwise push the older text out as the newest one. A commit also
+            # clears the claim, which is how it supersedes partials still in flight.
+            if (sync_data.get("text", "") or "") != self._last_dispatched_partial_text:
+                return
             if self.partial_task and not self.partial_task.done():
                 # Replace pending slot with the latest partial; it will be
                 # dispatched as soon as the in-flight translation finishes.
