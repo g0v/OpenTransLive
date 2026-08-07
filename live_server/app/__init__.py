@@ -489,8 +489,8 @@ app.openapi = _public_api_openapi
 
 # Add session middleware.
 # SameSite=Lax blocks cross-site POST/DELETE cookie attachment — the main CSRF
-# mitigation for /api/session/{sid}/..., /heartbeat, /release-admin. Secure is
-# enabled in production so the cookie is never sent over plain HTTP.
+# mitigation for /api/session/{sid}/... and /heartbeat. Secure is enabled in
+# production so the cookie is never sent over plain HTTP.
 app.add_middleware(
     SessionMiddleware,
     secret_key=SETTINGS["SECRET_KEY"],
@@ -1094,9 +1094,8 @@ async def _verify_socket_credentials(socket_id, session, secret_key, session_id,
 
 
 async def _verify_session_lock_holder(request: Request, sid: str):
-    """Verify the request holds the room's active lock (secret_key). Used by the
-    lock-lifecycle endpoints (heartbeat) where mere ownership is not enough.
-    Returns the room doc."""
+    """Verify the request holds the room's active lock (secret_key). Used by
+    /heartbeat, where mere ownership is not enough. Returns the room doc."""
     user_secret_key = request.session.get("secret_key")
     if not user_secret_key:
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -2406,8 +2405,7 @@ async def panel(request: Request, sid: str):
             # settings APIs and stay in sync with the active admin. The lock
             # itself stays single (admin_uid is unchanged); both users sharing
             # the key just means either can heartbeat.
-            if request.session.get("secret_key") != admin_key:
-                request.session["secret_key"] = admin_key
+            request.session["secret_key"] = admin_key
             await rooms_collection.update_one(
                 {"sid": sid},
                 {"$set": {"admin_last_heartbeat": now, "updated_at": now}}
@@ -2433,7 +2431,9 @@ async def panel(request: Request, sid: str):
         # Reflect the in-memory room dict so the template sees the updated owner.
         room.update(update_fields)
     else:
-        user_secret_key = request.session.get("secret_key")
+        # Reached only with the lock still active, which the branch above just
+        # handed to this caller — no need to read it back out of the session.
+        user_secret_key = admin_key
 
     owner_email = await _get_room_owner_email(room)
     is_primary_owner = bool(
@@ -2483,32 +2483,6 @@ async def heartbeat(request: Request, sid: str):
         active_translation_managers[sid] = translation_manager
     await rooms_collection.update_one({"sid": sid}, {"$set": update})
     return response
-
-@app.post("/release-admin/{sid}", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
-async def release_admin(request: Request, sid: str):
-    """Release admin lock when admin leaves"""
-    sid = sanitize_query_param(sid, "session ID")
-
-    user_secret_key = request.session.get("secret_key")
-    if not user_secret_key:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    room = await rooms_collection.find_one({"sid": sid})
-    if not room:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    if room.get("secret_key") != user_secret_key:
-        return {"status": "not_admin"}
-
-    if room.get("admin_uid") != request.session.get("user_uid"):
-        return {"status": "not_lock_holder"}
-
-    await rooms_collection.update_one(
-        {"sid": sid},
-        {"$set": {"secret_key": None, "admin_last_heartbeat": None, "updated_at": datetime.now(timezone.utc)}}
-    )
-    request.session.pop("secret_key", None)
-    return {"status": "released"}
 
 @app.delete("/api/sessions/{sid}", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def delete_session(request: Request, sid: str):
@@ -2625,10 +2599,10 @@ async def disconnect(socket_id):
     _socket_limiter.cleanup(socket_id)
     logger.info("client_disconnected socket_hash=%s", _hash_token(socket_id))
     # Admin lock is NOT cleared here: socket disconnect fires on page refresh
-    # and transient network blips, not only on true tab-close.
-    # Cleanup is handled by:
-    #   1. The /release-admin HTTP beacon sent on true navigation-away (beforeunload, non-reload)
-    #   2. The 30-second heartbeat timeout checked on every /panel/{sid} request
+    # and transient network blips, not only on true tab-close. An abandoned lock is
+    # reclaimed by the 30-second heartbeat timeout, evaluated on the next
+    # /panel/{sid} load — see the heartbeat comment in templates/panel.html for why
+    # that is the only cleanup path.
 
 async def _process_transcription_update(session_id, sync_data):
     """Process a transcription update: cache, persist, broadcast. Hot path."""

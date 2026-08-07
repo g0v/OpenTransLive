@@ -697,6 +697,16 @@
 
   // Send heartbeat every 10 seconds to maintain admin lock.
   // The response also carries audio-usage stats so we avoid a separate poll.
+  //
+  // This is the lock's only lifecycle signal — the panel deliberately does not release
+  // it on unload. beforeunload cannot tell a refresh from a true navigation-away (the
+  // performance navigation entry describes how THIS document was *loaded*, not where it
+  // is going), and the release beacon that tried raced the reload's own GET /panel: when
+  // the GET won, the fresh page had already been rendered with the secret_key the beacon
+  // then nulled, so it came back "Unauthorized — microphone stopped" until a second
+  // refresh minted a new key. Nothing waits on a prompt release — an abandoned lock is
+  // reclaimed by the 30 s timeout on the next /panel load, and /panel hands the live key
+  // to any owner/co-owner that loads it while the lock is still held.
   let heartbeatInterval = null
   if (user_secret_key) {
     heartbeatInterval = setInterval(async function () {
@@ -719,37 +729,9 @@
   // Poll for new server-side keywords every 5 seconds
   let keywordSyncInterval = setInterval(syncKeywords, 5000)
 
-  // Release admin lock when leaving the page (best-effort)
-  // Use sessionStorage to detect refresh vs. true navigation-away:
-  // On reload, the browser keeps the same sessionStorage, so we mark the
-  // session as "refreshing" here and clear it on the next DOMContentLoaded.
-  // If the flag is still set at beforeunload time it means the PREVIOUS
-  // unload was a refresh (rare edge-case), but more importantly we use
-  // performance.getEntriesByType to skip the beacon when the current
-  // navigation is a reload.
-  sessionStorage.removeItem('panel_refreshing')
-
-  window.addEventListener('beforeunload', function () {
-    if (heartbeatInterval) {
-      clearInterval(heartbeatInterval)
-    }
-    clearInterval(keywordSyncInterval)
-    stopSettingsSync()
-    if (user_secret_key) {
-      // Detect page refresh: performance.navigation.type 1 = reload
-      // Also covers bfcache restores. We set a flag so the reload can
-      // reclaim admin without being blocked.
-      const navEntries = performance.getEntriesByType('navigation')
-      const isReload = navEntries.length > 0 && navEntries[0].type === 'reload'
-      if (!isReload) {
-        navigator.sendBeacon(`/release-admin/${sid}`, new Blob([JSON.stringify({})], { type: 'application/json' }))
-      } else {
-        // Mark sessionStorage so the server-side panel route knows
-        // this user is refreshing and should reclaim admin immediately.
-        sessionStorage.setItem('panel_refreshing', '1')
-      }
-    }
-  })
+  // No beforeunload handler: with the release beacon gone it would only clear the
+  // timers above, which the document tear-down does anyway — and registering one costs
+  // bfcache eligibility, so a back-navigation would pay a full panel reload.
 
   // ── Scribe detect language select ────────────────────────────────────────
   // Scribe v2 requires ISO 639-1 (2-char) or ISO 639-3 (3-char) codes.
