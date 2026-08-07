@@ -6,7 +6,7 @@ Copy secret/config.example.toml to secret/config.toml and fill in your values::
 
 This module only parses config.toml into the module-level settings the rest of
 the app imports (SETTINGS, EMAIL_SETTINGS, MONGODB_SETTINGS, REALTIME_SETTINGS,
-REDIS_URL), so those imports keep working unchanged.
+REDIS_URL, IS_PRODUCTION), so those imports keep working unchanged.
 
 Any value can be overridden by an environment variable of the same name (e.g.
 OPENAI_API_KEY, SMTP_HOST, REDIS_URL); the env value is coerced to match the
@@ -17,6 +17,11 @@ import tomllib
 from pathlib import Path
 
 _SECRET_DIR = Path(__file__).with_name("secret")
+
+# Deployment mode, shared by every module that needs to behave differently in
+# production (Secure cookies, strict Socket.IO CORS, no dev-only debug logging).
+# Defined once here so the polarity can't drift between call sites.
+IS_PRODUCTION = os.environ.get("ENVIRONMENT", "development").strip().lower() == "production"
 
 
 def load_secret_toml(name: str, *, example_fallback: bool = False) -> dict:
