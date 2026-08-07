@@ -326,7 +326,7 @@ class ScribeSessionManager:
 
     def _build_transcription(self, text: str, partial: bool, end_time: datetime) -> dict:
         if self.seg_start_time is None: return {}
-        if self.language_code.startswith('zh') or (self.language_code == '' and REALTIME_SETTINGS.get("force_opencc", False)):
+        if self.language_code.startswith('zh') or (self.language_code == '' and REALTIME_SETTINGS.get("FORCE_OPENCC", False)):
             text = _cc_s2tw.convert(text)
         return {
             "text": text,
