@@ -563,20 +563,34 @@ class TranslationQueueManager:
             except (asyncio.CancelledError, Exception):
                 pass
 
+    def should_dispatch(self, sync_data):
+        """Gate a transcription before the caller fetches its cached context.
+
+        Commits always pass. Call it exactly once per transcription, immediately
+        before put(): on a True return it *claims* the partial slot by recording
+        the dispatched text, so put() does no further gating. Staying synchronous
+        is what makes that safe — the check and the claim happen in one event-loop
+        step, so two concurrent partials can't both pass on the same text.
+        """
+        if sync_data.get("partial") is not True:
+            return True
+        if self._commit_in_flight or not self.commit_queue.empty():
+            return False
+        # Throttle by content delta: skip partials whose source text grew
+        # by fewer than _MIN_PARTIAL_DELTA_CHARS chars. A shrinking text
+        # (negative delta) means ASR corrected itself — always pass that
+        # through since it's a meaningful change worth re-translating.
+        new_text = sync_data.get("text", "") or ""
+        delta = len(new_text) - len(self._last_dispatched_partial_text)
+        if 0 <= delta < _MIN_PARTIAL_DELTA_CHARS:
+            return False
+        self._last_dispatched_partial_text = new_text
+        return True
+
     async def put(self, session_id, sync_data, cached_data, redis_client):
+        # Partials are already gated (and claimed) by should_dispatch().
         item = (session_id, sync_data, cached_data, redis_client)
         if sync_data.get("partial") is True:
-            if self._commit_in_flight or not self.commit_queue.empty():
-                return
-            # Throttle by content delta: skip partials whose source text grew
-            # by fewer than _MIN_PARTIAL_DELTA_CHARS chars. A shrinking text
-            # (negative delta) means ASR corrected itself — always pass that
-            # through since it's a meaningful change worth re-translating.
-            new_text = sync_data.get("text", "") or ""
-            delta = len(new_text) - len(self._last_dispatched_partial_text)
-            if 0 <= delta < _MIN_PARTIAL_DELTA_CHARS:
-                return
-            self._last_dispatched_partial_text = new_text
             if self.partial_task and not self.partial_task.done():
                 # Replace pending slot with the latest partial; it will be
                 # dispatched as soon as the in-flight translation finishes.

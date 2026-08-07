@@ -2886,12 +2886,17 @@ async def on_translation_completed(session_id, sync_data):
 
 async def on_scribe_transcription(session_id, transcription):
     """Callback for Scribe transcription"""
-    # Hot path (>10 Hz on partials); translator only needs the last 3 committed segments.
-    cached_data = await get_cached_transcription(session_id, num_committed=5)
-    sync_data = transcription.copy()
-    
+    # Partials arrive at most once per partial_interval (handle_transcript throttles
+    # them), but many are still dropped by the translator's own gates — while a
+    # commit translation is in flight, all of them are. Ask first, so those cost no
+    # Redis round trip and no deserialization of every language's translations.
     manager = _get_or_create_translation_manager(session_id)
-    await manager.put(session_id, sync_data, cached_data, redis_client)
+    if not manager.should_dispatch(transcription):
+        return
+
+    # The translator only needs the last few committed segments for context.
+    cached_data = await get_cached_transcription(session_id, num_committed=5)
+    await manager.put(session_id, transcription.copy(), cached_data, redis_client)
 
 @sio.event
 async def realtime_connect(socket_id, data):
