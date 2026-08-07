@@ -1624,11 +1624,6 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
             raise HTTPException(status_code=400, detail=f"Invalid keyword value: {kw}")
     keywords = [kw.strip() for kw in keywords]
 
-    from .translation_service import save_current_keywords, save_locked_keywords, get_keywords_and_locked
-    existing_keywords, _ = await get_keywords_and_locked(redis_client, sid)
-    keywords_dict = {kw: existing_keywords.get(kw, 1) for kw in keywords}
-    await save_current_keywords(redis_client, sid, keywords_dict)
-
     if "locked_keywords" in body:
         locked_keywords = body.get("locked_keywords")
         if not isinstance(locked_keywords, list):
@@ -1639,9 +1634,17 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
             if '$' in kw or len(kw) > 128:
                 raise HTTPException(status_code=400, detail=f"Invalid locked keyword value: {kw}")
         locked_keywords = [kw.strip() for kw in locked_keywords]
-        await save_locked_keywords(redis_client, sid, locked_keywords)
     else:
         locked_keywords = None
+
+    from .translation_service import save_current_keywords, save_locked_keywords, get_keywords_and_locked
+    existing_keywords, _ = await get_keywords_and_locked(redis_client, sid)
+    keywords_dict = {kw: existing_keywords.get(kw, 1) for kw in keywords}
+    # Locked list first: a concurrent rerank restores pinned keywords from the
+    # stored locked list, so an unpin must land before the list it applies to.
+    if locked_keywords is not None:
+        await save_locked_keywords(redis_client, sid, locked_keywords)
+    await save_current_keywords(redis_client, sid, keywords_dict)
 
     result = {"keywords": list(keywords_dict.keys())}
     if locked_keywords is not None:

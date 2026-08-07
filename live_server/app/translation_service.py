@@ -360,39 +360,63 @@ def apply_text_dictionary(text: str, mapping: dict[str, str]) -> str:
 # Keyword reranking (background task)
 # ---------------------------------------------------------------------------
 
-async def rerank_keywords(redis_client, session_id, keywords: dict[str, int], locked_list: list[str], recent_text: str, provider: str | None = None):
+def rank_keywords(keywords: dict[str, int], locked_list: list[str], cap: int) -> dict[str, int]:
+    """
+    Order keywords pinned-first, then by score descending, capped to `cap`.
+    Only the unpinned tail is trimmed, so a pin is never dropped by the cap.
+    Keyed off locked_list rather than the score map so a freshly pinned keyword
+    that has not been scored yet is restored instead of lost.
+    """
+    pinned = {kw: keywords.get(kw, 1) for kw in locked_list}
+    unpinned = sorted(
+        ((kw, v) for kw, v in keywords.items() if kw not in pinned),
+        key=lambda x: x[1], reverse=True,
+    )
+    return {
+        **dict(sorted(pinned.items(), key=lambda x: x[1], reverse=True)),
+        **dict(unpinned[:max(0, cap - len(pinned))]),
+    }
+
+
+async def rerank_keywords(redis_client, session_id, extraction_context: dict[str, int], recent_text: str, provider: str | None = None):
     """
     Extract new special nouns/names from recent_text, then increment/decrement keyword
-    counts by presence in text. Locked keywords are always preserved at the front.
+    counts by presence in text. `extraction_context` is the caller's keyword snapshot,
+    used only to prime extraction; the state that gets rewritten is re-read from Redis.
+    Locked keywords are always preserved: they never decay and are never trimmed.
     Runs as a fire-and-forget background task; result is saved to Redis.
     """
     translator = get_translator(provider)
-    locked_set = set(locked_list)
 
+    new_kws = []
     try:
-        new_kws = await translator.extract_keywords(recent_text, keywords)
-        for kw in new_kws:
-            if isinstance(kw, str) and kw not in keywords:
-                keywords[kw] = 1
+        new_kws = await translator.extract_keywords(recent_text, extraction_context)
     except Exception as e:
         log_exception(logger, e, "Keyword extraction error")
+
+    # Re-read instead of writing back the caller's snapshot: extraction and the
+    # translation before it take seconds, and the panel may have added, removed
+    # or pinned keywords meanwhile. Saving the stale snapshot would drop those.
+    keywords, locked_list = await get_keywords_and_locked(redis_client, session_id)
+    locked_set = set(locked_list)
+
+    for kw in new_kws:
+        if isinstance(kw, str) and kw not in keywords:
+            keywords[kw] = 1
 
     recent_lower = recent_text.lower()
     for kw in list(keywords.keys()):
         if kw.lower() in recent_lower:
             keywords[kw] += 1
-        else:
+        elif kw not in locked_set:
+            # Pinned keywords never decay: going unmentioned is not evidence
+            # against a keyword the user explicitly asked us to keep.
             keywords[kw] -= 1
 
-    locked_kws = {kw: keywords[kw] for kw in keywords if kw in locked_set}
-    unlocked_kws = {kw: v for kw, v in keywords.items() if kw not in locked_set and v > -100}
-    final = {
-        **dict(sorted(locked_kws.items(), key=lambda x: x[1], reverse=True)),
-        **dict(sorted(unlocked_kws.items(), key=lambda x: x[1], reverse=True)),
-    }
-    trimmed_final = dict(list(final.items())[:_KEYWORD_STORE_CAP])
+    kept = {kw: v for kw, v in keywords.items() if v > -100 or kw in locked_set}
+    trimmed_final = rank_keywords(kept, locked_list, _KEYWORD_STORE_CAP)
     await save_current_keywords(redis_client, session_id, trimmed_final)
-    print("keywords saved: ", trimmed_final)
+    logger.debug("keywords saved (%d, %d pinned): %s", len(trimmed_final), len(locked_list), trimmed_final)
 
 
 # ---------------------------------------------------------------------------
@@ -426,11 +450,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     if flow_map:
         text = apply_text_dictionary(text, flow_map)
         data["text"] = text
-    locked_set = set(locked_list)
-    sorted_kws = sorted(current_keywords, key=lambda k: current_keywords[k], reverse=True)
-    pinned_kws = [kw for kw in sorted_kws if kw in locked_set]
-    unpinned_kws = [kw for kw in sorted_kws if kw not in locked_set]
-    keywords_str = ', '.join(pinned_kws + unpinned_kws[:max(0, _KEYWORD_CAP - len(pinned_kws))])
+    keywords_str = ', '.join(rank_keywords(current_keywords, locked_list, _KEYWORD_CAP))
 
     translated_lists = {language: [] for language in languages}
     for transcription in cached_data.get("transcriptions", []):
@@ -514,7 +534,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
 
     if not partial and languages:
         asyncio.create_task(
-            rerank_keywords(redis_client, session_id, dict(current_keywords), locked_list, result["corrected"], provider)
+            rerank_keywords(redis_client, session_id, current_keywords, result["corrected"], provider)
         )
 
     result["translated"] = translated
