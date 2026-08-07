@@ -5,11 +5,42 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@100..900&family=Noto+Sans+JP:wght@100..900&family=Noto+Sans+KR:wght@100..900&family=Noto+Sans+SC:wght@100..900&family=Noto+Sans+TC:wght@100..900&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <script src="https://cdn.jsdelivr.net/npm/iconify-icon@3.0.0/dist/iconify-icon.min.js"></script>
   <style type="text/tailwindcss">
+    @theme {
+      --font-sans: "Noto Sans", sans-serif;
+    }
+
+    :root {
+      font-family: var(--font-sans);
+    }
+
+    :lang(zh-Hant), :lang(zh-TW), :lang(zh-HK),
+    [data-language^="zh-Hant"], [data-language^="zh-TW"],
+    [data-lang^="zh-Hant"], [data-lang^="zh-TW"] {
+      font-family: "Noto Sans TC", sans-serif;
+    }
+
+    :lang(zh-Hans), :lang(zh-CN),
+    [data-language^="zh-Hans"], [data-language^="zh-CN"],
+    [data-lang^="zh-Hans"], [data-lang^="zh-CN"] {
+      font-family: "Noto Sans SC", sans-serif;
+    }
+
+    :lang(ja), [data-language^="ja"], [data-lang^="ja"] {
+      font-family: "Noto Sans JP", sans-serif;
+    }
+
+    :lang(ko), [data-language^="ko"], [data-lang^="ko"] {
+      font-family: "Noto Sans KR", sans-serif;
+    }
+
     {% include "assets/style.css" %}
-    </style>
+  </style>
 
   {% block head %} {% endblock %}
 </head>

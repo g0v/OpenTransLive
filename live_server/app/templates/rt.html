@@ -254,7 +254,9 @@
 
   #grid-content {
     grid-template-columns: repeat(var(--grid-cols, 1), 1fr);
-    grid-template-rows: repeat(var(--grid-rows, 1), 1fr);
+    /* --grid-row-h is set (in px) only when rows are pinned to a fixed height;
+       otherwise rows split the container evenly. */
+    grid-template-rows: repeat(var(--grid-rows, 1), var(--grid-row-h, 1fr));
   }
 
   /* ------------------------------------------------------------------ */
@@ -1349,6 +1351,23 @@
     gridContent.style.setProperty('--grid-cols', actualCols);
     gridContent.style.setProperty('--grid-rows', actualRows);
 
+    // Mobile stacks one language per row, so past 3 languages the even split
+    // squeezes every card down to a couple of lines. Pin each row to the height
+    // it would have at 3 rows and let the view scroll instead.
+    const gridView = document.getElementById('grid-view');
+    const pinRowHeight = isMobile && languageCount >= 4;
+    gridView.style.overflowY = pinRowHeight ? 'auto' : '';
+    gridContent.style.height = pinRowHeight ? 'auto' : '';
+    if (pinRowHeight) {
+      const GAP = 8;          // gap-2
+      const PADDING = 16;     // p-2, top + bottom
+      const VISIBLE_ROWS = 3;
+      const avail = gridView.clientHeight - PADDING - GAP * (VISIBLE_ROWS - 1);
+      gridContent.style.setProperty('--grid-row-h', Math.max(80, avail / VISIBLE_ROWS) + 'px');
+    } else {
+      gridContent.style.removeProperty('--grid-row-h');
+    }
+
     const existing = Array.from(gridContent.children).map(c => c.getAttribute('data-language'));
     const mismatch = existing.length !== languages.length || existing.some((l, i) => l !== languages[i]);
     if (mismatch) {
@@ -1371,9 +1390,14 @@
         gridContent.appendChild(languageBox);
       });
     }
-    languages.forEach(language => {
+    // A last row holding a single leftover box (e.g. 3 languages in 2 columns)
+    // would leave a hole beside it — stretch that box across the full width.
+    const spanLast = actualCols > 1 && languageCount % actualCols === 1;
+    languages.forEach((language, idx) => {
       const languageBox = gridContent.querySelector(`[data-language="${language}"]`);
       if (!languageBox) return;
+      languageBox.style.gridColumn =
+        (spanLast && idx === languageCount - 1) ? `span ${actualCols}` : '';
       const { historyItems, lastText, partialText } = buildLanguageText(language);
       const card = languageBox.querySelector('.language-card');
       const wrapper = card.children[0];
