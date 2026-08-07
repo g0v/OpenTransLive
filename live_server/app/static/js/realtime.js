@@ -16,6 +16,46 @@ let audioProcessor = null;
 let analyserNode = null;
 let levelAnimFrame = null;
 
+// Two independent health signals share one indicator: the browser<->server socket,
+// and the server<->Scribe transcription pipeline. Socket trouble outranks scribe
+// trouble (no socket means no audio reaches the server at all), so keep them apart
+// and re-render instead of letting whichever event fired last win.
+let socketStatus = { cls: 'bg-gray-400', text: 'Connecting…' };
+let scribeState = null;  // null | 'connected' | 'reconnecting' | 'stopped'
+let micActive = false;   // mirrors the panel mic toggle; see onMicStateChange
+
+function setSocketStatus(cls, text) {
+  socketStatus = { cls: cls, text: text };
+  renderStatus();
+}
+
+// Called by setMicState() in panel.html. 'stopped' means opposite things depending on
+// the mic ('expected' after mic_off vs 'transcription died' while streaming), and
+// nothing else re-renders when the operator toggles the mic.
+function onMicStateChange(state) {
+  micActive = (state === 'on');
+  if (!micActive) scribeState = null;  // intentional stop: drop any stale alarm
+  renderStatus();
+}
+
+function renderStatus() {
+  const socketOk = socketStatus.cls === 'bg-green-500';
+  let cls = socketStatus.cls;
+  let text = socketStatus.text;
+  if (socketOk && scribeState === 'reconnecting') {
+    cls = 'bg-orange-500';
+    text = 'Transcription interrupted — reconnecting…';
+  } else if (socketOk && scribeState === 'stopped' && micActive) {
+    // Terminal, unlike 'reconnecting': the server gave up (manager evicted, idle
+    // watchdog, misconfiguration) while the mic is still streaming. Must not fall
+    // through to the green socket status — nothing is being transcribed.
+    cls = 'bg-red-500';
+    text = 'Transcription stopped — toggle the mic to restart';
+  }
+  statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full ' + cls;
+  statusText.textContent = text;
+}
+
 function updateViewerCountDisplay(count) {
   const el = document.getElementById('viewer-count-display');
   if (!el || !Number.isFinite(count)) return;
@@ -58,8 +98,7 @@ setInterval(function () { if (socket.connected) syncServerClock(3, 200); }, 3000
 
 socket.on('connect', function () {
   // Show pending state — auth is not yet confirmed by the server
-  statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-yellow-400';
-  statusText.textContent = 'Authenticating…';
+  setSocketStatus('bg-yellow-400', 'Authenticating…');
   console.log('WebSocket connection opened');
 
   // Join the session room
@@ -69,8 +108,10 @@ socket.on('connect', function () {
 });
 
 socket.on('disconnect', function () {
-  statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-red-500';
-  statusText.textContent = 'Disconnected';
+  // Stale scribe state: the server may have stopped or restarted the session while
+  // we were away. join_session replays the real state on reconnect.
+  scribeState = null;
+  setSocketStatus('bg-red-500', 'Disconnected');
   console.log('WebSocket connection closed');
 });
 
@@ -82,14 +123,21 @@ socket.on('joined_session', function (data) {
   console.log('Joined session:', data);
   updateViewerCountDisplay(data.viewer_count);
   if (data.authorized) {
-    statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-green-500';
-    statusText.textContent = 'Connected: ' + data.session_id;
+    setSocketStatus('bg-green-500', 'Connected: ' + data.session_id);
     socket.emit('realtime_connect', { session_id: sessionId });
   } else {
-    statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-orange-500';
-    statusText.textContent = 'Unauthorized';
+    setSocketStatus('bg-orange-500', 'Unauthorized');
     console.warn('join_session: not authorized for session', data.session_id);
   }
+});
+
+// Transcription pipeline health. Never touches the mic: a Scribe reconnect is
+// recoverable, and killing the mic here would turn a gap into a dead session.
+socket.on('scribe_status', function (data) {
+  if (!data || data.session_id !== sessionId) return;
+  console.log('Scribe status:', data);
+  scribeState = data.state;
+  renderStatus();
 });
 
 socket.on('viewer_count_update', function (data) {

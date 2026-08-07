@@ -284,13 +284,19 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
         if existing and existing.is_running and not force_new:
             return existing
 
+        if existing is not None and not existing.api_key and not force_new:
+            # Misconfigured server (no ELEVENLABS_API_KEY): a replacement would refuse to
+            # start the same way, so keep the dead manager instead of churning one — and
+            # one error log — per audio chunk. It already reported "stopped" to the panel.
+            return existing
+
         if existing is not None:
             asyncio.create_task(existing.stop())
 
         from .translation_service import get_session_scribe_language, get_session_partial_interval
         language_code = await get_session_scribe_language(redis_client, session_id)
         partial_interval = await get_session_partial_interval(session_id)
-        manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code, partial_interval=partial_interval)
+        manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code, partial_interval=partial_interval, status_callback=_emit_scribe_status)
         manager.yt_start_time = await get_youtube_start_time(session_id)
         active_scribe_managers[session_id] = manager
         asyncio.create_task(manager.start())
@@ -607,6 +613,31 @@ async def _emit_session_settings_update(sid: str, kind: str) -> None:
     not viewers) are in the room, so this is safe to broadcast unconditionally.
     """
     await sio.emit("session_settings_updated", {"session_id": sid, "kind": kind}, room=sid)
+
+
+async def _emit_scribe_status(sid: str, status: dict) -> None:
+    """Report transcription pipeline health (connected / reconnecting / stopped) to
+    panel clients.
+
+    Deliberately its own event rather than `error`: the panel's `error` handler kills
+    the mic, and a transient reconnect must not do that. Same room semantics as
+    _emit_session_settings_update — only sockets that completed `join_session`.
+    """
+    await sio.emit("scribe_status", {"session_id": sid, **status}, room=sid)
+
+
+async def _replay_scribe_status(socket_id: str, sid: str) -> None:
+    """Send the current transcription state to a socket that just joined.
+
+    _emit_status only fires on transitions, so a panel that reloads or whose socket
+    blips mid-outage would otherwise never hear about it: it would repaint "Connected"
+    on joined_session and stay falsely green for the rest of the outage.
+    """
+    manager: ScribeSessionManager | None = active_scribe_managers.get(sid)
+    state = manager.status if manager else None
+    if not state:
+        return
+    await sio.emit("scribe_status", {"session_id": sid, "state": state}, to=socket_id)
 
 
 def _transcription_event_id(payload: dict) -> str:
@@ -2766,6 +2797,8 @@ async def join_session(socket_id, data):
             to=socket_id,
         )
         await _emit_viewer_count(session_id, viewer_count)
+        # After joined_session, which repaints the client's indicator from scratch.
+        await _replay_scribe_status(socket_id, session_id)
         logger.info(
             "join_session apikey_verified sid_hash=%s owner_email=%s socket_hash=%s",
             _hash_token(session_id), _mask_email(session.get("email")), _hash_token(socket_id),
@@ -2805,6 +2838,8 @@ async def join_session(socket_id, data):
         to=socket_id,
     )
     await _emit_viewer_count(session_id, viewer_count)
+    # After joined_session, which repaints the client's indicator from scratch.
+    await _replay_scribe_status(socket_id, session_id)
 
 @sio.event
 async def leave_session(socket_id, data):
