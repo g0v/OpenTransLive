@@ -2630,6 +2630,26 @@ async def disconnect(socket_id):
     #   1. The /release-admin HTTP beacon sent on true navigation-away (beforeunload, non-reload)
     #   2. The 30-second heartbeat timeout checked on every /panel/{sid} request
 
+def _should_delete_partial(partial_json, commit_start: float) -> bool:
+    """Whether a commit closing the segment at `commit_start` may clear the cached partial.
+
+    Partials for the *next* segment are translated while the previous segment's
+    commit is still in flight, so the commit can no longer clear the key blindly:
+    the value sitting there may be the live caption line. A missing key needs no
+    delete; an unreadable one is dropped so a corrupt value can't pin a stale
+    partial for the rest of the session.
+    """
+    from .translation_service import segment_start
+
+    if not partial_json:
+        return False
+    try:
+        start = segment_start(json.loads(partial_json))
+    except (AttributeError, TypeError, ValueError):
+        return True
+    return start is None or start <= commit_start
+
+
 async def _process_transcription_update(session_id, sync_data):
     """Process a transcription update: cache, persist, broadcast. Hot path."""
     proc_start = time.perf_counter()
@@ -2696,7 +2716,10 @@ async def _process_transcription_update(session_id, sync_data):
             # failure (which zeroes stream_start_time) doesn't stomp good meta.
             if stream_start_time is not None:
                 pipe.setex(meta_key, TRANSCRIPTION_TTL, json.dumps({"stream_start_time": stream_start_time}))
-            pipe.delete(partial_key)
+            # partial_json was read in this same critical section, so comparing against
+            # it and deleting here is race-free — this lock exists for exactly that.
+            if _should_delete_partial(partial_json, sync_data["start_time"]):
+                pipe.delete(partial_key)
             pipe.zrange(list_key, -1, -1)
             try:
                 results = await pipe.execute()
@@ -2891,9 +2914,9 @@ async def on_translation_completed(session_id, sync_data):
 async def on_scribe_transcription(session_id, transcription):
     """Callback for Scribe transcription"""
     # Partials arrive at most once per partial_interval (handle_transcript throttles
-    # them), but many are still dropped by the translator's own gates — while a
-    # commit translation is in flight, all of them are. Ask first, so those cost no
-    # Redis round trip and no deserialization of every language's translations.
+    # them), but many are still dropped by the translator's own gates. Ask first, so
+    # those cost no Redis round trip and no deserialization of every language's
+    # translations.
     manager = _get_or_create_translation_manager(session_id)
     if not manager.should_dispatch(transcription):
         return
