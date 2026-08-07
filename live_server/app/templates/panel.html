@@ -662,6 +662,39 @@
     if (typeof onMicStateChange === 'function') onMicStateChange(state)
   }
 
+  // The only two writers of `recording`. It lives here with setMicState(), while
+  // startSession()/stopSession()/socket live in realtime.js, so every caller used to
+  // hand-assemble the sequence from both files — and each one that forgot a step left
+  // the state machine skewed: realtime.js's error handler dropped `recording`, so the
+  // next click took the mic_off branch on an already-dead session and the operator had
+  // to press twice to get back on air.
+
+  async function startRecording() {
+    setMicState('busy')
+    if (!await startSession()) {
+      // Denied mic permission or a dead socket. Claiming MIC ON here is the same skew
+      // in the other direction: button on, nothing streaming.
+      await stopRecording()
+      return false
+    }
+    socket.emit('mic_on', { session_id: sessionId, secret_key: user_secret_key })
+    recording = true
+    setMicState('on')
+    return true
+  }
+
+  async function stopRecording() {
+    setMicState('busy')
+    // The server drops its Scribe manager on mic_off; skipping it leaves one spinning
+    // until the idle watchdog notices.
+    if (typeof socket !== 'undefined' && socket.connected) {
+      socket.emit('mic_off', { session_id: sessionId })
+    }
+    await stopSession()
+    recording = false
+    setMicState('off')
+  }
+
   // Send heartbeat every 10 seconds to maintain admin lock.
   // The response also carries audio-usage stats so we avoid a separate poll.
   let heartbeatInterval = null
@@ -1622,17 +1655,9 @@
     if (micBtn) {
       micBtn.addEventListener('click', async () => {
         if (recording) {
-          setMicState('busy')
-          socket.emit('mic_off', { session_id: sessionId })
-          await stopSession()
-          recording = false
-          setMicState('off')
+          await stopRecording()
         } else {
-          setMicState('busy')
-          await startSession()
-          socket.emit('mic_on', { session_id: sessionId, secret_key: user_secret_key })
-          recording = true
-          setMicState('on')
+          await startRecording()
         }
       })
     }

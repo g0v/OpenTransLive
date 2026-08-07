@@ -615,6 +615,24 @@ async def _emit_session_settings_update(sid: str, kind: str) -> None:
     await sio.emit("session_settings_updated", {"session_id": sid, "kind": kind}, room=sid)
 
 
+async def _emit_socket_error(socket_id: str, code: str, message: str) -> None:
+    """Report a rejected socket event to one client.
+
+    `code` is the whole vocabulary of this event and the panel branches on it: only
+    the auth family ('unauthorized', 'realtime_token_required') stops the mic — see
+    FATAL_ERROR_CODES in static/js/realtime.js. Everything else ('invalid_payload',
+    'rate_limited') is surfaced and the broadcast keeps running, so a new code that
+    should be fatal has to be added there too or it will silently be treated as
+    recoverable. Emitting through here keeps that list greppable from one place.
+    """
+    await sio.emit('error', {'code': code, 'message': message}, to=socket_id)
+
+
+async def _emit_unauthorized(socket_id: str, message: str = 'Unauthorized') -> None:
+    """The auth rejection, by far the most repeated one. See _emit_socket_error."""
+    await _emit_socket_error(socket_id, 'unauthorized', message)
+
+
 async def _emit_scribe_status(sid: str, status: dict) -> None:
     """Report transcription pipeline health (connected / reconnecting / stopped) to
     panel clients.
@@ -637,7 +655,12 @@ async def _replay_scribe_status(socket_id: str, sid: str) -> None:
     state = manager.status if manager else None
     if not state:
         return
-    await sio.emit("scribe_status", {"session_id": sid, "state": state}, to=socket_id)
+    # status_extra rides along so the replay matches the live broadcast: without the
+    # `reason`, a panel that reloads against a misconfigured server reads the terminal
+    # stop as an ordinary one and waits forever for a recovery that isn't coming.
+    await sio.emit(
+        "scribe_status", {"session_id": sid, "state": state, **manager.status_extra}, to=socket_id
+    )
 
 
 def _transcription_event_id(payload: dict) -> str:
@@ -1010,7 +1033,7 @@ async def _check_socket_already_verified(socket_id, session, *, silent: bool = F
     if session.get('verified'):
         return True
     if not silent:
-        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        await _emit_unauthorized(socket_id)
     return False
 
 
@@ -1036,7 +1059,7 @@ async def _verify_socket_credentials(socket_id, session, secret_key, session_id,
             return True
         session['verified'] = False
         await sio.save_session(socket_id, session)
-        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        await _emit_unauthorized(socket_id)
         return False
     if session.get('verified'):
         cached_secret = session.get('secret_key') or secret_key
@@ -1048,16 +1071,16 @@ async def _verify_socket_credentials(socket_id, session, secret_key, session_id,
             return True
         session['verified'] = False
         await sio.save_session(socket_id, session)
-        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        await _emit_unauthorized(socket_id)
         return False
     if not secret_key:
-        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        await _emit_unauthorized(socket_id)
         return False
     if not session_id:
-        await sio.emit('error', {'message': 'Unauthorized: not in a session room'}, to=socket_id)
+        await _emit_unauthorized(socket_id, 'Unauthorized: not in a session room')
         return False
     if not await verify_socket_auth(socket_id, session_id, secret_key):
-        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        await _emit_unauthorized(socket_id)
         return False
     session['verified'] = True
     session['secret_key'] = secret_key
@@ -2741,7 +2764,7 @@ async def sync(socket_id, data):
     ok, schema_err = validate_sync_payload(data)
     if not ok:
         logger.warning("sync invalid_payload socket_hash=%s err=%s", _hash_token(socket_id), schema_err)
-        await sio.emit('error', {'code': 'invalid_payload', 'message': schema_err}, to=socket_id)
+        await _emit_socket_error(socket_id, 'invalid_payload', schema_err)
         return
 
     session = await sio.get_session(socket_id)
@@ -2750,7 +2773,7 @@ async def sync(socket_id, data):
     # Validate session_id against the stricter identifier rules (alnum/_/-).
     is_valid, error_msg = validate_query_param(session_id, "session ID")
     if not is_valid:
-        await sio.emit('error', {'code': 'invalid_payload', 'message': error_msg}, to=socket_id)
+        await _emit_socket_error(socket_id, 'invalid_payload', error_msg)
         return
 
     secret_key = data.get('secret_key') or session.get('secret_key')
@@ -2765,17 +2788,17 @@ async def sync(socket_id, data):
 async def join_session(socket_id, data):
     """Handle an authenticated panel joining a session room."""
     if not _socket_limiter.check(socket_id, 'join_session', 5, 10.0):
-        await sio.emit('error', {'message': 'Rate limit exceeded'}, to=socket_id)
+        await _emit_socket_error(socket_id, 'rate_limited', 'Rate limit exceeded')
         return
     session_id = data.get('session_id')
     secret_key = data.get('secret_key')
     api_key = data.get('api_key')
     if not session_id or not (secret_key or api_key):
-        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        await _emit_unauthorized(socket_id)
         return
     is_valid, error_msg = validate_query_param(session_id, "session ID")
     if not is_valid:
-        await sio.emit('error', {'code': 'invalid_payload', 'message': error_msg}, to=socket_id)
+        await _emit_socket_error(socket_id, 'invalid_payload', error_msg)
         return
 
     session = await sio.get_session(socket_id)
@@ -2787,7 +2810,7 @@ async def join_session(socket_id, data):
                 "join_session apikey_unauthorized sid_hash=%s socket_hash=%s",
                 _hash_token(session_id), _hash_token(socket_id),
             )
-            await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+            await _emit_unauthorized(socket_id)
             return
         await sio.enter_room(socket_id, session_id)
         viewer_count = await _viewer_presence_op(session_id, label="viewer count")
@@ -2811,12 +2834,12 @@ async def join_session(socket_id, data):
             _hash_token(session_id),
             _hash_token(socket_id),
         )
-        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        await _emit_unauthorized(socket_id)
         return
 
     room = await rooms_collection.find_one({"sid": session_id, "secret_key": secret_key})
     if not room:
-        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        await _emit_unauthorized(socket_id)
         return
 
     session['secret_key'] = secret_key
@@ -2848,7 +2871,7 @@ async def leave_session(socket_id, data):
     if session_id:
         is_valid, error_msg = validate_query_param(session_id, "session ID")
         if not is_valid:
-            await sio.emit('error', {'code': 'invalid_payload', 'message': error_msg}, to=socket_id)
+            await _emit_socket_error(socket_id, 'invalid_payload', error_msg)
             return
         await sio.leave_room(socket_id, session_id)
         await sio.emit('left_session', {'session_id': session_id}, to=socket_id)
@@ -2921,7 +2944,7 @@ async def audio_buffer_append(socket_id, data):
     ok, schema_err = validate_audio_buffer_append_payload(data)
     if not ok:
         logger.warning("audio_buffer_append invalid_payload socket_hash=%s err=%s", _hash_token(socket_id), schema_err)
-        await sio.emit('error', {'code': 'invalid_payload', 'message': schema_err}, to=socket_id)
+        await _emit_socket_error(socket_id, 'invalid_payload', schema_err)
         return
 
     session = await sio.get_session(socket_id)
@@ -2939,7 +2962,7 @@ async def audio_buffer_append(socket_id, data):
         if not await _verify_socket_credentials(socket_id, session, secret_key, session_id, api_key=data.get('api_key')):
             return
         if not await is_realtime_authorized(session, session_id):
-            await sio.emit('error', {'message': 'Unauthorized: realtime token required'}, to=socket_id)
+            await _emit_socket_error(socket_id, 'realtime_token_required', 'Unauthorized: realtime token required')
             return
         session['realtime_authorized'] = True
         await sio.save_session(socket_id, session)

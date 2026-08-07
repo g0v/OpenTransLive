@@ -67,6 +67,10 @@ class ScribeSessionManager:
         # health to the panel. Set before the API key guard so _emit_status is always safe.
         self.status_callback = status_callback
         self._status = None
+        # The keys reported alongside that state (reason, attempt). Kept whole so the
+        # replay path can forward exactly what the live broadcast sent, instead of
+        # re-listing fields one at a time and silently dropping the rest.
+        self._status_extra = {}
         # Initialize essential state before the API key guard so that stop(),
         # push_audio(), and is_running checks always find these attributes.
         self.ws = None
@@ -157,6 +161,11 @@ class ScribeSessionManager:
         state to a socket that (re)joins mid-outage."""
         return self._status
 
+    @property
+    def status_extra(self) -> dict:
+        """Keys reported with `status`, replayed alongside it. See _status_extra."""
+        return self._status_extra
+
     async def _emit_status(self, state: str, **extra):
         """Report transcription health to the panel; deduped so repeated reconnect
         attempts don't spam the room. Never raises into the reconnect loop."""
@@ -171,6 +180,7 @@ class ScribeSessionManager:
                 # dedupe away every later attempt and the panel would never hear about it.
                 return
         self._status = state
+        self._status_extra = extra
 
     async def _maybe_confirm_connected(self):
         """Clear an outage alarm only once the current connection has proven itself.

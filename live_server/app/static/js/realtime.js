@@ -21,7 +21,10 @@ let levelAnimFrame = null;
 // trouble (no socket means no audio reaches the server at all), so keep them apart
 // and re-render instead of letting whichever event fired last win.
 let socketStatus = { cls: 'bg-gray-400', text: 'Connecting…' };
-let scribeState = null;  // null | 'connected' | 'reconnecting' | 'stopped'
+// null | 'connected' | 'reconnecting' | 'stopped' | 'misconfigured'. The last is
+// folded in from the stop reason rather than tracked separately: it is the only stop
+// the server never recovers from, and no other reason changes what we render.
+let scribeState = null;
 let micActive = false;   // mirrors the panel mic toggle; see onMicStateChange
 
 function setSocketStatus(cls, text) {
@@ -38,19 +41,48 @@ function onMicStateChange(state) {
   renderStatus();
 }
 
+// A recoverable server-side rejection is worth showing, but it neither stops the mic
+// nor outranks a real socket/transcription alarm — so it lives on a timer and only
+// paints when nothing more serious is on screen.
+let transientNotice = null;
+let transientNoticeTimer = null;
+
+function showTransientNotice(text) {
+  const unchanged = text === transientNotice;
+  transientNotice = text;
+  clearTimeout(transientNoticeTimer);
+  transientNoticeTimer = setTimeout(function () {
+    transientNotice = null;
+    renderStatus();
+  }, 5000);
+  // A payload the server keeps rejecting produces one error per audio chunk; repainting
+  // identical text dozens of times a second buys nothing. Extending the timer does.
+  if (!unchanged) renderStatus();
+}
+
 function renderStatus() {
-  const socketOk = socketStatus.cls === 'bg-green-500';
   let cls = socketStatus.cls;
   let text = socketStatus.text;
-  if (socketOk && scribeState === 'reconnecting') {
-    cls = 'bg-orange-500';
-    text = 'Transcription interrupted — reconnecting…';
-  } else if (socketOk && scribeState === 'stopped' && micActive) {
-    // Terminal, unlike 'reconnecting': the server gave up (manager evicted, idle
-    // watchdog, misconfiguration) while the mic is still streaming. Must not fall
-    // through to the green socket status — nothing is being transcribed.
-    cls = 'bg-red-500';
-    text = 'Transcription stopped — toggle the mic to restart';
+  // Socket trouble outranks all of these — no socket means no audio reaches the server
+  // at all — so anything below only paints over a healthy socket.
+  if (socketStatus.cls === 'bg-green-500') {
+    if (micActive && scribeState === 'misconfigured') {
+      // No ELEVENLABS_API_KEY: every replacement manager refuses the same way and no
+      // amount of audio brings transcription back. Say so instead of promising a
+      // reconnect that will never land.
+      cls = 'bg-red-500';
+      text = 'Transcription unavailable — server misconfigured';
+    } else if (scribeState === 'reconnecting' || (scribeState === 'stopped' && micActive)) {
+      // 'stopped' rides along with 'reconnecting': while audio is still flowing the
+      // server rebuilds the Scribe manager on the next chunk, so an ordinary stop
+      // (manager evicted, idle watchdog, socket closed) repairs itself — asking the
+      // operator to toggle the mic only made them do by hand what was already happening.
+      cls = 'bg-orange-500';
+      text = 'Transcription interrupted — reconnecting…';
+    } else if (transientNotice) {
+      cls = 'bg-yellow-400';
+      text = transientNotice;
+    }
   }
   statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full ' + cls;
   statusText.textContent = text;
@@ -136,7 +168,7 @@ socket.on('joined_session', function (data) {
 socket.on('scribe_status', function (data) {
   if (!data || data.session_id !== sessionId) return;
   console.log('Scribe status:', data);
-  scribeState = data.state;
+  scribeState = data.reason === 'misconfigured' ? 'misconfigured' : data.state;
   renderStatus();
 });
 
@@ -145,12 +177,30 @@ socket.on('viewer_count_update', function (data) {
   updateViewerCountDisplay(data.viewer_count);
 });
 
+// The server emits `error` for everything from a rejected payload to a failed auth
+// check. Only the auth family means this socket can no longer stream audio; the rest
+// is recoverable, and treating it as fatal used to kill the operator's mic mid-
+// broadcast over a single malformed packet or a join_session rate limit.
+const FATAL_ERROR_CODES = ['unauthorized', 'realtime_token_required'];
+
 socket.on('error', function (data) {
   console.error('WebSocket error:', data);
-  stopSession();
-  setMicState('off');
+  const code = data && data.code;
+  if (FATAL_ERROR_CODES.indexOf(code) !== -1) {
+    setSocketStatus('bg-orange-500', 'Unauthorized — microphone stopped');
+    stopRecording();
+    return;
+  }
+  // Recoverable (invalid_payload, rate_limited, or an unknown code): keep streaming
+  // and just surface it, so a transient rejection doesn't take the session down.
+  showTransientNotice(code === 'rate_limited'
+    ? 'Server throttled a request — still streaming'
+    : 'Server rejected a message — still streaming');
 });
 
+// Returns false when nothing ended up streaming (denied permission, dead socket), so
+// startRecording() can keep the mic button in step. Swallows its own errors, which is
+// why this is a return value and not a throw.
 async function startSession() {
   try {
     audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
@@ -170,9 +220,8 @@ async function startSession() {
 
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
     if (!socket.connected) {
-      mediaStream.getTracks().forEach(track => track.stop());
-      mediaStream = null;
-      return;
+      await stopSession();  // tears down the AudioContext the manual track-stop left open
+      return false;
     }
     const source = audioContext.createMediaStreamSource(mediaStream);
 
@@ -216,9 +265,11 @@ async function startSession() {
       });
     };
 
+    return true;
   } catch (error) {
     console.error('Error accessing microphone:', error);
-    stopSession();
+    await stopSession();
+    return false;
   }
 }
 
@@ -355,9 +406,7 @@ async function handleDeviceChange() {
   const wasRecording = recording;
 
   if (wasRecording) {
-    // Stop current session
-    setMicState('busy');
-    await stopSession();
+    await stopRecording();
   }
 
   // Update selected device
@@ -365,10 +414,7 @@ async function handleDeviceChange() {
   localStorage.setItem('selectedMicDeviceId', selectedDeviceId || '');
 
   if (wasRecording) {
-    // Restart session with new device
-    await startSession();
-    recording = true;
-    setMicState('on');
+    await startRecording();
   }
 }
 
