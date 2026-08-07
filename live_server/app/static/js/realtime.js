@@ -21,19 +21,37 @@ let levelAnimFrame = null;
 // trouble (no socket means no audio reaches the server at all), so keep them apart
 // and re-render instead of letting whichever event fired last win.
 let socketStatus = { cls: 'bg-gray-400', text: 'Connecting…' };
-let scribeInterrupted = false;
+let scribeState = null;  // null | 'connected' | 'reconnecting' | 'stopped'
+let micActive = false;   // mirrors the panel mic toggle; see onMicStateChange
 
 function setSocketStatus(cls, text) {
   socketStatus = { cls: cls, text: text };
   renderStatus();
 }
 
+// Called by setMicState() in panel.html. 'stopped' means opposite things depending on
+// the mic ('expected' after mic_off vs 'transcription died' while streaming), and
+// nothing else re-renders when the operator toggles the mic.
+function onMicStateChange(state) {
+  micActive = (state === 'on');
+  if (!micActive) scribeState = null;  // intentional stop: drop any stale alarm
+  renderStatus();
+}
+
 function renderStatus() {
-  const connected = socketStatus.cls === 'bg-green-500';
-  const cls = (connected && scribeInterrupted) ? 'bg-orange-500' : socketStatus.cls;
-  const text = (connected && scribeInterrupted)
-    ? 'Transcription interrupted — reconnecting…'
-    : socketStatus.text;
+  const socketOk = socketStatus.cls === 'bg-green-500';
+  let cls = socketStatus.cls;
+  let text = socketStatus.text;
+  if (socketOk && scribeState === 'reconnecting') {
+    cls = 'bg-orange-500';
+    text = 'Transcription interrupted — reconnecting…';
+  } else if (socketOk && scribeState === 'stopped' && micActive) {
+    // Terminal, unlike 'reconnecting': the server gave up (manager evicted, idle
+    // watchdog, misconfiguration) while the mic is still streaming. Must not fall
+    // through to the green socket status — nothing is being transcribed.
+    cls = 'bg-red-500';
+    text = 'Transcription stopped — toggle the mic to restart';
+  }
   statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full ' + cls;
   statusText.textContent = text;
 }
@@ -91,8 +109,8 @@ socket.on('connect', function () {
 
 socket.on('disconnect', function () {
   // Stale scribe state: the server may have stopped or restarted the session while
-  // we were away, and we'd never receive the clearing event.
-  scribeInterrupted = false;
+  // we were away. join_session replays the real state on reconnect.
+  scribeState = null;
   setSocketStatus('bg-red-500', 'Disconnected');
   console.log('WebSocket connection closed');
 });
@@ -118,7 +136,7 @@ socket.on('joined_session', function (data) {
 socket.on('scribe_status', function (data) {
   if (!data || data.session_id !== sessionId) return;
   console.log('Scribe status:', data);
-  scribeInterrupted = (data.state === 'reconnecting');
+  scribeState = data.state;
   renderStatus();
 });
 

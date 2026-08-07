@@ -17,12 +17,19 @@ _cc_s2tw = OpenCC('s2tw')
 
 # No retry ceiling on purpose: as long as audio keeps arriving we keep trying to
 # reconnect, because a session that silently stops transcribing mid-stream is worse
-# than a long gap. When audio really stops, the _IDLE_TIMEOUT_SECS watchdog ends the
-# session, so the loop can't spin forever.
+# than a long gap. What bounds the loop is not a count but rate: attempts back off to
+# _RECONNECT_MAX_DELAY and only a connection that proves healthy clears the backoff
+# (_HEALTHY_CONNECTION_SECS), and when audio really stops the _IDLE_TIMEOUT_SECS
+# watchdog ends the session.
 _RECONNECT_BASE_DELAY = 2.0   # seconds; doubles each attempt, capped at 60s
 _RECONNECT_MAX_DELAY = 60.0
 _MAX_BACKOFF_SHIFT = 10       # cap the doubling exponent; 2.0 * 2**10 already exceeds the max delay
 _STATUS_ALERT_ATTEMPT = 2     # attempt number from which the panel is told transcription is interrupted
+# A connection must survive this long to count as healthy and clear the backoff.
+# ElevenLabs can accept the socket and close it immediately (quota / plan errors);
+# resetting the retry counter on connect alone would make every such cycle retry with
+# delay 0, i.e. an unthrottled handshake loop for the whole stream.
+_HEALTHY_CONNECTION_SECS = 30
 _WS_PING_INTERVAL = 15        # keepalive ping cadence; primary dead-socket detector
 _WS_PING_TIMEOUT = 10         # drop the connection if a pong is missing this long
 _RECV_POLL_INTERVAL = 2.0     # seconds; recv() timeout granularity for stall checks
@@ -134,18 +141,40 @@ class ScribeSessionManager:
                 )
             await self.audio_queue.put(base64_audio)
 
+    @property
+    def status(self) -> str | None:
+        """Last transcription state successfully reported to the panel, or None if
+        nothing has been reported yet. Read by the socket layer to replay the current
+        state to a socket that (re)joins mid-outage."""
+        return self._status
+
     async def _emit_status(self, state: str, **extra):
         """Report transcription health to the panel; deduped so repeated reconnect
         attempts don't spam the room. Never raises into the reconnect loop."""
         if state == self._status:
             return
+        if self.status_callback:
+            try:
+                await self.status_callback(self.session_id, {"state": state, **extra})
+            except Exception as e:
+                log_exception(logger, e, f"Error emitting scribe status for {self.session_id}")
+                # Leave _status untouched: recording a state we failed to deliver would
+                # dedupe away every later attempt and the panel would never hear about it.
+                return
         self._status = state
-        if not self.status_callback:
+
+    async def _maybe_confirm_connected(self):
+        """Clear an outage alarm only once the current connection has proven itself.
+
+        Reporting "connected" the moment the socket opens would flicker the panel green
+        on every cycle of an accept-then-close failure, which is the false all-clear this
+        status exists to prevent. Cheap enough for the receive path: the common case is
+        one string compare.
+        """
+        if self._status == "connected" or self._connection_start_mono is None:
             return
-        try:
-            await self.status_callback(self.session_id, {"state": state, **extra})
-        except Exception as e:
-            log_exception(logger, e, f"Error emitting scribe status for {self.session_id}")
+        if time.monotonic() - self._connection_start_mono >= _HEALTHY_CONNECTION_SECS:
+            await self._emit_status("connected")
 
     def _drain_audio_queue(self):
         """Discard queued audio chunks that accumulated while disconnected."""
@@ -206,6 +235,8 @@ class ScribeSessionManager:
                 if not self.ws:
                     await asyncio.sleep(0.1)
                     continue
+
+                await self._maybe_confirm_connected()
 
                 try:
                     message = await asyncio.wait_for(self.ws.recv(), timeout=_RECV_POLL_INTERVAL)
@@ -389,6 +420,19 @@ class ScribeSessionManager:
                 except Exception:
                     pass
 
+    def _next_retry_count(self, retry_count: int) -> int:
+        """Advance the retry counter for the connection that just ended.
+
+        Only a connection that lived at least _HEALTHY_CONNECTION_SECS resets the
+        backoff (to 1, i.e. one immediate retry). A socket that was accepted and closed
+        right away is a failed attempt, not a success, so it keeps the counter climbing.
+        """
+        lived = (
+            time.monotonic() - self._connection_start_mono
+            if self._connection_start_mono is not None else 0.0
+        )
+        return 1 if lived >= _HEALTHY_CONNECTION_SECS else retry_count + 1
+
     async def _reconnect_delay(self, delay: float) -> bool:
         """Sleep for `delay` seconds, or return early if stop() was called.
         Returns True if we should stop, False if we should continue."""
@@ -399,6 +443,14 @@ class ScribeSessionManager:
             return False  # normal timeout, continue
 
     async def start(self):
+        if not self.api_key:
+            # __init__ returned early, so language_code / ws_url don't even exist. Without
+            # this guard the connect path raises AttributeError, which the broad handler
+            # below catches and retries — forever, now that there is no retry ceiling.
+            logger.error(f"Scribe not starting for {self.session_id}: missing ELEVENLABS_API_KEY")
+            await self._emit_status("stopped", reason="misconfigured")
+            return
+
         self.is_running = True
         self._stop_event.clear()
         self._last_audio_mono = time.monotonic()
@@ -440,6 +492,9 @@ class ScribeSessionManager:
                     self._reset_segment_state()
 
                 try:
+                    # Cleared per attempt so a failed ws_connect can't be mistaken for the
+                    # previous (possibly long-lived) connection when scoring health below.
+                    self._connection_start_mono = None
                     params_dict = {
                         "model_id": "scribe_v2_realtime",
                         "audio_format": "pcm_16000",
@@ -475,8 +530,9 @@ class ScribeSessionManager:
                             )
                         else:
                             logger.info(f"Connected to Scribe for session {self.session_id}")
-                        retry_count = 0  # reset on successful connection
-                        await self._emit_status("connected")
+                        # Neither retry_count nor the panel status is cleared here: an
+                        # accepted socket is not yet a working one. See _next_retry_count
+                        # and _maybe_confirm_connected.
 
                         async with asyncio.TaskGroup() as tg:
                             self.task_group = tg
@@ -486,7 +542,7 @@ class ScribeSessionManager:
                     # TaskGroup exited — both loops are done.
                     self.ws = None
                     if self.is_running and not self._stop_event.is_set():
-                        retry_count += 1
+                        retry_count = self._next_retry_count(retry_count)
                         if self._intentional_restart:
                             self._intentional_restart = False
                             logger.info(f"Scribe reconnecting for {self.session_id} (intentional restart)")
@@ -500,7 +556,7 @@ class ScribeSessionManager:
                 except Exception as e:
                     log_exception(logger, e, f"Scribe connection error for {self.session_id}")
                     self.ws = None
-                    retry_count += 1
+                    retry_count = self._next_retry_count(retry_count)
 
         finally:
             watchdog_task.cancel()

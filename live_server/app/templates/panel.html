@@ -656,6 +656,10 @@
       if (micLabel) micLabel.textContent = 'MIC OFF'
       micBtn.title = 'Start microphone'
     }
+
+    // Let the status indicator re-evaluate: a transcription-stopped alarm is only
+    // meaningful while the mic is on. Defined in realtime.js, which loads after this.
+    if (typeof onMicStateChange === 'function') onMicStateChange(state)
   }
 
   // Send heartbeat every 10 seconds to maintain admin lock.
