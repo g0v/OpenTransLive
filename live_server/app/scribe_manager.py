@@ -15,9 +15,14 @@ logger = setup_logger(__name__)
 encoding = tiktoken.get_encoding("o200k_base")
 _cc_s2tw = OpenCC('s2tw')
 
-_MAX_RECONNECT_RETRIES = 5
+# No retry ceiling on purpose: as long as audio keeps arriving we keep trying to
+# reconnect, because a session that silently stops transcribing mid-stream is worse
+# than a long gap. When audio really stops, the _IDLE_TIMEOUT_SECS watchdog ends the
+# session, so the loop can't spin forever.
 _RECONNECT_BASE_DELAY = 2.0   # seconds; doubles each attempt, capped at 60s
 _RECONNECT_MAX_DELAY = 60.0
+_MAX_BACKOFF_SHIFT = 10       # cap the doubling exponent; 2.0 * 2**10 already exceeds the max delay
+_STATUS_ALERT_ATTEMPT = 2     # attempt number from which the panel is told transcription is interrupted
 _WS_PING_INTERVAL = 15        # keepalive ping cadence; primary dead-socket detector
 _WS_PING_TIMEOUT = 10         # drop the connection if a pong is missing this long
 _RECV_POLL_INTERVAL = 2.0     # seconds; recv() timeout granularity for stall checks
@@ -39,8 +44,13 @@ class ScribeSessionManager:
     _LOG_INTERVAL_BYTES = 30 * 16000 * 2  # log every 30s of audio
     _AUDIO_QUEUE_MAXSIZE = 1000         # ~30s of audio; drop oldest when full
 
-    def __init__(self, session_id, callback, language_code: str = "", partial_interval: float | None = None):
+    def __init__(self, session_id, callback, language_code: str = "", partial_interval: float | None = None,
+                 status_callback=None):
         self.session_id = session_id
+        # Optional async (session_id, status_dict) hook used to surface transcription
+        # health to the panel. Set before the API key guard so _emit_status is always safe.
+        self.status_callback = status_callback
+        self._status = None
         # Initialize essential state before the API key guard so that stop(),
         # push_audio(), and is_running checks always find these attributes.
         self.ws = None
@@ -123,6 +133,19 @@ class ScribeSessionManager:
                     f"for session {self.session_id}"
                 )
             await self.audio_queue.put(base64_audio)
+
+    async def _emit_status(self, state: str, **extra):
+        """Report transcription health to the panel; deduped so repeated reconnect
+        attempts don't spam the room. Never raises into the reconnect loop."""
+        if state == self._status:
+            return
+        self._status = state
+        if not self.status_callback:
+            return
+        try:
+            await self.status_callback(self.session_id, {"state": state, **extra})
+        except Exception as e:
+            log_exception(logger, e, f"Error emitting scribe status for {self.session_id}")
 
     def _drain_audio_queue(self):
         """Discard queued audio chunks that accumulated while disconnected."""
@@ -386,19 +409,12 @@ class ScribeSessionManager:
 
         try:
             while self.is_running:
-                if retry_count > _MAX_RECONNECT_RETRIES:
-                    logger.error(
-                        f"Scribe: max reconnect attempts ({_MAX_RECONNECT_RETRIES}) "
-                        f"exceeded for {self.session_id}, giving up"
-                    )
-                    break
-
                 if retry_count > 0:
                     # First reconnect is immediate to minimize the transcription gap after
                     # a server-initiated close (queue_overflow / idle drop); later attempts
                     # back off exponentially.
                     delay = 0.0 if retry_count == 1 else min(
-                        _RECONNECT_BASE_DELAY * (2 ** (retry_count - 2)),
+                        _RECONNECT_BASE_DELAY * (2 ** min(retry_count - 2, _MAX_BACKOFF_SHIFT)),
                         _RECONNECT_MAX_DELAY,
                     )
                     if delay:
@@ -406,8 +422,13 @@ class ScribeSessionManager:
                         delay *= 0.75 + random.random() * 0.5
                         logger.warning(
                             f"[reconnect] waiting {delay:.1f}s before attempt "
-                            f"{retry_count}/{_MAX_RECONNECT_RETRIES} for {self.session_id}"
+                            f"{retry_count} for {self.session_id}"
                         )
+                    if retry_count >= _STATUS_ALERT_ATTEMPT:
+                        # The immediate retry already failed, so the gap is now long enough
+                        # for the operator to notice. Routine intentional restarts
+                        # (_MAX_SESSION_SECS) reconnect on attempt 1 and stay silent.
+                        await self._emit_status("reconnecting", attempt=retry_count)
                     # delay==0 still yields control; a concurrent stop() is caught by the
                     # is_running check below (stop() clears it before setting _stop_event).
                     should_stop = await self._reconnect_delay(delay)
@@ -455,6 +476,7 @@ class ScribeSessionManager:
                         else:
                             logger.info(f"Connected to Scribe for session {self.session_id}")
                         retry_count = 0  # reset on successful connection
+                        await self._emit_status("connected")
 
                         async with asyncio.TaskGroup() as tg:
                             self.task_group = tg
@@ -489,6 +511,7 @@ class ScribeSessionManager:
 
         self.is_running = False
         self.ws = None
+        await self._emit_status("stopped")
         logger.info(f"Scribe session ended for {self.session_id}")
 
     async def stop(self):

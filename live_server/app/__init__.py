@@ -290,7 +290,7 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
         from .translation_service import get_session_scribe_language, get_session_partial_interval
         language_code = await get_session_scribe_language(redis_client, session_id)
         partial_interval = await get_session_partial_interval(session_id)
-        manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code, partial_interval=partial_interval)
+        manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code, partial_interval=partial_interval, status_callback=_emit_scribe_status)
         manager.yt_start_time = await get_youtube_start_time(session_id)
         active_scribe_managers[session_id] = manager
         asyncio.create_task(manager.start())
@@ -608,6 +608,17 @@ async def _emit_session_settings_update(sid: str, kind: str) -> None:
     not viewers) are in the room, so this is safe to broadcast unconditionally.
     """
     await sio.emit("session_settings_updated", {"session_id": sid, "kind": kind}, room=sid)
+
+
+async def _emit_scribe_status(sid: str, status: dict) -> None:
+    """Report transcription pipeline health (connected / reconnecting / stopped) to
+    panel clients.
+
+    Deliberately its own event rather than `error`: the panel's `error` handler kills
+    the mic, and a transient reconnect must not do that. Same room semantics as
+    _emit_session_settings_update — only sockets that completed `join_session`.
+    """
+    await sio.emit("scribe_status", {"session_id": sid, **status}, room=sid)
 
 
 def _transcription_event_id(payload: dict) -> str:

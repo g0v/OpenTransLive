@@ -16,6 +16,28 @@ let audioProcessor = null;
 let analyserNode = null;
 let levelAnimFrame = null;
 
+// Two independent health signals share one indicator: the browser<->server socket,
+// and the server<->Scribe transcription pipeline. Socket trouble outranks scribe
+// trouble (no socket means no audio reaches the server at all), so keep them apart
+// and re-render instead of letting whichever event fired last win.
+let socketStatus = { cls: 'bg-gray-400', text: 'Connecting…' };
+let scribeInterrupted = false;
+
+function setSocketStatus(cls, text) {
+  socketStatus = { cls: cls, text: text };
+  renderStatus();
+}
+
+function renderStatus() {
+  const connected = socketStatus.cls === 'bg-green-500';
+  const cls = (connected && scribeInterrupted) ? 'bg-orange-500' : socketStatus.cls;
+  const text = (connected && scribeInterrupted)
+    ? 'Transcription interrupted — reconnecting…'
+    : socketStatus.text;
+  statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full ' + cls;
+  statusText.textContent = text;
+}
+
 function updateViewerCountDisplay(count) {
   const el = document.getElementById('viewer-count-display');
   if (!el || !Number.isFinite(count)) return;
@@ -58,8 +80,7 @@ setInterval(function () { if (socket.connected) syncServerClock(3, 200); }, 3000
 
 socket.on('connect', function () {
   // Show pending state — auth is not yet confirmed by the server
-  statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-yellow-400';
-  statusText.textContent = 'Authenticating…';
+  setSocketStatus('bg-yellow-400', 'Authenticating…');
   console.log('WebSocket connection opened');
 
   // Join the session room
@@ -69,8 +90,10 @@ socket.on('connect', function () {
 });
 
 socket.on('disconnect', function () {
-  statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-red-500';
-  statusText.textContent = 'Disconnected';
+  // Stale scribe state: the server may have stopped or restarted the session while
+  // we were away, and we'd never receive the clearing event.
+  scribeInterrupted = false;
+  setSocketStatus('bg-red-500', 'Disconnected');
   console.log('WebSocket connection closed');
 });
 
@@ -82,14 +105,21 @@ socket.on('joined_session', function (data) {
   console.log('Joined session:', data);
   updateViewerCountDisplay(data.viewer_count);
   if (data.authorized) {
-    statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-green-500';
-    statusText.textContent = 'Connected: ' + data.session_id;
+    setSocketStatus('bg-green-500', 'Connected: ' + data.session_id);
     socket.emit('realtime_connect', { session_id: sessionId });
   } else {
-    statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full bg-orange-500';
-    statusText.textContent = 'Unauthorized';
+    setSocketStatus('bg-orange-500', 'Unauthorized');
     console.warn('join_session: not authorized for session', data.session_id);
   }
+});
+
+// Transcription pipeline health. Never touches the mic: a Scribe reconnect is
+// recoverable, and killing the mic here would turn a gap into a dead session.
+socket.on('scribe_status', function (data) {
+  if (!data || data.session_id !== sessionId) return;
+  console.log('Scribe status:', data);
+  scribeInterrupted = (data.state === 'reconnecting');
+  renderStatus();
 });
 
 socket.on('viewer_count_update', function (data) {
