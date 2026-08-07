@@ -208,6 +208,9 @@ def validate_sync_payload(data: Any) -> tuple[bool, str]:
     ok, err = _check_optional_string(data, "secret_key", _MAX_SECRET_KEY_LEN)
     if not ok:
         return False, err
+    ok, err = _check_optional_string(data, "api_key", _MAX_SECRET_KEY_LEN)
+    if not ok:
+        return False, err
 
     result = data.get("result")
     if result is not None:

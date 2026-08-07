@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import time
 import uuid
 import weakref
@@ -22,6 +23,7 @@ import redis.asyncio as redis
 import socketio
 from cachetools import TTLCache
 from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -58,6 +60,7 @@ from .email_auth import (
     send_otp_email,
     get_or_create_user,
 )
+from .api_key import generate_api_key, hash_api_key, looks_like_api_key
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -136,10 +139,26 @@ active_translation_managers: TTLCache = _ManagerTTLCache(
 )
 # Pending debounce tasks for partial transcription broadcasts, keyed by session_id.
 _partial_debounce_tasks: dict = {}
+# Per-session locks serializing the read-modify-write on transcription:{sid}:partial so that
+# flow_only client partials, server scribe translation partials, and commits cannot interleave
+# across the read->write await gap and stomp each other. Valid only while SERVER_WORKERS == 1
+# (single uvicorn process / event loop); with multiple workers this must move to Redis-level CAS.
+# WeakValueDictionary so locks vanish once no coroutine holds or waits on them.
+_partial_rmw_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 # Per-session locks to prevent concurrent _get_or_create_scribe_manager calls from racing.
 # WeakValueDictionary so entries vanish once no caller is holding / waiting on the lock;
 # otherwise every session_id ever seen would leak an asyncio.Lock for the life of the process.
 _scribe_create_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
+
+
+def _get_or_create_lock(registry: "weakref.WeakValueDictionary[str, asyncio.Lock]", key: str) -> asyncio.Lock:
+    # Atomic in asyncio: no await between .get() and the assignment, so two concurrent
+    # callers cannot each install a separate Lock for the same key.
+    lock = registry.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        registry[key] = lock
+    return lock
 
 
 class SegmentWriteQueue:
@@ -260,13 +279,7 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
     """Return the existing running ScribeSessionManager for the session, or create a new one.
     Pass force_new=True to unconditionally restart (e.g. after a language change).
     """
-    # Atomic in asyncio: no await between .get() and the assignment, so two concurrent
-    # callers cannot each install a separate Lock.
-    lock = _scribe_create_locks.get(session_id)
-    if lock is None:
-        lock = asyncio.Lock()
-        _scribe_create_locks[session_id] = lock
-    async with lock:
+    async with _get_or_create_lock(_scribe_create_locks, session_id):
         existing: ScribeSessionManager | None = active_scribe_managers.get(session_id)
         if existing and existing.is_running and not force_new:
             return existing
@@ -319,8 +332,150 @@ async def lifespan(app: FastAPI):
         await manager.stop()
     await segment_write_queue.stop()
 
-# Initialize FastAPI app with lifespan
-app = FastAPI(lifespan=lifespan)
+# Initialize FastAPI app with lifespan.
+# ReDoc/Swagger are served at /redoc and /docs but expose only the API-key
+# surface (see _public_api_openapi below), never the browser-only endpoints.
+app = FastAPI(
+    title="OpenTransLive API",
+    version="1.0.0",
+    description=(
+        "Endpoints callable with a personal API key.\n\n"
+        "Authenticate every request with `Authorization: Bearer otl_...` "
+        "(create the key from your user dashboard). Permissions are derived "
+        "live from your account, so revoking realtime/admin takes effect "
+        "immediately."
+    ),
+    lifespan=lifespan,
+)
+
+# Endpoint function names reachable with an API key (they resolve the caller via
+# get_identity / require_identity / require_realtime / _require_session_owner /
+# _require_session_primary_owner). Admin-management endpoints are cookie-only
+# (Identity.can_admin) and browser pages are HTML, so both are excluded here.
+_PUBLIC_API_ENDPOINTS = {
+    "create_api_key", "revoke_api_key", "get_me",
+    "create_room", "list_rooms",
+    "get_session_languages_endpoint", "update_session_languages_endpoint",
+    "get_session_keywords_endpoint", "update_session_keywords_endpoint",
+    "get_session_text_dictionary_endpoint", "update_session_text_dictionary_endpoint",
+    "get_session_scribe_language_endpoint", "update_session_scribe_language_endpoint",
+    "get_session_translate_tone_endpoint", "update_session_translate_tone_endpoint",
+    "get_session_co_owners_endpoint", "add_session_co_owner_endpoint",
+    "remove_session_co_owner_endpoint",
+    "update_session_segment_endpoint", "delete_session_segment_endpoint",
+    "delete_session",
+}
+
+# JSON request bodies for the endpoints that read `await request.json()`. The
+# handlers keep their own validation; these entries only teach ReDoc what to
+# send (path params and typed query params are documented automatically).
+_PUBLIC_API_REQUEST_BODIES: dict[str, dict] = {
+    "create_room": {
+        "description": "Optional. Supply `sid` to claim a specific room id; omit to auto-generate one.",
+        "schema": {"type": "object", "properties": {
+            "sid": {"type": "string", "description": "Desired room id (4–64 chars, [A-Za-z0-9_-])."}}},
+        "example": {"sid": "my-live-room"},
+    },
+    "update_session_languages_endpoint": {
+        "required": True,
+        "schema": {"type": "object", "required": ["languages"], "properties": {
+            "languages": {"type": "array", "minItems": 1,
+                          "items": {"type": "string", "maxLength": 32},
+                          "description": "Target translation languages."}}},
+        "example": {"languages": ["en", "ja", "ko"]},
+    },
+    "update_session_keywords_endpoint": {
+        "required": True,
+        "schema": {"type": "object", "required": ["keywords"], "properties": {
+            "keywords": {"type": "array", "items": {"type": "string", "maxLength": 128},
+                         "description": "Domain keywords that bias transcription."},
+            "locked_keywords": {"type": "array", "items": {"type": "string", "maxLength": 128},
+                                "description": "Optional. Keywords that must never be dropped."}}},
+        "example": {"keywords": ["OpenTransLive", "g0v"], "locked_keywords": ["g0v"]},
+    },
+    "update_session_text_dictionary_endpoint": {
+        "required": True,
+        "schema": {"type": "object", "required": ["text_dictionary"], "properties": {
+            "text_dictionary": {"type": "array", "maxItems": 200,
+                "items": {"type": "object", "required": ["from", "to"], "properties": {
+                    "from": {"type": "string", "maxLength": 200},
+                    "to": {"type": "string", "maxLength": 200}}},
+                "description": "Replacement rules applied to recognized text."}}},
+        "example": {"text_dictionary": [{"from": "open trans", "to": "OpenTrans"}]},
+    },
+    "update_session_scribe_language_endpoint": {
+        "required": True,
+        "schema": {"type": "object", "properties": {
+            "language": {"type": "string",
+                         "description": "ISO 639-1/639-3 code to force detection; empty string clears (auto-detect)."}}},
+        "example": {"language": "en"},
+    },
+    "update_session_translate_tone_endpoint": {
+        "required": True,
+        "schema": {"type": "object", "properties": {
+            "tone": {"type": "string", "maxLength": 64,
+                     "description": "Free-text tone (1–64 word chars, spaces, or hyphens); empty clears."}}},
+        "example": {"tone": "formal"},
+    },
+    "add_session_co_owner_endpoint": {
+        "required": True,
+        "schema": {"type": "object", "required": ["email"], "properties": {
+            "email": {"type": "string", "format": "email", "description": "Co-owner email to grant access."}}},
+        "example": {"email": "cohost@example.com"},
+    },
+    "update_session_segment_endpoint": {
+        "required": True,
+        "schema": {"type": "object", "required": ["start_time"], "properties": {
+            "start_time": {"type": "number", "description": "Identifies the committed segment to edit."},
+            "corrected": {"type": "string", "maxLength": 5000, "description": "Optional. Corrected source text."},
+            "translated": {"type": "object", "additionalProperties": {"type": "string", "maxLength": 5000},
+                           "description": "Optional. Per-language corrected translations, keyed by language code."}}},
+        "example": {"start_time": 12.34, "corrected": "Hello world", "translated": {"ja": "こんにちは世界"}},
+    },
+}
+
+
+def _apply_request_bodies(schema: dict, routes: list) -> None:
+    """Attach the documented request bodies to their operations in `schema`."""
+    for route in routes:
+        spec = _PUBLIC_API_REQUEST_BODIES.get(getattr(route, "name", None))
+        if not spec:
+            continue
+        media: dict = {"schema": spec["schema"]}
+        if "example" in spec:
+            media["example"] = spec["example"]
+        request_body = {"required": spec.get("required", False),
+                        "content": {"application/json": media}}
+        if spec.get("description"):
+            request_body["description"] = spec["description"]
+        for method in route.methods:
+            op = schema["paths"].get(route.path, {}).get(method.lower())
+            if op is not None:
+                op["requestBody"] = request_body
+
+
+def _public_api_openapi() -> dict:
+    """Build an OpenAPI schema containing only the API-key-callable endpoints,
+    with a Bearer security scheme applied globally so ReDoc renders the auth."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    routes = [r for r in app.routes if getattr(r, "name", None) in _PUBLIC_API_ENDPOINTS]
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=routes,
+    )
+    _apply_request_bodies(schema, routes)
+    schema.setdefault("components", {})["securitySchemes"] = {
+        "ApiKey": {"type": "http", "scheme": "bearer", "bearerFormat": "otl_..."}
+    }
+    schema["security"] = [{"ApiKey": []}]
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _public_api_openapi
 
 # Add session middleware.
 # SameSite=Lax blocks cross-site POST/DELETE cookie attachment — the main CSRF
@@ -637,6 +792,13 @@ async def _otp_email_identifier(request: Request) -> str:
         return f"otp:{email}:{func_name}"
     return await _identifier(request)
 
+def _user_has_realtime(user_doc: dict | None, email: str) -> bool:
+    """The realtime tier rule: a site admin always qualifies, otherwise the
+    user's stored `realtime_enabled` flag decides. Single source of truth for
+    both the socket path (is_realtime_authorized) and the HTTP path (Identity)."""
+    return _is_admin_email(email) or bool(user_doc and user_doc.get("realtime_enabled"))
+
+
 async def is_realtime_authorized(session: dict, session_id: str | None = None) -> bool:
     """Check if the socket is authorized to use server-side realtime features.
 
@@ -659,8 +821,109 @@ async def is_realtime_authorized(session: dict, session_id: str | None = None) -
     if not email:
         return False
 
+    # Admins qualify without a lookup; skip the DB round-trip for them.
+    if _is_admin_email(email):
+        return True
     user_doc = await users_collection.find_one({"email": email})
-    return bool(user_doc and user_doc.get("realtime_enabled"))
+    return _user_has_realtime(user_doc, email)
+
+
+# ---------------------------------------------------------------------------
+# Identity resolution (cookie session OR API key) and permission tiers
+# ---------------------------------------------------------------------------
+# Every authorization decision resolves to an Identity — a user record plus the
+# live-computed tier flags — regardless of whether the caller authenticated via
+# the browser cookie session or an `Authorization: Bearer otl_...` API key.
+# Permissions are never encoded in the credential; they are read from the user
+# record here so revoking realtime/admin takes effect on the next request.
+
+class Identity:
+    __slots__ = ("email", "user_uid", "is_admin", "realtime_enabled", "api_key_prefix", "source")
+
+    def __init__(self, user: dict, source: str):
+        self.email: str = (user.get("email") or "").lower()
+        self.user_uid: str | None = user.get("user_uid")
+        self.is_admin: bool = _is_admin_email(self.email)
+        self.realtime_enabled: bool = _user_has_realtime(user, self.email)
+        self.api_key_prefix: str | None = user.get("api_key_prefix")
+        self.source: str = source  # "cookie" | "api_key"
+
+    @property
+    def can_admin(self) -> bool:
+        """Admin *management* authority (create users, rotate others, settings).
+
+        Withheld from key-authenticated callers: a key stored on a broadcast
+        machine must not reach management endpoints even when its owning account
+        is a site admin. Realtime and room ownership still flow from `is_admin`
+        regardless of source, so an admin's key keeps pushing subtitles/audio.
+        """
+        return self.is_admin and self.source == "cookie"
+
+    def permissions(self) -> list[str]:
+        """Ordered capability slugs for display and for API consumers."""
+        perms = ["subtitle:push", "room:list"]
+        if self.realtime_enabled:
+            perms = ["room:create", "room:manage", "audio:push"] + perms
+        if self.can_admin:
+            perms = ["admin:users", "admin:accounts", "admin:settings"] + perms
+        return perms
+
+
+async def _user_from_api_key(api_key: str | None) -> dict | None:
+    if not looks_like_api_key(api_key):
+        return None
+    return await users_collection.find_one({"api_key_hash": hash_api_key(api_key)})
+
+
+async def get_identity(request: Request) -> Identity | None:
+    """Resolve the caller to an Identity, preferring the cookie session and
+    falling back to a Bearer API key. Returns None when unauthenticated."""
+    email = request.session.get("email")
+    user_uid = request.session.get("user_uid")
+    if email and user_uid:
+        user = await users_collection.find_one({"email": email.lower()})
+        if user:
+            return Identity(user, "cookie")
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        user = await _user_from_api_key(auth_header[7:].strip())
+        if user:
+            return Identity(user, "api_key")
+    return None
+
+
+async def require_identity(request: Request) -> Identity:
+    ident = await get_identity(request)
+    if not ident:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return ident
+
+
+async def require_realtime(request: Request) -> Identity:
+    ident = await require_identity(request)
+    if not ident.realtime_enabled:
+        raise HTTPException(status_code=403, detail="Realtime access required")
+    return ident
+
+
+async def require_admin(request: Request) -> Identity:
+    ident = await require_identity(request)
+    if not ident.can_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return ident
+
+
+async def _owns_room(email: str | None, room: dict) -> bool:
+    """True if the email is the room's primary owner, a co-owner, or a site admin."""
+    if not email:
+        return False
+    email_lc = email.lower()
+    if _is_admin_email(email_lc):
+        return True
+    owner = await _get_room_owner_email(room)
+    if owner and owner.lower() == email_lc:
+        return True
+    return email_lc in _get_room_co_owner_emails(room)
 
 
 async def verify_socket_auth(socket_id: str, session_id: str, secret_key: str) -> bool:
@@ -677,6 +940,37 @@ async def verify_socket_auth(socket_id: str, session_id: str, secret_key: str) -
     return room is not None
 
 
+async def _authorize_api_key_socket(socket_id, session, api_key, session_id) -> bool:
+    """Verify an API-key socket owns `session_id`, upgrading the socket session
+    on success. Re-resolved against the DB so a revoked key stops working on the
+    next event. Mirrors verify_socket_auth's role for the secret_key path."""
+    api_key = api_key or session.get('api_key')
+    if not api_key or not session_id:
+        return False
+    is_valid, _ = validate_query_param(session_id, "session_id")
+    if not is_valid:
+        return False
+    # Independent reads (user by key, room by sid) — resolve them concurrently.
+    user, room = await asyncio.gather(
+        _user_from_api_key(api_key),
+        rooms_collection.find_one({"sid": session_id}),
+    )
+    if not user:
+        return False
+    if not room or not await _owns_room(user.get("email"), room):
+        return False
+    session['verified'] = True
+    session['session_id'] = session_id
+    session['email'] = user.get("email")
+    session['api_key'] = api_key
+    session['auth_via'] = 'api_key'
+    # realtime_authorized is derived per-event from is_realtime_authorized(email);
+    # clear any stale flag so a downgraded user is re-checked.
+    session.pop('realtime_authorized', None)
+    await sio.save_session(socket_id, session)
+    return True
+
+
 async def _check_socket_already_verified(socket_id, session, *, silent: bool = False) -> bool:
     """Guard for socket events that require a previously verified session.
 
@@ -690,14 +984,30 @@ async def _check_socket_already_verified(socket_id, session, *, silent: bool = F
     return False
 
 
-async def _verify_socket_credentials(socket_id, session, secret_key, session_id) -> bool:
+async def _verify_socket_credentials(socket_id, session, secret_key, session_id, api_key=None) -> bool:
     """Verify an unverified socket against the DB, upgrading the session on success.
 
     Re-checks verified sockets against the current room secret so rotating the
     room key immediately revokes stale co-owner sockets for sync events.
-    Used by handlers (e.g. `sync`) that can receive `secret_key` in the event payload
-    and should attempt to verify on the fly rather than require a prior `join_session`.
+    Used by handlers (e.g. `sync`) that can receive `secret_key`/`api_key` in the
+    event payload and should attempt to verify on the fly rather than require a
+    prior `join_session`.
     """
+    # API-key sockets carry no room secret; authorize by key + room ownership.
+    # (_authorize_api_key_socket does the `session['api_key']` fallback itself.)
+    if api_key or session.get('auth_via') == 'api_key':
+        # Verified at the connect handshake for this same room — trust the session
+        # and skip the DB round-trip. The key no longer rides on every event, so
+        # revocation now takes effect on reconnect (same trade-off audio_buffer_append
+        # already makes by caching realtime_authorized).
+        if session.get('verified') and session.get('session_id') == session_id:
+            return True
+        if await _authorize_api_key_socket(socket_id, session, api_key, session_id):
+            return True
+        session['verified'] = False
+        await sio.save_session(socket_id, session)
+        await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+        return False
     if session.get('verified'):
         cached_secret = session.get('secret_key') or secret_key
         if cached_secret and session_id and await verify_socket_auth(socket_id, session_id, cached_secret):
@@ -726,8 +1036,10 @@ async def _verify_socket_credentials(socket_id, session, secret_key, session_id)
 
 
 
-async def _verify_session_admin(request: Request, sid: str):
-    """Verify the request user is the admin of the given session. Returns the room doc."""
+async def _verify_session_lock_holder(request: Request, sid: str):
+    """Verify the request holds the room's active lock (secret_key). Used by the
+    lock-lifecycle endpoints (heartbeat) where mere ownership is not enough.
+    Returns the room doc."""
     user_secret_key = request.session.get("secret_key")
     if not user_secret_key:
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -785,19 +1097,12 @@ def _get_room_co_owner_emails(room: dict) -> list[str]:
 
 
 async def _require_room_owner(request: Request, room: dict) -> None:
-    """Raise 403 if the room is owned and the current user is not the owner or a co-owner."""
+    """Raise 403 if the room is owned and the current user is not the owner, a co-owner, or a site admin."""
     owner_email = await _get_room_owner_email(room)
     if not owner_email:
         return
-    current = _get_session_email(request)
-    if not current:
+    if not await _owns_room(_get_session_email(request), room):
         raise HTTPException(status_code=403, detail="This session is owned by another user.")
-    current_lc = current.lower()
-    if current_lc == owner_email.lower():
-        return
-    if current_lc in _get_room_co_owner_emails(room):
-        return
-    raise HTTPException(status_code=403, detail="This session is owned by another user.")
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -835,10 +1140,7 @@ async def dashboard(request: Request):
 
     # Convert datetimes to ISO strings for template rendering
     for u in users:
-        if isinstance(u.get("created_at"), datetime):
-            u["created_at"] = u["created_at"].isoformat()
-        if isinstance(u.get("last_login_at"), datetime):
-            u["last_login_at"] = u["last_login_at"].isoformat()
+        _isoformat_fields(u, "created_at", "last_login_at")
         stats = usage_by_email.get((u.get("email") or "").lower(), {})
         secs = round(stats.get("total_audio_secs", 0))
         u["session_count"] = stats.get("session_count", 0)
@@ -868,20 +1170,20 @@ async def user_dashboard(request: Request):
     ).sort("created_at", -1).to_list(length=200)
     max_audio_secs = max((r.get("audio_duration_secs") or 0 for r in rooms), default=0)
     for r in rooms:
-        if isinstance(r.get("created_at"), datetime):
-            r["created_at"] = r["created_at"].isoformat()
-        if isinstance(r.get("admin_last_heartbeat"), datetime):
-            r["admin_last_heartbeat"] = r["admin_last_heartbeat"].isoformat()
+        _isoformat_fields(r, "created_at", "admin_last_heartbeat")
         owner = r.get("admin_email")
         r["is_co_owner"] = bool(owner and owner.lower() != email_lc)
         dur = r.get("audio_duration_secs") or 0
         r["audio_pct"] = min(int(dur / max_audio_secs * 100), 100) if max_audio_secs > 0 else 0
-    is_realtime_enabled = await is_realtime_authorized(request.session)
+    ident = await get_identity(request)
+    is_realtime_enabled = bool(ident and ident.realtime_enabled)
     response = templates.TemplateResponse("user_dashboard.html", {
         "request": request,
         "rooms": rooms,
         "current_email": email,
         "is_realtime_enabled": is_realtime_enabled,
+        "permissions": ident.permissions() if ident else [],
+        "api_key_prefix": ident.api_key_prefix if ident else None,
     })
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
@@ -890,7 +1192,7 @@ async def user_dashboard(request: Request):
 @app.post("/api/users/{email}/realtime", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def set_user_realtime(request: Request, email: str):
     """Toggle realtime_enabled for a user (admin only)."""
-    _require_admin_email(request)
+    await require_admin(request)
     if not validate_email_format(email):
         raise HTTPException(status_code=400, detail="Invalid email address")
     body = await request.json()
@@ -912,7 +1214,7 @@ async def set_user_realtime(request: Request, email: str):
 async def set_user_settings(request: Request, email: str):
     """Set per-account overrides (ai_provider, partial_interval) for a user (admin only).
     A null/empty value clears the override so the user falls back to config defaults."""
-    _require_admin_email(request)
+    await require_admin(request)
     if not validate_email_format(email):
         raise HTTPException(status_code=400, detail="Invalid email address")
     from .translators import AVAILABLE_PROVIDERS
@@ -980,6 +1282,184 @@ async def _invalidate_user_ai_provider_cache(email_lc: str) -> None:
         log_exception(logger, e, "Failed to invalidate ai_provider cache")
 
 
+# ---------------------------------------------------------------------------
+# API key management (one key per user; hash stored, plaintext shown once)
+# ---------------------------------------------------------------------------
+@app.post("/api/apikey", dependencies=[Depends(RateLimiter(times=20, seconds=60, identifier=_identifier))])
+async def create_api_key(request: Request):
+    """Generate (or rotate) the caller's API key. Returns the plaintext once —
+    it is never retrievable again. Rotating invalidates the previous key."""
+    ident = await require_identity(request)
+    plaintext, key_hash, prefix = generate_api_key()
+    result = await users_collection.find_one_and_update(
+        {"email": ident.email},
+        {"$set": {
+            "api_key_hash": key_hash,
+            "api_key_prefix": prefix,
+            "api_key_created_at": datetime.now(timezone.utc),
+        }},
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="User not found")
+    logger.info("api_key_created email=%s", _mask_email(ident.email))
+    # Report what the *key* can do (no admin management), not the cookie caller.
+    return {"api_key": plaintext, "prefix": prefix, "permissions": Identity(result, "api_key").permissions()}
+
+
+@app.delete("/api/apikey", dependencies=[Depends(RateLimiter(times=20, seconds=60, identifier=_identifier))])
+async def revoke_api_key(request: Request):
+    """Revoke the caller's API key, if any."""
+    ident = await require_identity(request)
+    await users_collection.update_one(
+        {"email": ident.email},
+        {"$unset": {"api_key_hash": "", "api_key_prefix": "", "api_key_created_at": ""}},
+    )
+    logger.info("api_key_revoked email=%s", _mask_email(ident.email))
+    return {"status": "revoked"}
+
+
+@app.get("/api/me", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def get_me(request: Request):
+    """Return the caller's identity, permission tiers, and API-key metadata."""
+    ident = await require_identity(request)
+    return {
+        "email": ident.email,
+        "is_admin": ident.is_admin,
+        "realtime_enabled": ident.realtime_enabled,
+        "permissions": ident.permissions(),
+        "api_key_prefix": ident.api_key_prefix,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Room management via API key / cookie identity
+# ---------------------------------------------------------------------------
+def _isoformat_fields(doc: dict, *keys: str) -> None:
+    """In place, convert the named datetime fields on a Mongo doc to ISO strings."""
+    for k in keys:
+        if isinstance(doc.get(k), datetime):
+            doc[k] = doc[k].isoformat()
+
+
+@app.post("/api/rooms", dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_identifier))])
+async def create_room(request: Request):
+    """Create a room owned by the caller (realtime access required). An optional
+    `sid` may be supplied; otherwise one is generated. Idempotent for a sid the
+    caller already owns."""
+    ident = await require_realtime(request)
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    requested_sid = body.get("sid") if isinstance(body, dict) else None
+
+    now = datetime.now(timezone.utc)
+    base_doc = {
+        "secret_key": None,
+        "admin_uid": ident.user_uid,
+        "admin_email": ident.email,
+        "admin_last_heartbeat": None,
+        "created_at": now,
+        "updated_at": now,
+        "co_owner_emails": [],
+        "extra": {},
+    }
+
+    if requested_sid:
+        sid = sanitize_query_param(str(requested_sid), "session ID")
+        existing = await rooms_collection.find_one({"sid": sid})
+        if existing:
+            if await _owns_room(ident.email, existing):
+                return {"sid": sid, "existed": True}
+            raise HTTPException(status_code=409, detail="Room already owned by another user")
+        try:
+            await rooms_collection.insert_one({"sid": sid, **base_doc})
+        except Exception:
+            raise HTTPException(status_code=409, detail="Room already exists")
+        return {"sid": sid, "existed": False}
+
+    # Auto-generate a unique sid, retrying on the (rare) unique-index collision.
+    for _ in range(5):
+        sid = secrets.token_urlsafe(9)
+        try:
+            await rooms_collection.insert_one({"sid": sid, **base_doc})
+            return {"sid": sid, "existed": False}
+        except Exception:
+            continue
+    raise HTTPException(status_code=500, detail="Could not allocate a room id")
+
+
+@app.get("/api/rooms", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def list_rooms(request: Request):
+    """List rooms the caller owns or co-owns (admins see all)."""
+    ident = await require_identity(request)
+    if ident.can_admin:
+        query: dict = {}
+    else:
+        query = {"$or": [{"admin_email": ident.email}, {"co_owner_emails": ident.email}]}
+    rooms = await rooms_collection.find(
+        query,
+        {"_id": 0, "sid": 1, "admin_email": 1, "co_owner_emails": 1, "created_at": 1,
+         "admin_last_heartbeat": 1, "audio_duration_secs": 1},
+    ).sort("created_at", -1).to_list(length=500)
+    for r in rooms:
+        _isoformat_fields(r, "created_at", "admin_last_heartbeat")
+        owner = r.get("admin_email")
+        r["is_owner"] = bool(owner and owner.lower() == ident.email)
+    return {"rooms": rooms}
+
+
+# ---------------------------------------------------------------------------
+# Admin: account & user management via API key / cookie identity
+# ---------------------------------------------------------------------------
+@app.post("/api/users", dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_identifier))])
+async def admin_create_user(request: Request):
+    """Create an account for an email if it does not exist (admin only). The
+    account activates when the user next logs in via OTP; realtime access can be
+    granted immediately with `realtime_enabled`."""
+    await require_admin(request)
+    body = await request.json()
+    email = (body.get("email") or "").strip().lower()
+    if not validate_email_format(email):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    realtime = bool(body.get("realtime_enabled", False))
+    now = datetime.now(timezone.utc)
+    from pymongo import ReturnDocument
+    result = await users_collection.find_one_and_update(
+        {"email": email},
+        {"$setOnInsert": {
+            "email": email,
+            "user_uid": str(uuid.uuid4()),
+            "realtime_enabled": realtime,
+            "created_at": now,
+        }},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    return {
+        "email": result["email"],
+        "realtime_enabled": bool(result.get("realtime_enabled")),
+        # created_at equals `now` only on the insert branch of the upsert.
+        "created": result.get("created_at") == now,
+    }
+
+
+@app.get("/api/users", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def admin_list_users(request: Request):
+    """List all users (admin only)."""
+    await require_admin(request)
+    users = await users_collection.find(
+        {}, {"_id": 0, "email": 1, "realtime_enabled": 1, "ai_provider": 1,
+             "partial_interval": 1, "api_key_prefix": 1, "created_at": 1, "last_login_at": 1}
+    ).to_list(length=1000)
+    for u in users:
+        _isoformat_fields(u, "created_at", "last_login_at")
+        u["has_api_key"] = bool(u.pop("api_key_prefix", None))
+        u["is_admin"] = _is_admin_email(u.get("email", ""))
+    return {"users": users}
+
+
 @app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_otp_email_identifier))])
 async def send_otp(request: Request):
     body = await request.json()
@@ -1028,7 +1508,7 @@ async def verify_otp_endpoint(request: Request):
 async def get_session_languages_endpoint(request: Request, sid: str):
     """Get the current translate languages for a session."""
     sid = sanitize_query_param(sid, "session ID")
-    await _verify_session_admin(request, sid)
+    await _require_session_owner(request, sid)
 
     from .translation_service import get_session_languages
     languages = await get_session_languages(redis_client, sid)
@@ -1039,7 +1519,7 @@ async def get_session_languages_endpoint(request: Request, sid: str):
 async def update_session_languages_endpoint(request: Request, sid: str):
     """Update the translate languages for a session."""
     sid = sanitize_query_param(sid, "session ID")
-    await _verify_session_admin(request, sid)
+    await _require_session_owner(request, sid)
 
     body = await request.json()
     languages = body.get("languages")
@@ -1062,7 +1542,7 @@ async def update_session_languages_endpoint(request: Request, sid: str):
 async def get_session_keywords_endpoint(request: Request, sid: str):
     """Get the current keywords and locked keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
-    await _verify_session_admin(request, sid)
+    await _require_session_owner(request, sid)
 
     from .translation_service import get_keywords_and_locked
     keywords, locked_keywords = await get_keywords_and_locked(redis_client, sid)
@@ -1074,7 +1554,7 @@ async def get_session_keywords_endpoint(request: Request, sid: str):
 async def update_session_keywords_endpoint(request: Request, sid: str):
     """Update the keywords and locked keywords for a session."""
     sid = sanitize_query_param(sid, "session ID")
-    await _verify_session_admin(request, sid)
+    await _require_session_owner(request, sid)
 
     body = await request.json()
     keywords = body.get("keywords")
@@ -1117,7 +1597,7 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
 async def get_session_text_dictionary_endpoint(request: Request, sid: str):
     """Get the user-defined text replacement dictionary for a session."""
     sid = sanitize_query_param(sid, "session ID")
-    await _verify_session_admin(request, sid)
+    await _require_session_owner(request, sid)
 
     from .translation_service import get_text_dictionary
     mapping = await get_text_dictionary(redis_client, sid)
@@ -1128,37 +1608,49 @@ async def get_session_text_dictionary_endpoint(request: Request, sid: str):
 async def update_session_text_dictionary_endpoint(request: Request, sid: str):
     """Update the user-defined text replacement dictionary for a session."""
     sid = sanitize_query_param(sid, "session ID")
-    await _verify_session_admin(request, sid)
+    await _require_session_owner(request, sid)
 
     body = await request.json()
-    mapping = body.get("text_dictionary")
-    if not isinstance(mapping, dict):
-        raise HTTPException(status_code=400, detail="text_dictionary must be an object")
-    if len(mapping) > 200:
+    # normalize_text_dictionary owns format migration (legacy {from: to} dict ->
+    # rule list) and shape validation; the endpoint only enforces HTTP caps.
+    from .translation_service import normalize_text_dictionary, save_text_dictionary
+    rules = normalize_text_dictionary(body.get("text_dictionary"))
+    if len(rules) > 200:
         raise HTTPException(status_code=400, detail="text_dictionary too large (max 200 entries)")
 
-    cleaned: dict[str, str] = {}
-    for src, dst in mapping.items():
-        if not isinstance(src, str) or not isinstance(dst, str):
-            raise HTTPException(status_code=400, detail="text_dictionary keys and values must be strings")
-        src_stripped = src.strip()
-        if not src_stripped:
+    cleaned: list[dict[str, str]] = []
+    for r in rules:
+        r["from"] = r["from"].strip()
+        if not r["from"]:
             continue
-        if len(src_stripped) > 200 or len(dst) > 200:
+        if len(r["from"]) > 200 or len(r["to"]) > 200:
             raise HTTPException(status_code=400, detail="text_dictionary entries too long (max 200 chars)")
-        cleaned[src_stripped] = dst
+        cleaned.append(r)
 
-    from .translation_service import save_text_dictionary
     await save_text_dictionary(redis_client, sid, cleaned)
     await _emit_session_settings_update(sid, "text-dictionary")
     return {"text_dictionary": cleaned}
+
+
+@app.get("/api/session/{sid}/display-dictionary", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def get_session_display_dictionary_endpoint(sid: str):
+    """Public per-language replacement maps for viewers (rt.html) to apply at
+    render time, so rules added mid-session also reflow already-displayed lines.
+
+    Only language-target rules are exposed; flow (source) rules never reach the
+    viewer since rt.html renders translated text only. No admin auth: this is the
+    public viewer surface, same as /stream and /rt.
+    """
+    sid = sanitize_query_param(sid, "session ID")
+    from .translation_service import get_language_maps
+    return {"language_maps": await get_language_maps(redis_client, sid)}
 
 
 @app.get("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def get_session_scribe_language_endpoint(request: Request, sid: str):
     """Get the forced detect language for Scribe (empty means auto-detect)."""
     sid = sanitize_query_param(sid, "session ID")
-    await _verify_session_admin(request, sid)
+    await _require_session_owner(request, sid)
 
     from .translation_service import get_session_scribe_language
     language = await get_session_scribe_language(redis_client, sid)
@@ -1169,7 +1661,7 @@ async def get_session_scribe_language_endpoint(request: Request, sid: str):
 async def update_session_scribe_language_endpoint(request: Request, sid: str):
     """Set or clear the forced detect language for Scribe."""
     sid = sanitize_query_param(sid, "session ID")
-    await _verify_session_admin(request, sid)
+    await _require_session_owner(request, sid)
 
     body = await request.json()
     language = body.get("language", "")
@@ -1194,7 +1686,7 @@ async def update_session_scribe_language_endpoint(request: Request, sid: str):
 async def get_session_translate_tone_endpoint(request: Request, sid: str):
     """Get the translation tone for a session."""
     sid = sanitize_query_param(sid, "session ID")
-    await _verify_session_admin(request, sid)
+    await _require_session_owner(request, sid)
 
     from .translation_service import get_session_translate_tone
     tone = await get_session_translate_tone(redis_client, sid)
@@ -1205,7 +1697,7 @@ async def get_session_translate_tone_endpoint(request: Request, sid: str):
 async def update_session_translate_tone_endpoint(request: Request, sid: str):
     """Set the translation tone for a session."""
     sid = sanitize_query_param(sid, "session ID")
-    await _verify_session_admin(request, sid)
+    await _require_session_owner(request, sid)
 
     body = await request.json()
     tone = body.get("tone", "")
@@ -1335,21 +1827,20 @@ async def remove_session_co_owner_endpoint(request: Request, sid: str, email: st
 
 
 async def _require_session_owner(request: Request, sid: str) -> tuple[str, dict]:
-    """Owner gate for editor endpoints. Allows the primary owner or any co-owner.
+    """Owner gate for editor/settings endpoints. Allows the primary owner, any
+    co-owner, or a site admin, authenticated via cookie session or API key.
     Returns (email, room) or raises."""
-    email, _ = _require_logged_in(request)
-    if not email:
+    ident, room = await asyncio.gather(
+        get_identity(request),
+        rooms_collection.find_one({"sid": sid}),
+    )
+    if not ident:
         raise HTTPException(status_code=401, detail="Not logged in")
-    room = await rooms_collection.find_one({"sid": sid})
     if not room:
         raise HTTPException(status_code=404, detail="Session not found")
-    owner_email = await _get_room_owner_email(room)
-    email_lc = email.lower()
-    is_owner = bool(owner_email and owner_email.lower() == email_lc)
-    is_co_owner = email_lc in _get_room_co_owner_emails(room)
-    if not is_owner and not is_co_owner:
+    if not await _owns_room(ident.email, room):
         raise HTTPException(status_code=403, detail="You do not own this session")
-    return email, room
+    return ident.email, room
 
 
 async def _require_session_primary_owner(request: Request, sid: str) -> tuple[str, dict]:
@@ -1763,6 +2254,25 @@ async def yt(request: Request, id: str):
     data["stream_start_time"] = await get_youtube_start_time(id) 
     return templates.TemplateResponse("yt.html", {"request": request, "id": id, "data": data})
 
+@app.get("/rt-demo", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def rt_demo(request: Request):
+    """The RT viewer driven by a client-side fake feed.
+
+    Same template and same render path as /rt/{id}; only the event source
+    differs (static/js/rt_demo.js). Touches neither Redis nor Mongo, so it
+    works for demos and for eyeballing viewer changes with no live session.
+    """
+    return templates.TemplateResponse(
+        "rt.html",
+        {
+            "request": request,
+            "id": "demo",
+            "data": {"stream_start_time": None, "transcriptions": []},
+            "language_maps": {},
+            "demo": True,
+        },
+    )
+
 @app.get("/rt/{id}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def rt(request: Request, id: str):
     # Sanitize id parameter to prevent NoSQL injection
@@ -1776,12 +2286,19 @@ async def rt(request: Request, id: str):
         }
     sliced_data = data.copy()
     sliced_data["transcriptions"] = sliced_data["transcriptions"][-50:]
+    # Per-language replacement maps applied client-side at render time so rules
+    # added mid-session also reflow lines already on screen (see rt.html).
+    from .translation_service import get_language_maps
+    language_maps = await get_language_maps(redis_client, id)
     logger.debug(
         "rt_view sid_hash=%s segment_count=%s",
         _hash_token(id),
         len(sliced_data["transcriptions"]),
     )
-    return templates.TemplateResponse("rt.html", {"request": request, "id": id, "data": sliced_data})
+    return templates.TemplateResponse(
+        "rt.html",
+        {"request": request, "id": id, "data": sliced_data, "language_maps": language_maps},
+    )
   
 @app.get("/panel/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def panel(request: Request, sid: str):
@@ -1881,7 +2398,9 @@ async def panel(request: Request, sid: str):
 async def heartbeat(request: Request, sid: str):
     """Update admin heartbeat to maintain session lock"""
     sid = sanitize_query_param(sid, "session ID")
-    await _verify_session_admin(request, sid)
+    # Heartbeat refreshes the single-holder lock, so it stays gated on the
+    # lock's secret_key (not mere ownership) — only the active panel holds it.
+    await _verify_session_lock_holder(request, sid)
     now = datetime.now(timezone.utc)
     update = {"admin_last_heartbeat": now, "updated_at": now}
     viewer_count = await _viewer_presence_op(sid, label="viewer count heartbeat")
@@ -1968,7 +2487,22 @@ async def _auto_rejoin_from_auth(socket_id, auth) -> dict:
     if not isinstance(auth, dict):
         return session_data
     session_id = auth.get('session_id')
+    api_key = auth.get('api_key')
     secret_key = auth.get('secret_key')
+
+    # API-key clients (external transcribe/realtime senders) may not know the
+    # room yet at connect time; stash the key so join_session can authorize it.
+    if looks_like_api_key(api_key):
+        session_data['api_key'] = api_key
+        session_data['auth_via'] = 'api_key'
+        if isinstance(session_id, str) and await _authorize_api_key_socket(socket_id, session_data, api_key, session_id):
+            await sio.enter_room(socket_id, session_id)
+            logger.info(
+                "connect auto_rejoin_apikey sid_hash=%s socket_hash=%s",
+                _hash_token(session_id), _hash_token(socket_id),
+            )
+        return session_data
+
     if not isinstance(session_id, str) or not isinstance(secret_key, str):
         return session_data
     sid_ok, _ = validate_query_param(session_id, "session_id")
@@ -2017,6 +2551,18 @@ async def connect(socket_id, environ, auth):
     await sio.emit('connected', {'status': 'connected', 'client_id': socket_id}, to=socket_id)
 
 @sio.event
+async def time_sync(socket_id, data):
+    """NTP-style clock handshake.
+
+    Latency displays subtract a server-generated end_time from the viewer's
+    local clock, so any skew between the browser and the (NTP-synced) server
+    leaks directly into the number. The client times its own t0/rtt locally;
+    we just return the server time t1 as an ack, from which the client derives
+    offset = t1 - (t0 + rtt/2) to correct its own clock.
+    """
+    return {"t1": time.time() * 1000}
+
+@sio.event
 async def disconnect(socket_id):
     """Handle client disconnection"""
     _socket_limiter.cleanup(socket_id)
@@ -2040,76 +2586,80 @@ async def _process_transcription_update(session_id, sync_data):
     manager = active_scribe_managers.get(session_id)
     yt_start_time = manager.yt_start_time if manager else await get_youtube_start_time(session_id)
 
-    pipe = redis_client.pipeline()
-    pipe.zrange(list_key, -1, -1)
-    pipe.get(meta_key)
-    pipe.get(partial_key)
-    pipe.expire(list_key, TRANSCRIPTION_TTL)
-    pipe.expire(meta_key, TRANSCRIPTION_TTL)
-    try:
-        last_json, meta_json, partial_json, *_ = await pipe.execute()
-        redis_rtts += 1
-    except Exception as e:
-        log_exception(logger, e, "Redis pipeline error in _process_transcription_update (read)")
-        last_json, meta_json, partial_json = [], None, None
-
-    last_committed = json.loads(last_json[0]) if last_json else None
-    stream_start_time = yt_start_time
-    if not stream_start_time and meta_json:
+    # Serialize the read-modify-write on partial_key per session so concurrent partials
+    # (flow_only client vs scribe translation) and commits can't interleave across the
+    # read->write await gap and stomp each other.
+    async with _get_or_create_lock(_partial_rmw_locks, session_id):
+        pipe = redis_client.pipeline()
+        pipe.zrange(list_key, -1, -1)
+        pipe.get(meta_key)
+        pipe.get(partial_key)
+        pipe.expire(list_key, TRANSCRIPTION_TTL)
+        pipe.expire(meta_key, TRANSCRIPTION_TTL)
         try:
-            stream_start_time = json.loads(meta_json).get("stream_start_time")
-        except (TypeError, ValueError):
-            pass
+            last_json, meta_json, partial_json, *_ = await pipe.execute()
+            redis_rtts += 1
+        except Exception as e:
+            log_exception(logger, e, "Redis pipeline error in _process_transcription_update (read)")
+            last_json, meta_json, partial_json = [], None, None
 
-    if is_partial:
-        if last_committed and sync_data["start_time"] < last_committed["start_time"]:
-            logger.debug(
-                "skip_older_partial sid_hash=%s incoming_start=%s last_committed_start=%s",
-                _hash_token(session_id),
-                sync_data.get("start_time"),
-                last_committed.get("start_time"),
-            )
-            return
-
-        if sync_data.get("flow_only") and partial_json:
+        last_committed = json.loads(last_json[0]) if last_json else None
+        stream_start_time = yt_start_time
+        if not stream_start_time and meta_json:
             try:
-                last_partial = json.loads(partial_json)
-                sync_data["result"]["translated"] = last_partial["result"]["translated"]
-            except (KeyError, TypeError, ValueError):
+                stream_start_time = json.loads(meta_json).get("stream_start_time")
+            except (TypeError, ValueError):
                 pass
 
-        await redis_client.setex(partial_key, TRANSCRIPTION_TTL, json.dumps(sync_data))
-        redis_rtts += 1
-    else:
-        pipe = redis_client.pipeline()
-        pipe.zadd(list_key, {json.dumps(sync_data): sync_data["start_time"]})
-        pipe.zremrangebyrank(list_key, 0, -(TRANSCRIPTION_ZSET_MAX + 1))
-        pipe.expire(list_key, TRANSCRIPTION_TTL)
-        # Skip meta write when we have no stream_start_time so a transient read
-        # failure (which zeroes stream_start_time) doesn't stomp good meta.
-        if stream_start_time is not None:
-            pipe.setex(meta_key, TRANSCRIPTION_TTL, json.dumps({"stream_start_time": stream_start_time}))
-        pipe.delete(partial_key)
-        pipe.zrange(list_key, -1, -1)
-        try:
-            results = await pipe.execute()
-            redis_rtts += 1
-            new_last_json = results[-1]
-            if new_last_json:
-                last_committed = json.loads(new_last_json[0])
-        except Exception as e:
-            log_exception(logger, e, "Redis pipeline error in _process_transcription_update (write)")
-            # sync_data shares the ZSET member shape — safe to use as last_committed.
-            if not last_committed or sync_data["start_time"] >= last_committed["start_time"]:
-                last_committed = sync_data
+        if is_partial:
+            if last_committed and sync_data["start_time"] < last_committed["start_time"]:
+                logger.debug(
+                    "skip_older_partial sid_hash=%s incoming_start=%s last_committed_start=%s",
+                    _hash_token(session_id),
+                    sync_data.get("start_time"),
+                    last_committed.get("start_time"),
+                )
+                return
 
-        accepted = segment_write_queue.enqueue(session_id, sync_data, stream_start_time)
-        if not accepted:
-            logger.warning(
-                "segment_write_queue dropped incoming segment sid_hash=%s start=%s",
-                _hash_token(session_id),
-                sync_data.get("start_time"),
-            )
+            if sync_data.get("flow_only") and partial_json:
+                try:
+                    last_partial = json.loads(partial_json)
+                    sync_data["result"]["translated"] = last_partial["result"]["translated"]
+                except (KeyError, TypeError, ValueError):
+                    pass
+
+            await redis_client.setex(partial_key, TRANSCRIPTION_TTL, json.dumps(sync_data))
+            redis_rtts += 1
+        else:
+            pipe = redis_client.pipeline()
+            pipe.zadd(list_key, {json.dumps(sync_data): sync_data["start_time"]})
+            pipe.zremrangebyrank(list_key, 0, -(TRANSCRIPTION_ZSET_MAX + 1))
+            pipe.expire(list_key, TRANSCRIPTION_TTL)
+            # Skip meta write when we have no stream_start_time so a transient read
+            # failure (which zeroes stream_start_time) doesn't stomp good meta.
+            if stream_start_time is not None:
+                pipe.setex(meta_key, TRANSCRIPTION_TTL, json.dumps({"stream_start_time": stream_start_time}))
+            pipe.delete(partial_key)
+            pipe.zrange(list_key, -1, -1)
+            try:
+                results = await pipe.execute()
+                redis_rtts += 1
+                new_last_json = results[-1]
+                if new_last_json:
+                    last_committed = json.loads(new_last_json[0])
+            except Exception as e:
+                log_exception(logger, e, "Redis pipeline error in _process_transcription_update (write)")
+                # sync_data shares the ZSET member shape — safe to use as last_committed.
+                if not last_committed or sync_data["start_time"] >= last_committed["start_time"]:
+                    last_committed = sync_data
+
+            accepted = segment_write_queue.enqueue(session_id, sync_data, stream_start_time)
+            if not accepted:
+                logger.warning(
+                    "segment_write_queue dropped incoming segment sid_hash=%s start=%s",
+                    _hash_token(session_id),
+                    sync_data.get("start_time"),
+                )
 
     payload = sync_data.copy()
     if last_committed:
@@ -2174,7 +2724,7 @@ async def sync(socket_id, data):
         return
 
     secret_key = data.get('secret_key') or session.get('secret_key')
-    if not await _verify_socket_credentials(socket_id, session, secret_key, session_id):
+    if not await _verify_socket_credentials(socket_id, session, secret_key, session_id, api_key=data.get('api_key')):
         return
 
     sync_data = data.copy()
@@ -2189,7 +2739,8 @@ async def join_session(socket_id, data):
         return
     session_id = data.get('session_id')
     secret_key = data.get('secret_key')
-    if not session_id or not secret_key:
+    api_key = data.get('api_key')
+    if not session_id or not (secret_key or api_key):
         await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
         return
     is_valid, error_msg = validate_query_param(session_id, "session ID")
@@ -2198,6 +2749,29 @@ async def join_session(socket_id, data):
         return
 
     session = await sio.get_session(socket_id)
+
+    # API-key path: authorize by key + room ownership, then join.
+    if api_key or session.get('auth_via') == 'api_key':
+        if not await _authorize_api_key_socket(socket_id, session, api_key, session_id):
+            logger.warning(
+                "join_session apikey_unauthorized sid_hash=%s socket_hash=%s",
+                _hash_token(session_id), _hash_token(socket_id),
+            )
+            await sio.emit('error', {'message': 'Unauthorized'}, to=socket_id)
+            return
+        await sio.enter_room(socket_id, session_id)
+        viewer_count = await _viewer_presence_op(session_id, label="viewer count")
+        await sio.emit(
+            'joined_session',
+            {'session_id': session_id, 'authorized': True, 'viewer_count': viewer_count},
+            to=socket_id,
+        )
+        await _emit_viewer_count(session_id, viewer_count)
+        logger.info(
+            "join_session apikey_verified sid_hash=%s owner_email=%s socket_hash=%s",
+            _hash_token(session_id), _mask_email(session.get("email")), _hash_token(socket_id),
+        )
+        return
 
     if not await verify_socket_auth(socket_id, session_id, secret_key):
         logger.warning(
@@ -2328,7 +2902,7 @@ async def audio_buffer_append(socket_id, data):
     # being True already implies verified is True (set together on first chunk).
     if not session.get('realtime_authorized'):
         secret_key = session.get('secret_key') or data.get('secret_key')
-        if not await _verify_socket_credentials(socket_id, session, secret_key, session_id):
+        if not await _verify_socket_credentials(socket_id, session, secret_key, session_id, api_key=data.get('api_key')):
             return
         if not await is_realtime_authorized(session, session_id):
             await sio.emit('error', {'message': 'Unauthorized: realtime token required'}, to=socket_id)

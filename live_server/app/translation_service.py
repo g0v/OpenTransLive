@@ -7,8 +7,8 @@ from .logger_config import setup_logger, log_exception
 from .translators import get_translator
 
 logger = setup_logger(__name__)
-_cc_s2twp = OpenCC('s2twp')
-_cc_tw2sp = OpenCC('tw2sp')
+_cc_s2tw = OpenCC('s2tw')
+_cc_tw2s = OpenCC('tw2s')
 
 
 def _normalize_chinese_output(text: str, language: str) -> str:
@@ -21,9 +21,9 @@ def _normalize_chinese_output(text: str, language: str) -> str:
         return text
     lang = language.lower()
     if "hant" in lang or lang.endswith("-tw"):
-        return _cc_s2twp.convert(text)
+        return _cc_s2tw.convert(text)
     if "hans" in lang or lang.endswith("-cn"):
-        return _cc_tw2sp.convert(text)
+        return _cc_tw2s.convert(text)
     return text
 
 _KEYWORD_CAP = 30          # max keywords sent in prompts
@@ -267,36 +267,83 @@ async def save_locked_keywords(redis_client, session_id, locked_keywords: list[s
 # Session: text dictionary (user-defined direct replacements)
 # ---------------------------------------------------------------------------
 
-async def get_text_dictionary(redis_client, session_id) -> dict[str, str]:
-    """Return the user-defined text replacement dictionary for a session."""
+# Reserved target meaning "replace in the source transcript"; never a language code.
+FLOW_TARGET = "flow"
+
+def normalize_text_dictionary(data) -> list[dict[str, str]]:
+    """Normalize stored text-dictionary data into a rule list.
+
+    Each rule is ``{"from", "to", "target"}`` where ``target`` is
+    ``FLOW_TARGET`` (replace in the source transcript) or a language code
+    (replace in that language's translated output). Accepts the legacy
+    ``{from: to}`` dict format and migrates it to flow-scoped rules.
+    """
+    out: list[dict[str, str]] = []
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if isinstance(k, str) and isinstance(v, str) and k:
+                out.append({"from": k, "to": v, "target": FLOW_TARGET})
+    elif isinstance(data, list):
+        for e in data:
+            if not isinstance(e, dict):
+                continue
+            src, dst, target = e.get("from"), e.get("to"), e.get("target", FLOW_TARGET)
+            if isinstance(src, str) and isinstance(dst, str) and src and isinstance(target, str):
+                out.append({"from": src, "to": dst, "target": target or FLOW_TARGET})
+    return out
+
+
+def split_text_dictionary(rules: list[dict[str, str]]) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+    """Partition rules into a flow map (source text) and per-language maps."""
+    flow_map: dict[str, str] = {}
+    by_lang: dict[str, dict[str, str]] = {}
+    for r in rules:
+        src = r.get("from") or ""
+        dst = r.get("to") or ""
+        target = r.get("target") or FLOW_TARGET
+        if not src:
+            continue
+        if target == FLOW_TARGET:
+            flow_map[src] = dst
+        else:
+            by_lang.setdefault(target, {})[src] = dst
+    return flow_map, by_lang
+
+
+async def get_text_dictionary(redis_client, session_id) -> list[dict[str, str]]:
+    """Return the user-defined text replacement rules for a session."""
     try:
         raw = await redis_client.get(f"text_dictionary:{session_id}")
         if raw:
-            data = json.loads(raw)
-            if isinstance(data, dict):
-                return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str)}
+            return normalize_text_dictionary(json.loads(raw))
     except Exception as e:
         log_exception(logger, e, "Redis get text_dictionary error")
 
     try:
         room = await rooms_collection.find_one({"sid": session_id}, {"text_dictionary": 1})
-        if room and isinstance(room.get("text_dictionary"), dict):
-            mapping = {k: v for k, v in room["text_dictionary"].items() if isinstance(k, str) and isinstance(v, str)}
-            await redis_client.set(f"text_dictionary:{session_id}", json.dumps(mapping), ex=86400)
-            return mapping
+        if room and room.get("text_dictionary") is not None:
+            rules = normalize_text_dictionary(room["text_dictionary"])
+            await redis_client.set(f"text_dictionary:{session_id}", json.dumps(rules), ex=86400)
+            return rules
     except Exception as e:
         log_exception(logger, e, "MongoDB get text_dictionary error")
 
-    return {}
+    return []
 
 
-async def save_text_dictionary(redis_client, session_id, mapping: dict[str, str]):
-    """Persist the user-defined text replacement dictionary for a session."""
+async def get_language_maps(redis_client, session_id) -> dict[str, dict[str, str]]:
+    """Per-language replacement maps for a session (flow/source rules dropped)."""
+    _flow_map, by_lang = split_text_dictionary(await get_text_dictionary(redis_client, session_id))
+    return by_lang
+
+
+async def save_text_dictionary(redis_client, session_id, rules: list[dict[str, str]]):
+    """Persist the user-defined text replacement rules for a session."""
     try:
-        await redis_client.set(f"text_dictionary:{session_id}", json.dumps(mapping), ex=86400)
+        await redis_client.set(f"text_dictionary:{session_id}", json.dumps(rules), ex=86400)
     except Exception as e:
         log_exception(logger, e, "Redis set text_dictionary error")
-    asyncio.create_task(_save_room_field_to_mongo(session_id, "text_dictionary", mapping))
+    asyncio.create_task(_save_room_field_to_mongo(session_id, "text_dictionary", rules))
 
 
 def apply_text_dictionary(text: str, mapping: dict[str, str]) -> str:
@@ -369,13 +416,15 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     if not text:
         return data
 
-    (current_keywords, locked_list), tone, text_dict = await asyncio.gather(
+    (current_keywords, locked_list), tone, text_dict, scribe_language = await asyncio.gather(
         get_keywords_and_locked(redis_client, session_id),
         get_session_translate_tone(redis_client, session_id),
         get_text_dictionary(redis_client, session_id),
+        get_session_scribe_language(redis_client, session_id),
     )
-    if text_dict:
-        text = apply_text_dictionary(text, text_dict)
+    flow_map, lang_maps = split_text_dictionary(text_dict)
+    if flow_map:
+        text = apply_text_dictionary(text, flow_map)
         data["text"] = text
     locked_set = set(locked_list)
     sorted_kws = sorted(current_keywords, key=lambda k: current_keywords[k], reverse=True)
@@ -383,21 +432,19 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     unpinned_kws = [kw for kw in sorted_kws if kw not in locked_set]
     keywords_str = ', '.join(pinned_kws + unpinned_kws[:max(0, _KEYWORD_CAP - len(pinned_kws))])
 
-    context = {
-        "corrected": [],
-        "translated": {language: [] for language in languages},
-    }
-
-    history = cached_data.get("transcriptions", [])
-    for transcription in history:
+    translated_lists = {language: [] for language in languages}
+    for transcription in cached_data.get("transcriptions", []):
         if "result" in transcription:
-            context["corrected"].append(transcription["result"].get("corrected", ""))
             translated_dict = transcription["result"].get("translated", {})
             for language in languages:
-                context["translated"][language].append(translated_dict.get(language, ""))
+                translated_lists[language].append(translated_dict.get(language, ""))
 
-    corrected_context = ' '.join(context['corrected'])
-    translated_context = {lang: ' '.join(context['translated'][lang]) for lang in languages}
+    translated_context = {lang: ' '.join(translated_lists[lang]) for lang in languages}
+    # Previous partial's result, shared by the correction and translation stages
+    # so both keep the in-progress line consistent instead of re-editing it on
+    # each partial.
+    partial_result = cached_data.get("partial", {}).get("result", {})
+    prev_corrected = partial_result.get("corrected", "")
 
     result = {"corrected": text}
 
@@ -406,7 +453,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         if not skip_correction:
             result["corrected"] = await translator.correct(
                 text=text,
-                context=corrected_context,
+                prev_corrected=prev_corrected,
                 keywords=keywords_str,
             )
         else:
@@ -414,16 +461,30 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     except Exception as e:
         log_exception(logger, e, "Correction error")
 
+    # The correction LLM can reintroduce Simplified characters even when scribe
+    # already handed us Traditional; re-apply the same s2tw gate scribe uses so
+    # the flow (source) panel stays consistent downstream (translate + rerank).
+    if scribe_language.startswith("zh"):
+        result["corrected"] = _cc_s2tw.convert(result["corrected"])
+
     # 2. Parallel translations
     translated = {}
 
     async def _translation_worker(language):
-        pt_trans = cached_data.get("partial", {}).get("result", {}).get("translated", {}).get(language, "")
+        lang_map = lang_maps.get(language)
+        pt_trans = partial_result.get("translated", {}).get(language, "")
+        lang_context = translated_context[language]
+        # Apply language-scoped replacements to the prior committed context and
+        # previous partial too, so the LLM sees consistent terms (and won't
+        # "undo" the replacement) and the fallback inherits the mapped text.
+        if lang_map:
+            pt_trans = apply_text_dictionary(pt_trans, lang_map)
+            lang_context = apply_text_dictionary(lang_context, lang_map)
         try:
             out = await translator.translate(
                 text=result['corrected'],
                 language=language,
-                context=translated_context[language],
+                context=lang_context,
                 prev_translation=pt_trans,
                 keywords=keywords_str,
                 tone=tone,
@@ -444,7 +505,10 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
                 )
             translated[language] = pt_trans or ""
             return
-        translated[language] = _normalize_chinese_output(out, language)
+        out_text = _normalize_chinese_output(out, language)
+        if lang_map:
+            out_text = apply_text_dictionary(out_text, lang_map)
+        translated[language] = out_text
 
     await asyncio.gather(*[_translation_worker(lang) for lang in languages])
 

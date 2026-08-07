@@ -44,7 +44,7 @@ commit_tasks = asyncio.Queue()
 def connect():
     logger.info("Connected to server")
     if args.target_sid:
-        sio.emit('join_session', {'session_id': args.target_sid, 'secret_key': os.getenv('SECRET_KEY')})
+        sio.emit('join_session', {'session_id': args.target_sid, 'api_key': os.getenv('API_KEY')})
 
 @sio.event
 def disconnect():
@@ -61,6 +61,9 @@ async def send_transcription_via_websocket(transcription_data):
             # Add the session ID to the transcription data
             websocket_data = transcription_data.copy()
             websocket_data['id'] = args.target_sid
+            # The API key is sent once at connect (auth=) and join_session; the
+            # server trusts the verified session afterwards. Re-sending a long-lived
+            # credential on every sync would only widen its exposure.
             sio.emit('sync', websocket_data)
         except Exception as e:
             logger.error(f"Error sending via WebSocket: {type(e).__name__}", exc_info=True)
@@ -282,7 +285,7 @@ async def main():
     # Connect to WebSocket server if target session ID is provided
     if args.target_sid:
         try:
-            sio.connect(f"{SERVER_URL}", auth={'secret_key': os.getenv('SECRET_KEY')})
+            sio.connect(f"{SERVER_URL}", auth={'session_id': args.target_sid, 'api_key': os.getenv('API_KEY')})
             logger.info(f"Connected to WebSocket server at {SERVER_URL}")
         except Exception as e:
             logger.error(f"Failed to connect to WebSocket server: {type(e).__name__}", exc_info=True)

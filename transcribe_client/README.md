@@ -22,7 +22,7 @@ cp .env.example .env
 | 變數 | 說明 |
 |---|---|
 | `SERVER_ENDPOINT` | OpenTransLive 伺服器網址 |
-| `SECRET_KEY` | session secret key |
+| `API_KEY` | 個人 API 金鑰（於 /user-dashboard 產生，帳號需擁有或共同擁有目標 room） |
 | `TRANSCRIBER` | `whisperx` / `openai` / `groq` |
 | `TRANSCRIBE_MODEL` | Whisper 模型名稱（例如 `deepdml/faster-whisper-large-v3-turbo-ct2`） |
 | `TRANSCRIBE_DEVICE` | `cuda` 或 `cpu` |
@@ -34,6 +34,8 @@ cp .env.example .env
 | `RECORD_TIMEOUT` | 錄音超時（秒）|
 | `RECORD_ENERGY_THRESHOLD` | 語音偵測閾值 |
 | `RECORD_PAUSE_THRESHOLD_MS` | 句子暫停判斷時間（毫秒）|
+
+> **API_KEY 安全性**：請為這台機器準備**專用的非 admin 帳號**,只要該帳號擁有(或共同擁有)目標 room 即可推字幕 —— key 不需要更多權限。即使誤用 admin 帳號的 key,伺服器也會拒絕 key 對管理端點(建立帳號、rotate、設定)的呼叫,但最小權限仍是正確做法。key 只在連線時傳一次,不會隨每次更新重送。
 
 ## 執行
 

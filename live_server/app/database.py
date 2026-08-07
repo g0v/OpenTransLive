@@ -17,3 +17,6 @@ async def init_indexes():
     await transcription_segments_collection.create_index([("sid", ASCENDING), ("start_time", ASCENDING)])
     await users_collection.create_index([("email", ASCENDING)], unique=True)
     await users_collection.create_index([("user_uid", ASCENDING)])
+    # Sparse+unique: only users that have generated a key carry the field, and no
+    # two users can ever share a hash. Lookups on every API-key request hit this.
+    await users_collection.create_index([("api_key_hash", ASCENDING)], unique=True, sparse=True)

@@ -10,12 +10,12 @@ class BaseTranslator(ABC):
     """
 
     @abstractmethod
-    async def correct(self, text: str, context: str, keywords: str) -> str:
+    async def correct(self, text: str, prev_corrected: str, keywords: str) -> str:
         """Return the ASR-corrected version of *text*.
 
         Args:
             text: Raw transcription segment to correct.
-            context: Recent corrected text (last ~50 chars) for continuity.
+            prev_corrected: Previous partial's corrected text for continuity.
             keywords: Comma-separated domain keywords to guide correction.
         """
 

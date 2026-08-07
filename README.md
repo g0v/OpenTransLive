@@ -30,7 +30,8 @@ opentranslive/
 ├── live_server/            # FastAPI + Socket.IO 網頁伺服器
 │   ├── app/                # 主應用程式
 │   │   ├── __init__.py     # FastAPI app、路由、Socket.IO handler
-│   │   ├── config.py       # 設定檔（從 config.example.py 複製）
+│   │   ├── config.py       # 設定載入器（讀取 secret/config.toml）
+│   │   ├── secret/         # config.toml（機密）、models.toml（override）、*.example.toml
 │   │   ├── database.py     # MongoDB 整合
 │   │   ├── email_auth.py   # Email OTP 登入
 │   │   ├── scribe_manager.py      # ElevenLabs Scribe session 管理
@@ -65,8 +66,8 @@ opentranslive/
 cd live_server
 
 # 使用 Docker Compose (推薦)
-cp app/config.example.py app/config.py
-# 編輯 app/config.py，填入 SECRET_KEY、API key、SMTP 等設定
+cp app/secret/config.example.toml app/secret/config.toml
+# 編輯 app/secret/config.toml，填入 SECRET_KEY、API key、SMTP 等設定
 docker-compose up -d
 ```
 
@@ -75,7 +76,7 @@ docker-compose up -d
 ```bash
 cd live_server
 uv sync
-cp app/config.example.py app/config.py
+cp app/secret/config.example.toml app/secret/config.toml
 uv run uvicorn app:socket_app --host 0.0.0.0 --port 5000
 ```
 

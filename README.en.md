@@ -30,7 +30,8 @@ opentranslive/
 ├── live_server/            # FastAPI + Socket.IO web server
 │   ├── app/                # Main application
 │   │   ├── __init__.py     # FastAPI app, routes, Socket.IO handlers
-│   │   ├── config.py       # Config (copy from config.example.py)
+│   │   ├── config.py       # Config loader (reads secret/config.toml)
+│   │   ├── secret/         # config.toml (secret), models.toml (override), *.example.toml
 │   │   ├── database.py     # MongoDB integration
 │   │   ├── email_auth.py   # Email OTP login
 │   │   ├── scribe_manager.py      # ElevenLabs Scribe session manager
@@ -65,8 +66,8 @@ opentranslive/
 cd live_server
 
 # Docker Compose (recommended)
-cp app/config.example.py app/config.py
-# Edit app/config.py — set SECRET_KEY, API keys, SMTP, etc.
+cp app/secret/config.example.toml app/secret/config.toml
+# Edit app/secret/config.toml — set SECRET_KEY, API keys, SMTP, etc.
 docker-compose up -d
 ```
 
@@ -75,7 +76,7 @@ Or manually:
 ```bash
 cd live_server
 uv sync
-cp app/config.example.py app/config.py
+cp app/secret/config.example.toml app/secret/config.toml
 uv run uvicorn app:socket_app --host 0.0.0.0 --port 5000
 ```
 

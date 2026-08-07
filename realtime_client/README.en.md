@@ -21,7 +21,7 @@ cp .env.example .env
 | Variable | Description |
 |---|---|
 | `SERVER_ENDPOINT` | OpenTransLive server URL |
-| `SECRET_KEY` | Session secret key |
+| `API_KEY` | Personal API key (generate at /user-dashboard; the account must own or co-own the target room) |
 | `ELEVENLABS_API_KEY` | ElevenLabs Scribe Realtime |
 | `GOOGLE_API_KEY` | Google API key |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to Google service account JSON |
@@ -29,6 +29,8 @@ cp .env.example .env
 | `OPENAI_API_KEY` | OpenAI (translation) |
 | `TRANSLATE_LANGUAGES` | Target languages, e.g. `en-US,cmn-Hant-TW` |
 | `COMMON_PROMPT` | Event context / translation prompt |
+
+> **API_KEY security**: use a **dedicated non-admin account** for this machine. The key only needs to own (or co-own) the target room to push subtitles — nothing more. Admin management endpoints (creating accounts, rotating, settings) are refused for key-authenticated callers even if the account is an admin, but least privilege is still the right posture. The key is sent once at connect, not resent on every update.
 
 ## Run
 

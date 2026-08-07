@@ -10,7 +10,8 @@ wheels/
 .venv
 
 .env
-config.py
+config.toml
+models.toml
 
 # Temp files
 temp/
