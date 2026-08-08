@@ -2629,6 +2629,8 @@ def _should_delete_partial(partial_json, commit_start: float) -> bool:
 
 async def _process_transcription_update(session_id, sync_data):
     """Process a transcription update: cache, persist, broadcast. Hot path."""
+    from .translation_service import carried_partial_result
+
     proc_start = time.perf_counter()
     redis_rtts = 0
     is_partial = sync_data.get("partial") is True
@@ -2675,15 +2677,26 @@ async def _process_transcription_update(session_id, sync_data):
                 )
                 return
 
-            if sync_data.get("flow_only") and partial_json:
-                try:
-                    last_partial = json.loads(partial_json)
-                    sync_data["result"]["translated"] = last_partial["result"]["translated"]
-                except (KeyError, TypeError, ValueError):
-                    pass
-
-            await redis_client.setex(partial_key, TRANSCRIPTION_TTL, json.dumps(sync_data))
-            redis_rtts += 1
+            if sync_data.get("flow_only"):
+                # Flow-only partials carry source text only: they keep the flow moving
+                # between translated partials. Two rules make that safe —
+                #  - inherit the cached partial's translation so viewers keep the line
+                #    they have (carried_partial_result drops an older segment's);
+                #  - never write partial_key, so it keeps holding the last *translated*
+                #    partial, which is what the translator reads back as context.
+                # `corrected` is deliberately not inherited: consumers fall back to the
+                # new `text`, which is the whole point of the update.
+                cached_partial = None
+                if partial_json:
+                    try:
+                        cached_partial = json.loads(partial_json)
+                    except (TypeError, ValueError):
+                        pass
+                translated = carried_partial_result(cached_partial, sync_data).get("translated")
+                sync_data["result"] = {"translated": translated} if translated else {}
+            else:
+                await redis_client.setex(partial_key, TRANSCRIPTION_TTL, json.dumps(sync_data))
+                redis_rtts += 1
         else:
             pipe = redis_client.pipeline()
             pipe.zadd(list_key, {json.dumps(sync_data): sync_data["start_time"]})
@@ -2890,12 +2903,19 @@ async def on_translation_completed(session_id, sync_data):
 
 async def on_scribe_transcription(session_id, transcription):
     """Callback for Scribe transcription"""
-    # Partials arrive at most once per partial_interval (handle_transcript throttles
-    # them), but many are still dropped by the translator's own gates. Ask first, so
-    # those cost no Redis round trip and no deserialization of every language's
-    # translations.
+    # Most partials don't earn an LLM call — scribe's partial_interval and the
+    # translator's own gates rule them out. Ask first, so those cost no Redis round
+    # trip and no deserialization of every language's translations.
+    from .translation_service import GATE_DROP, GATE_FLOW_ONLY
     manager = _get_or_create_translation_manager(session_id)
-    if not manager.should_dispatch(transcription):
+    decision = manager.classify(transcription)
+    if decision == GATE_DROP:
+        return
+    if decision == GATE_FLOW_ONLY:
+        # Untranslated, but the panel's flow shows every partial: broadcast the source
+        # text alone and let _process_transcription_update carry the current
+        # translation over so viewers keep the line they already have.
+        await _process_transcription_update(session_id, {**transcription, "flow_only": True})
         return
 
     # The translator only needs the last few committed segments for context.

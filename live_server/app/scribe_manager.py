@@ -369,10 +369,14 @@ class ScribeSessionManager:
                 logger.warning(f"Hallucination detected, dropping: {repr(transcript)}")
                 return
             delta_t = (now - self.last_partial_time).total_seconds()
-            if partial and (transcript == self.last_partial_text or
-                            delta_t < self.partial_interval):
+            if partial and transcript == self.last_partial_text:
                 return
-            print(f"accept transcript {'partial' if partial else 'committed'}: {transcript}, {delta_t}", flush=True)
+            # A partial landing inside partial_interval isn't worth an LLM call, but it
+            # still carries new source text: emit it as flow-only so the panel's flow
+            # shows every partial while translation stays on the interval.
+            flow_only = partial and delta_t < self.partial_interval
+            kind = "flow-only partial" if flow_only else "partial" if partial else "committed"
+            print(f"accept transcript {kind}: {transcript}, {delta_t}", flush=True)
 
             if self.seg_start_time is None:
                 self.seg_start_time = now
@@ -383,7 +387,12 @@ class ScribeSessionManager:
 
             if emit_partial:
                 transcription = self._build_transcription(combined_text, True, now)
-                self.last_partial_time = now
+                if flow_only:
+                    transcription["flow_only"] = True
+                else:
+                    # The interval counts from the last partial actually sent for
+                    # translation, so a flow-only one must not advance the clock.
+                    self.last_partial_time = now
                 if partial:
                     self.last_partial_text = transcript
                 else:

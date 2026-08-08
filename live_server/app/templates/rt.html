@@ -1239,6 +1239,10 @@
           scroller.scrollLeft = prevScrollLeft;
         }
       }
+    } else {
+      // trigger repaint
+      scroller.scrollTop += 1;
+      scroller.scrollTop -= 1;
     }
   }
 

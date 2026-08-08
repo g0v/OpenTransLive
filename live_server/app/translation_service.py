@@ -35,6 +35,13 @@ _KEYWORD_STORE_CAP = _KEYWORD_CAP * 2  # store 2x so low-freq words can recover
 # rewrite the whole sentence even when only one word was added.
 _MIN_PARTIAL_DELTA_CHARS = 4
 
+# Outcomes of TranslationQueueManager.classify(): translate it, broadcast the source
+# text alone (the flow shows every partial, translation stays on its own interval),
+# or drop it because its segment is already closed.
+GATE_DISPATCH = "dispatch"
+GATE_FLOW_ONLY = "flow_only"
+GATE_DROP = "drop"
+
 
 def segment_start(transcription) -> float | None:
     """Identity of the segment a transcription belongs to, or None if unusable.
@@ -46,6 +53,19 @@ def segment_start(transcription) -> float | None:
     """
     start = (transcription or {}).get("start_time")
     return float(start) if is_finite_number(start) else None
+
+
+def carried_partial_result(cached_partial, transcription) -> dict:
+    """The cached partial's result, but only if it belongs to `transcription`'s segment.
+
+    An older segment's result must not carry over: as translator context it asks the
+    LLM to continue a sentence that already ended, and on the broadcast path it would
+    show that translation twice (parked line + live line).
+    """
+    cached_partial = cached_partial or {}
+    if segment_start(cached_partial) != segment_start(transcription):
+        return {}
+    return cached_partial.get("result") or {}
 
 
 # ---------------------------------------------------------------------------
@@ -475,12 +495,8 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     translated_context = {lang: ' '.join(translated_lists[lang]) for lang in languages}
     # Previous partial's result, shared by the correction and translation stages so
     # both keep the in-progress line consistent instead of re-editing it on each
-    # partial. Only usable when it belongs to *this* segment — the cached partial can
-    # be an older segment's, and feeding that in as prev_translation asks the LLM to
-    # continue a sentence that already ended.
-    cached_partial = cached_data.get("partial") or {}
-    same_segment = segment_start(cached_partial) == segment_start(data)
-    partial_result = (cached_partial.get("result") or {}) if same_segment else {}
+    # partial.
+    partial_result = carried_partial_result(cached_data.get("partial"), data)
     prev_corrected = partial_result.get("corrected", "")
 
     result = {"corrected": text}
@@ -621,36 +637,40 @@ class TranslationQueueManager:
     def _claimed_text(self) -> str:
         return (self._claimed_partial or {}).get("text", "") or ""
 
-    def should_dispatch(self, sync_data):
+    def classify(self, sync_data):
         """Gate a transcription before the caller fetches its cached context.
 
-        Commits always pass. Call it exactly once per transcription, immediately
-        before put(): on a True return it *claims* the partial slot, so put() only
-        re-checks what can change across the caller's cache fetch. Staying
-        synchronous is what makes that safe — the check and the claim happen in one
-        event-loop step, so two concurrent partials can't both pass on the same text.
+        Returns one of GATE_DISPATCH / GATE_FLOW_ONLY / GATE_DROP. Commits always
+        dispatch. Call it exactly once per transcription, immediately before put():
+        on GATE_DISPATCH it *claims* the partial slot, so put() only re-checks what
+        can change across the caller's cache fetch. Staying synchronous is what makes
+        that safe — the check and the claim happen in one event-loop step, so two
+        concurrent partials can't both pass on the same text.
         """
         if sync_data.get("partial") is not True:
-            return True
+            return GATE_DISPATCH
         # Drop partials for a segment scribe has already closed; the broadcast path
         # would reject them again as skip_older_partial.
         if self._stale(sync_data):
-            return False
-        # Throttle by content delta: skip partials whose source text grew
+            return GATE_DROP
+        # scribe already decided this one lands inside its partial_interval.
+        if sync_data.get("flow_only"):
+            return GATE_FLOW_ONLY
+        # Throttle by content delta: don't translate partials whose source text grew
         # by fewer than _MIN_PARTIAL_DELTA_CHARS chars. A shrinking text
         # (negative delta) means ASR corrected itself — always pass that
         # through since it's a meaningful change worth re-translating.
         new_text = sync_data.get("text", "") or ""
         delta = len(new_text) - len(self._claimed_text())
         if 0 <= delta < _MIN_PARTIAL_DELTA_CHARS:
-            return False
+            return GATE_FLOW_ONLY
         self._claimed_partial = sync_data
-        return True
+        return GATE_DISPATCH
 
     async def put(self, session_id, sync_data, cached_data, redis_client):
         item = (session_id, sync_data, cached_data, redis_client)
         if sync_data.get("partial") is True:
-            # should_dispatch() already gated this partial and claimed the slot for its
+            # classify() already gated this partial and claimed the slot for its
             # text; anything claimed since means this one is stale. The caller awaits a
             # cache fetch between the two calls and scribe_manager fires those callbacks
             # concurrently, so a slow fetch can land here after a newer partial's and
