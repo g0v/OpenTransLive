@@ -597,18 +597,31 @@ class TranslationQueueManager:
         self._claimed_partial = None
         self._inflight_partial_start = None
         self._committed_through = float("-inf")
-        if self.partial_task:
-            self.partial_task.cancel()
+        partial_task, self.partial_task = self.partial_task, None
+        if partial_task:
+            partial_task.cancel()
             try:
-                await self.partial_task
+                await partial_task
             except (asyncio.CancelledError, Exception):
                 pass
-        if self.task:
-            self.task.cancel()
+        worker_task, self.task = self.task, None
+        if worker_task:
+            worker_task.cancel()
             try:
-                await self.task
+                await worker_task
             except (asyncio.CancelledError, Exception):
                 pass
+
+        # A stopped manager is never restarted. Release every queued item's
+        # transcription context immediately instead of retaining up to 50 copies
+        # until the manager itself is garbage-collected. The worker is stopped first,
+        # so no coroutine can race this drain or consume an item between get/task_done.
+        while True:
+            try:
+                self.commit_queue.get_nowait()
+                self.commit_queue.task_done()
+            except asyncio.QueueEmpty:
+                break
 
     def _superseded(self, start: float | None) -> bool:
         """True when a commit we already accepted closed the segment at `start`."""

@@ -120,14 +120,30 @@ _socket_limiter = _SocketRateLimiter()
 class _ManagerTTLCache(TTLCache):
     """TTLCache that calls manager.stop() when an entry is evicted."""
 
-    def popitem(self):
-        key, manager = super().popitem()
-        # Schedule the async stop without blocking the eviction path.
+    @staticmethod
+    def _schedule_stop(manager) -> None:
+        """Stop an evicted manager without blocking the synchronous cache API."""
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(manager.stop())
         except RuntimeError:
             pass  # No running loop (e.g. during interpreter shutdown) — skip.
+
+    def expire(self, time=None):
+        """Expire stale entries and stop every manager removed by TTL.
+
+        ``TTLCache.popitem()`` only covers capacity eviction. TTL expiration is
+        performed separately by ``TTLCache.expire()``, so overriding popitem alone
+        silently discarded managers while leaving their background tasks running.
+        """
+        expired = super().expire(time)
+        for _key, manager in expired:
+            self._schedule_stop(manager)
+        return expired
+
+    def popitem(self):
+        key, manager = super().popitem()
+        self._schedule_stop(manager)
         return key, manager
 
 
