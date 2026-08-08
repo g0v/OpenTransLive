@@ -692,6 +692,18 @@ async def _publish_transcription_update(sid: str, payload: dict) -> None:
         log_exception(logger, e, f"Redis publish error for {_hash_token(sid)}")
 
 
+async def _publish_display_dictionary_update(sid: str, language_maps: dict) -> None:
+    """Push dictionary changes through the viewer's existing Redis/SSE channel.
+
+    Rides the transcription channel; the `__sse_event` key tells the stream loop
+    to forward it under a different SSE event name instead of as a segment.
+    """
+    await _publish_transcription_update(
+        sid,
+        {"__sse_event": "display_dictionary_update", "language_maps": language_maps},
+    )
+
+
 async def _iter_replay_transcription_events(sid: str, last_event_id: float) -> AsyncIterator[dict]:
     zset_key = f"transcription:{sid}:list"
     try:
@@ -707,7 +719,12 @@ async def _iter_replay_transcription_events(sid: str, last_event_id: float) -> A
             logger.warning("Skipping malformed replay segment sid_hash=%s", _hash_token(sid))
 
 
-async def _session_sse_stream(request: Request, sid: str, last_event_id: float | None) -> AsyncIterator[str]:
+async def _session_sse_stream(
+    request: Request,
+    sid: str,
+    last_event_id: float | None,
+    send_display_dictionary: bool = False,
+) -> AsyncIterator[str]:
     channel = _transcription_room_channel(sid)
     pubsub = redis_client.pubsub()
     max_sent_id = last_event_id
@@ -721,6 +738,17 @@ async def _session_sse_stream(request: Request, sid: str, last_event_id: float |
             last_emitted_count = count
         last_presence_refresh = time.monotonic()
         yield f"retry: {SSE_RETRY_MS}\n\n"
+
+        # A dictionary update may have happened while this viewer was offline, so
+        # a reconnecting viewer asks for the current value here. The initial page
+        # render already carries it (and /yt never uses it), so those connections
+        # skip the read instead of bringing back per-device HTTP polling.
+        if send_display_dictionary:
+            from .translation_service import get_language_maps
+            yield _format_sse(
+                {"language_maps": await get_language_maps(redis_client, sid)},
+                event="display_dictionary_update",
+            )
 
         if last_event_id is not None:
             async for payload in _iter_replay_transcription_events(sid, last_event_id):
@@ -754,6 +782,13 @@ async def _session_sse_stream(request: Request, sid: str, last_event_id: float |
                 payload = json.loads(message["data"])
             except (TypeError, ValueError):
                 logger.warning("Skipping malformed pubsub event sid_hash=%s", _hash_token(sid))
+                continue
+
+            if payload.get("__sse_event") == "display_dictionary_update":
+                yield _format_sse(
+                    {"language_maps": payload.get("language_maps") or {}},
+                    event="display_dictionary_update",
+                )
                 continue
 
             event_id_raw = payload.get("start_time")
@@ -1672,7 +1707,11 @@ async def update_session_text_dictionary_endpoint(request: Request, sid: str):
     body = await request.json()
     # normalize_text_dictionary owns format migration (legacy {from: to} dict ->
     # rule list) and shape validation; the endpoint only enforces HTTP caps.
-    from .translation_service import normalize_text_dictionary, save_text_dictionary
+    from .translation_service import (
+        normalize_text_dictionary,
+        save_text_dictionary,
+        split_text_dictionary,
+    )
     rules = normalize_text_dictionary(body.get("text_dictionary"))
     if len(rules) > 200:
         raise HTTPException(status_code=400, detail="text_dictionary too large (max 200 entries)")
@@ -1688,21 +1727,9 @@ async def update_session_text_dictionary_endpoint(request: Request, sid: str):
 
     await save_text_dictionary(redis_client, sid, cleaned)
     await _emit_session_settings_update(sid, "text-dictionary")
+    _, language_maps = split_text_dictionary(cleaned)
+    await _publish_display_dictionary_update(sid, language_maps)
     return {"text_dictionary": cleaned}
-
-
-@app.get("/api/session/{sid}/display-dictionary", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
-async def get_session_display_dictionary_endpoint(sid: str):
-    """Public per-language replacement maps for viewers (rt.html) to apply at
-    render time, so rules added mid-session also reflow already-displayed lines.
-
-    Only language-target rules are exposed; flow (source) rules never reach the
-    viewer since rt.html renders translated text only. No admin auth: this is the
-    public viewer surface, same as /stream and /rt.
-    """
-    sid = sanitize_query_param(sid, "session ID")
-    from .translation_service import get_language_maps
-    return {"language_maps": await get_language_maps(redis_client, sid)}
 
 
 @app.get("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
@@ -2294,7 +2321,12 @@ async def session_stream(request: Request, sid: str):
             raise HTTPException(status_code=400, detail="Invalid Last-Event-ID")
 
     return StreamingResponse(
-        _session_sse_stream(request, sid, last_event_id),
+        _session_sse_stream(
+            request,
+            sid,
+            last_event_id,
+            send_display_dictionary=request.query_params.get("dict") == "1",
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

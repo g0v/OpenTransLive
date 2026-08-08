@@ -613,7 +613,7 @@
   let transcriptionsData = {{ data | tojson(indent = 2) }};
   // Per-language replacement maps ({ lang: { from: to } }). Applied at render
   // time so mappings added mid-session reflow lines already on screen, not just
-  // newly translated ones. Refreshed by pollDisplayDictionary().
+  // newly translated ones. Refreshed by the existing SSE connection.
   let languageMaps = {{ language_maps | tojson }};
   let lastSubtitle = null;
   let currentLayout = 'grid';
@@ -665,8 +665,9 @@
   const DICT_SENTINEL = '\u0000';
   // Memoise results: translated text per segment is stable, so the 30 history
   // lines re-rendered every refresh become cache hits and only the live partial
-  // is actually recomputed. Cleared when the rules change (see poll); bounded so
-  // a long session's churn of unique partials can't grow it without limit.
+  // is actually recomputed. Cleared by the display_dictionary_update handler when
+  // the rules change; bounded so a long session's churn of unique partials can't
+  // grow it without limit.
   const dictCache = new Map();
   function applyLangDict(lang, text) {
     if (!text) return text;
@@ -1411,10 +1412,14 @@
     let reconnectAttempts = 0;
     let lastEventId = '';
     let pageUnloading = false;
+    let reconnected = false;
 
     function streamUrl() {
       const url = new URL('/api/session/{{ id }}/stream', window.location.origin);
       if (lastEventId) url.searchParams.set('last_event_id', lastEventId);
+      // The page render already carried the current maps, so only a reconnect
+      // can have missed an edit and needs the server to resend them.
+      if (reconnected) url.searchParams.set('dict', '1');
       return url.toString();
     }
 
@@ -1465,6 +1470,7 @@
 
     function scheduleReconnect() {
       if (pageUnloading || reconnectTimer) return;
+      reconnected = true;
       reconnectAttempts += 1;
       const delay = Math.min(1000 * reconnectAttempts, 10000);
       statusIndicator.className = 'status-dot-sm bg-yellow-500';
@@ -1486,6 +1492,14 @@
       };
 
       stream.addEventListener('transcription_update', handleTranscriptionUpdate);
+      stream.addEventListener('display_dictionary_update', function (event) {
+        const data = JSON.parse(event.data);
+        const next = data && data.language_maps ? data.language_maps : {};
+        if (JSON.stringify(next) === JSON.stringify(languageMaps)) return;
+        languageMaps = next;
+        dictCache.clear();
+        refreshView();
+      });
 
       stream.onerror = function () {
         scheduleReconnect();
@@ -1503,27 +1517,6 @@
     } else {
       connectStream();
     }
-
-    // Poll the (public) per-language replacement maps so rules the broadcaster
-    // edits mid-session reflow the on-screen text. Edits are rare, so a slow
-    // interval is plenty; on change we re-render in place (no reload).
-    let languageMapsJson = JSON.stringify(languageMaps);
-    async function pollDisplayDictionary() {
-      try {
-        const res = await fetch(`/api/session/{{ id }}/display-dictionary`, { credentials: 'same-origin' });
-        if (!res.ok) return;
-        const data = await res.json();
-        const next = data && data.language_maps ? data.language_maps : {};
-        const nextJson = JSON.stringify(next);
-        if (nextJson !== languageMapsJson) {
-          languageMaps = next;
-          languageMapsJson = nextJson;
-          dictCache.clear();
-          refreshView();
-        }
-      } catch (e) { /* transient; next tick retries */ }
-    }
-    if (!DEMO_MODE) setInterval(pollDisplayDictionary, 15000);
 
     window.addEventListener('resize', function () {
       if (currentLayout === 'grid') refreshGridView();
