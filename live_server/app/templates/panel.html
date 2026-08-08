@@ -23,17 +23,6 @@
     </div>
     <div id="header-toolbar-wrap">
       <div id="header-toolbar" class="px-3 py-3 bg-gray-800 flex items-center flex-wrap gap-x-3 gap-y-1">
-        <div class="toolbar-group flex-grow-1">
-          <span class="toolbar-label">Viewer Link</span>
-          <div class="relative group flex-grow-1">
-            <input id="viewer-url" type="text" value=""
-              class="copyable-input w-full min-w-40 bg-gray-800 border-none text-xs text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly"
-              readonly>
-            <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-              <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
-            </div>
-          </div>
-        </div>
         <div class="toolbar-group">
           <span class="toolbar-label">KEY</span>
           <div class="relative group">
@@ -1595,9 +1584,6 @@
       if (e.key === 'Enter') document.getElementById('lang-custom-add-btn').click()
     })
 
-    // ── Set full viewer URL ───────────────────────────────────────────────────
-    document.getElementById('viewer-url').value = window.location.origin + '/rt/' + sid
-
     // ── Copyable inputs ──────────────────────────────────────────────────────
     const inputs = Array.from(document.getElementsByClassName('copyable-input'))
     inputs.forEach(element => {
@@ -1661,6 +1647,9 @@
       const renderedStartTimes = new Set()
       let partialEl = null
       let segmentCount = 0
+      // end_time of the partial currently on screen, so a translated partial that
+      // lands after newer flow-only ones can't drag the line back to older text.
+      let partialEndTime = 0
 
       function updateCount() {
         if (flowCountEl) flowCountEl.textContent = segmentCount + (segmentCount === 1 ? ' segment' : ' segments')
@@ -1698,16 +1687,23 @@
         })
       }
 
-      function appendCommitted(segment) {
+      // `fresh` marks a segment that just arrived as the event's own payload, so
+      // now - end_time is a real latency. A segment backfilled from
+      // `last_committed` was read out of Redis and may be minutes old — timing it
+      // would print a made-up number, so it renders without one.
+      function appendCommitted(segment, fresh) {
         const src = segment.result?.corrected || segment.text || ''
         if (!src) return
         if (partialEl) { partialEl.remove(); partialEl = null }
+        partialEndTime = 0
         const p = document.createElement('p')
         p.className = 'flow-item flex justify-between items-start group'
         p.dataset.src = src
 
-        const latency = segmentLatency(segment)
-        p.innerHTML = `<span class="flex-1">${escapeHtml(applyFlowDict(src))}</span><span class="text-[10px] text-gray-600 ml-2 tabular-nums">${latency.toFixed(2)}s</span>`
+        const latencyHtml = fresh
+          ? `<span class="text-[10px] text-gray-600 ml-2 tabular-nums">${segmentLatency(segment).toFixed(2)}s</span>`
+          : ''
+        p.innerHTML = `<span class="flex-1">${escapeHtml(applyFlowDict(src))}</span>${latencyHtml}`
 
         flowContent.appendChild(p)
         segmentCount++
@@ -1726,13 +1722,24 @@
       function updatePartial(segment) {
         if (!segment) {
           if (partialEl) { partialEl.remove(); partialEl = null }
+          partialEndTime = 0
           return
         }
-        const src = segment.result?.corrected || segment.text || ''
+        // A translated partial is emitted after its LLM round trip, so it can land
+        // behind flow-only partials that already carry newer source text. Keeping
+        // the newest end_time stops the line from rewinding — and stops the latency
+        // readout from flipping between the stale and the fresh one.
+        if (segment.end_time < partialEndTime) return
+        // Partials always render raw `text`: flow-only ones have no `corrected`, so
+        // mixing the two would swap the wording back and forth mid-segment. The
+        // corrected wording lands once, on commit.
+        const src = segment.text || ''
         if (!src) {
           if (partialEl) { partialEl.remove(); partialEl = null }
+          partialEndTime = 0
           return
         }
+        partialEndTime = segment.end_time
         if (!partialEl) {
           partialEl = document.createElement('p')
           partialEl.className = 'flow-item-partial flex justify-between items-start'
@@ -1749,7 +1756,7 @@
           const lc = data.last_committed
           if (!renderedStartTimes.has(lc.start_time)) {
             renderedStartTimes.add(lc.start_time)
-            appendCommitted(lc)
+            appendCommitted(lc, !data.partial && lc.start_time === data.start_time)
           }
         }
         if (data.partial) {
@@ -1758,7 +1765,7 @@
           updatePartial(null)
           if (!renderedStartTimes.has(data.start_time)) {
             renderedStartTimes.add(data.start_time)
-            appendCommitted(data)
+            appendCommitted(data, true)
           }
         }
       })
