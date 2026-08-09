@@ -1748,6 +1748,54 @@ async def update_session_text_dictionary_endpoint(request: Request, sid: str):
     return {"text_dictionary": cleaned}
 
 
+@app.get("/api/session/{sid}/glossary", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def get_session_glossary_endpoint(request: Request, sid: str):
+    """Get the multilingual glossary (pre-translation term swaps) for a session."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _require_session_owner(request, sid)
+
+    from .translation_service import get_glossary
+    entries = await get_glossary(redis_client, sid)
+    return {"glossary": entries}
+
+
+@app.post("/api/session/{sid}/glossary", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def update_session_glossary_endpoint(request: Request, sid: str):
+    """Update the multilingual glossary for a session."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _require_session_owner(request, sid)
+
+    body = await request.json()
+    # normalize_glossary owns shape validation (flat {lang: term} dicts, at least
+    # two spellings each); the endpoint only enforces HTTP caps.
+    from .translation_service import (
+        GLOSSARY_MAX_ENTRIES,
+        GLOSSARY_MAX_LANGS,
+        GLOSSARY_MAX_TERM_LEN,
+        normalize_glossary,
+        save_glossary,
+    )
+    entries = normalize_glossary(body.get("glossary"))
+    if len(entries) > GLOSSARY_MAX_ENTRIES:
+        raise HTTPException(status_code=400, detail=f"glossary too large (max {GLOSSARY_MAX_ENTRIES} entries)")
+    for entry in entries:
+        if len(entry) > GLOSSARY_MAX_LANGS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"glossary entry has too many languages (max {GLOSSARY_MAX_LANGS})",
+            )
+        for lang, term in entry.items():
+            if len(lang) > GLOSSARY_MAX_TERM_LEN or len(term) > GLOSSARY_MAX_TERM_LEN:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"glossary entries too long (max {GLOSSARY_MAX_TERM_LEN} chars)",
+                )
+
+    await save_glossary(redis_client, sid, entries)
+    await _emit_session_settings_update(sid, "glossary")
+    return {"glossary": entries}
+
+
 @app.get("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def get_session_scribe_language_endpoint(request: Request, sid: str):
     """Get the forced detect language for Scribe (empty means auto-detect)."""

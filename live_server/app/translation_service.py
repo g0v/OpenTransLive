@@ -1,5 +1,7 @@
 import asyncio
 import json
+import re
+from functools import lru_cache
 from opencc import OpenCC
 from .config import REALTIME_SETTINGS
 from .database import rooms_collection, users_collection
@@ -140,6 +142,40 @@ async def _get_session_string_field(redis_client, session_id, field: str) -> str
         pass
 
     return value
+
+
+async def _get_session_json_field(redis_client, session_id, field: str, normalize) -> list:
+    """Read a JSON-encoded session field, normalizing whatever shape is stored.
+
+    Redis is the live copy; MongoDB is the durable fallback that re-warms it.
+    `normalize` owns format migration, so a legacy document is upgraded on read.
+    """
+    key = f"{field}:{session_id}"
+    try:
+        raw = await redis_client.get(key)
+        if raw:
+            return normalize(json.loads(raw))
+    except Exception as e:
+        log_exception(logger, e, f"Redis get {field} error")
+
+    try:
+        room = await rooms_collection.find_one({"sid": session_id}, {field: 1})
+        if room and room.get(field) is not None:
+            value = normalize(room[field])
+            await redis_client.set(key, json.dumps(value), ex=86400)
+            return value
+    except Exception as e:
+        log_exception(logger, e, f"MongoDB get {field} error")
+
+    return []
+
+
+async def _save_session_json_field(redis_client, session_id, field: str, value):
+    try:
+        await redis_client.set(f"{field}:{session_id}", json.dumps(value), ex=86400)
+    except Exception as e:
+        log_exception(logger, e, f"Redis set {field} error")
+    asyncio.create_task(_save_room_field_to_mongo(session_id, field, value))
 
 
 async def _save_session_string_field(redis_client, session_id, field: str, value: str):
@@ -345,23 +381,9 @@ def split_text_dictionary(rules: list[dict[str, str]]) -> tuple[dict[str, str], 
 
 async def get_text_dictionary(redis_client, session_id) -> list[dict[str, str]]:
     """Return the user-defined text replacement rules for a session."""
-    try:
-        raw = await redis_client.get(f"text_dictionary:{session_id}")
-        if raw:
-            return normalize_text_dictionary(json.loads(raw))
-    except Exception as e:
-        log_exception(logger, e, "Redis get text_dictionary error")
-
-    try:
-        room = await rooms_collection.find_one({"sid": session_id}, {"text_dictionary": 1})
-        if room and room.get("text_dictionary") is not None:
-            rules = normalize_text_dictionary(room["text_dictionary"])
-            await redis_client.set(f"text_dictionary:{session_id}", json.dumps(rules), ex=86400)
-            return rules
-    except Exception as e:
-        log_exception(logger, e, "MongoDB get text_dictionary error")
-
-    return []
+    return await _get_session_json_field(
+        redis_client, session_id, "text_dictionary", normalize_text_dictionary
+    )
 
 
 async def get_language_maps(redis_client, session_id) -> dict[str, dict[str, str]]:
@@ -372,11 +394,7 @@ async def get_language_maps(redis_client, session_id) -> dict[str, dict[str, str
 
 async def save_text_dictionary(redis_client, session_id, rules: list[dict[str, str]]):
     """Persist the user-defined text replacement rules for a session."""
-    try:
-        await redis_client.set(f"text_dictionary:{session_id}", json.dumps(rules), ex=86400)
-    except Exception as e:
-        log_exception(logger, e, "Redis set text_dictionary error")
-    asyncio.create_task(_save_room_field_to_mongo(session_id, "text_dictionary", rules))
+    await _save_session_json_field(redis_client, session_id, "text_dictionary", rules)
 
 
 def apply_text_dictionary(text: str, mapping: dict[str, str]) -> str:
@@ -387,6 +405,135 @@ def apply_text_dictionary(text: str, mapping: dict[str, str]) -> str:
         if src:
             text = text.replace(src, mapping[src])
     return text
+
+
+# ---------------------------------------------------------------------------
+# Session: glossary (multilingual term table)
+# ---------------------------------------------------------------------------
+#
+# A glossary entry is one term written in several languages, e.g.
+#   {"en-US": "example", "zh-Hant-TW": "範例", "ja-JP": "例文"}
+# Before translating into language L, every other spelling in the entry is
+# swapped for L's spelling in the *source text handed to the LLM*, so the model
+# sees the wanted term already in place. This is deliberately separate from the
+# text dictionary: that one rewrites the translated output, which can never fire
+# for a cross-language term (the English word is long gone by then), and running
+# both over the same string would double-apply (`str.replace` is not idempotent).
+
+GLOSSARY_MAX_ENTRIES = 200      # API cap; panel.html mirrors it to reject before POSTing
+GLOSSARY_MAX_LANGS = 20         # spellings per entry
+GLOSSARY_MAX_TERM_LEN = 200     # per language code and per spelling
+_GLOSSARY_KEYWORD_CAP = 30      # max glossary spellings added to the correction prompt
+
+
+def normalize_glossary(data) -> list[dict[str, str]]:
+    """Normalize stored glossary data into a list of term entries.
+
+    Each entry maps a language code to that language's spelling. Entries with
+    fewer than two non-empty spellings are dropped: with only one there is
+    nothing to replace.
+    """
+    out: list[dict[str, str]] = []
+    if not isinstance(data, list):
+        return out
+    for e in data:
+        if not isinstance(e, dict):
+            continue
+        entry = {
+            k: v.strip()
+            for k, v in e.items()
+            if isinstance(k, str) and k and isinstance(v, str) and v.strip()
+        }
+        if len(entry) >= 2:
+            out.append(entry)
+    return out
+
+
+async def get_glossary(redis_client, session_id) -> list[dict[str, str]]:
+    """Return the multilingual glossary entries for a session."""
+    return await _get_session_json_field(redis_client, session_id, "glossary", normalize_glossary)
+
+
+async def save_glossary(redis_client, session_id, entries: list[dict[str, str]]):
+    """Persist the multilingual glossary entries for a session."""
+    await _save_session_json_field(redis_client, session_id, "glossary", entries)
+
+
+def build_glossary_map(entries: list[dict[str, str]], language: str) -> dict[str, str]:
+    """Source-spelling -> target-spelling map for one target language.
+
+    Every other language's spelling in an entry becomes a source, so a mixed-
+    language speaker is covered without having to declare which language the
+    audio is in. First entry wins on a collision, so import order can't make an
+    already-working term start resolving somewhere else.
+    """
+    mapping: dict[str, str] = {}
+    for entry in entries:
+        dst = entry.get(language)
+        if not dst:
+            continue
+        for lang, src in entry.items():
+            if lang == language or not src or src == dst:
+                continue
+            mapping.setdefault(src, dst)
+    return mapping
+
+
+def glossary_keywords(entries: list[dict[str, str]], cap: int = _GLOSSARY_KEYWORD_CAP) -> list[str]:
+    """Every spelling in the glossary, deduped in entry order.
+
+    Fed to the correction pass: a glossary swap is a literal match, so a name the
+    ASR mangles ("Shaun Gow" for "Sean Gau") never matches and the term silently
+    does nothing. Showing the corrector the wanted spellings gives it the chance
+    to fix the name first, which is what the swap then keys off.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        for term in entry.values():
+            if term in seen:
+                continue
+            seen.add(term)
+            out.append(term)
+            if len(out) >= cap:
+                return out
+    return out
+
+
+@lru_cache(maxsize=64)
+def _compile_glossary(items: tuple[tuple[str, str], ...]):
+    """Compile a glossary map into (pattern, casefolded lookup).
+
+    Longest source first so `AI Agent` wins over `AI`. Sources that start/end
+    with an ASCII alphanumeric get word-boundary lookarounds (`example` must not
+    match inside `examples`); CJK has no word boundaries, so those stay plain
+    substrings.
+    """
+    parts = []
+    lookup: dict[str, str] = {}
+    for src, dst in sorted(items, key=lambda kv: len(kv[0]), reverse=True):
+        lookup.setdefault(src.casefold(), dst)
+        p = re.escape(src)
+        if src[0].isascii() and src[0].isalnum():
+            p = r"(?<![A-Za-z0-9_])" + p
+        if src[-1].isascii() and src[-1].isalnum():
+            p = p + r"(?![A-Za-z0-9_])"
+        parts.append(p)
+    return re.compile("|".join(parts), re.IGNORECASE), lookup
+
+
+def apply_glossary(text: str, mapping: dict[str, str]) -> str:
+    """Replace glossary source spellings in `text` with the target spellings.
+
+    One single-pass regex rather than repeated `str.replace`, so a replacement
+    can never be re-matched by a later rule (`{A: B, B: C}` turns A into B, not C).
+    """
+    if not text or not mapping:
+        return text
+    # build_glossary_map walks the entries in a fixed order, so the plain items
+    # tuple is already a stable cache key — no need to sort it on every partial.
+    pattern, lookup = _compile_glossary(tuple(mapping.items()))
+    return pattern.sub(lambda m: lookup.get(m.group(0).casefold(), m.group(0)), text)
 
 
 # ---------------------------------------------------------------------------
@@ -473,17 +620,25 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     if not text:
         return data
 
-    (current_keywords, locked_list), tone, text_dict, scribe_language = await asyncio.gather(
+    (current_keywords, locked_list), tone, text_dict, scribe_language, glossary = await asyncio.gather(
         get_keywords_and_locked(redis_client, session_id),
         get_session_translate_tone(redis_client, session_id),
         get_text_dictionary(redis_client, session_id),
         get_session_scribe_language(redis_client, session_id),
+        get_glossary(redis_client, session_id),
     )
     flow_map, lang_maps = split_text_dictionary(text_dict)
     if flow_map:
         text = apply_text_dictionary(text, flow_map)
         data["text"] = text
-    keywords_str = ', '.join(rank_keywords(current_keywords, locked_list, _KEYWORD_CAP))
+    ranked = rank_keywords(current_keywords, locked_list, _KEYWORD_CAP)
+    keywords_str = ', '.join(ranked)
+    # Only the corrector gets the glossary spellings: by translation time the term
+    # has already been swapped into the text, so repeating the other languages'
+    # spellings there would just be prompt noise.
+    correct_keywords = ', '.join(
+        list(ranked) + [t for t in glossary_keywords(glossary) if t not in ranked]
+    )
 
     translated_lists = {language: [] for language in languages}
     for transcription in cached_data.get("transcriptions", []):
@@ -507,7 +662,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
             result["corrected"] = await translator.correct(
                 text=text,
                 prev_corrected=prev_corrected,
-                keywords=keywords_str,
+                keywords=correct_keywords,
             )
         else:
             result["corrected"] = text.strip()
@@ -533,9 +688,13 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         if lang_map:
             pt_trans = apply_text_dictionary(pt_trans, lang_map)
             lang_context = apply_text_dictionary(lang_context, lang_map)
+        # Glossary swaps happen only on the text handed to the LLM: the source
+        # transcript (data["text"]) and the shared corrected line stay untouched,
+        # so the flow panel and keyword reranking still see what was actually said.
+        src_text = apply_glossary(result['corrected'], build_glossary_map(glossary, language))
         try:
             out = await translator.translate(
-                text=result['corrected'],
+                text=src_text,
                 language=language,
                 context=lang_context,
                 prev_translation=pt_trans,
