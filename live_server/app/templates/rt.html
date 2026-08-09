@@ -54,7 +54,12 @@
             class="hidden absolute right-0 top-9 z-50 p-3 rounded-xl shadow-xl border qr-popup-bg min-w-max">
             <div class="text-xs font-semibold mb-2 opacity-70">Scan to open</div>
             <img id="qr-img" class="w-40 h-40 rounded-lg" src="" alt="QR code" />
-            <div class="text-xs mt-2 opacity-50 text-center max-w-40 truncate" id="qr-url-text"></div>
+            <div id="qr-url-text"
+              class="text-xs mt-2 opacity-50 max-w-40 flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer qr-url-copy"
+              role="button" tabindex="0" title="Click to copy">
+              <span class="truncate flex-1" id="qr-url-value"></span>
+              <iconify-icon icon="mdi:content-copy" width="12" height="12" class="shrink-0"></iconify-icon>
+            </div>
           </div>
         </div>
       </div>
@@ -300,6 +305,16 @@
   .qr-popup-bg {
     background-color: #ffffff;
     border-color: #e5e7eb;
+  }
+
+  .qr-url-copy:hover {
+    background-color: rgba(127, 127, 127, 0.15);
+  }
+
+  .qr-url-copy.copied {
+    background-color: rgb(34, 197, 94);
+    color: #ffffff;
+    opacity: 1;
   }
 
   .info-modal-bg {
@@ -780,20 +795,49 @@
   // ------------------------------------------------------------------ //
   const qrPopup = document.getElementById('qr-popup');
   const qrBtn = document.getElementById('qr-btn');
-  let qrInitialized = false;
+  const qrUrlText = document.getElementById('qr-url-text');
+  const qrUrlValue = document.getElementById('qr-url-value');
 
   qrBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     const isHidden = qrPopup.classList.contains('hidden');
     if (isHidden) {
-      if (!qrInitialized) {
+      // The URL carries show=/theme state that changes while the page is open,
+      // so re-render whenever it differs from what the popup last showed.
+      if (qrUrlValue.textContent !== window.location.href) {
+        qrUrlValue.textContent = window.location.href;
         document.getElementById('qr-img').src = `https://quickchart.io/qr?text=${encodeURIComponent(window.location.href)}`;
-        document.getElementById('qr-url-text').textContent = window.location.href;
-        qrInitialized = true;
       }
       qrPopup.classList.remove('hidden');
     } else {
       qrPopup.classList.add('hidden');
+    }
+  });
+
+  async function copyQrUrl() {
+    const url = qrUrlValue.textContent;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // clipboard API needs a secure context; fall back to a throwaway selection.
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    qrUrlText.classList.add('copied');
+    setTimeout(() => qrUrlText.classList.remove('copied'), 600);
+  }
+
+  qrUrlText.addEventListener('click', copyQrUrl);
+  qrUrlText.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      copyQrUrl();
     }
   });
 
@@ -964,7 +1008,9 @@
   }
 
   function showAllLanguages() {
-    if (hiddenLanguages.size === 0) return;
+    // urlShowList can be set with nothing hidden yet (languages arriving later
+    // would be hidden on discovery), so clearing it still matters here.
+    if (hiddenLanguages.size === 0 && !urlShowList) return;
     hiddenLanguages.clear();
     urlShowList = null;
     renderSortModal();
@@ -1063,6 +1109,9 @@
 
   document.getElementById('mobile-lang-all').addEventListener('click', () => {
     mobileLangModal.classList.add('hidden');
+    // The URL may already carry a show= filter; "show all" has to lift it,
+    // otherwise the button looks dead.
+    showAllLanguages();
   });
 
   document.getElementById('mobile-lang-backdrop').addEventListener('click', () => {
