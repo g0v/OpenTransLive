@@ -1548,7 +1548,10 @@
         if (firstInput) setTimeout(() => firstInput.focus(), 0)
       }
     })
-    modal.addEventListener('click', function (e) {
+    // mousedown, not click: a click's target is the common ancestor of press and
+    // release, so a drag that starts on the panel and ends outside it reports the
+    // overlay and would close the modal mid-edit.
+    modal.addEventListener('mousedown', function (e) {
       if (e.target === modal) modal.classList.add('hidden')
     })
     const closeBtn = modal.querySelector('[data-modal-close]')
