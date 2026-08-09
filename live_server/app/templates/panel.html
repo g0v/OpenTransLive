@@ -221,6 +221,7 @@
         <div class="modal-add-row">
           <input id="gl-file-input" type="file" accept=".json,application/json" class="hidden">
           <button id="gl-import-btn" type="button" class="panel-add-btn flex-1">Import JSON</button>
+          <button id="gl-export-btn" type="button" class="panel-add-btn">Export</button>
           <button id="gl-clear-btn" type="button" class="panel-add-btn">Clear all</button>
         </div>
 
@@ -1152,6 +1153,7 @@
   function renderGlossaryList() {
     const list = document.getElementById('gl-list')
     list.innerHTML = ''
+    document.getElementById('gl-export-btn').textContent = glossary.length ? 'Export' : 'Export example'
     if (!glossary.length) {
       const empty = document.createElement('div')
       empty.className = 'text-xs text-gray-500 px-2 py-1'
@@ -1241,6 +1243,29 @@
     }
     if (!entries.length) throw new Error('No usable terms')
     return entries
+  }
+
+  // A starter file for an empty glossary, keyed by this session's own target
+  // languages (plus en-US, the usual spoken one) so the codes are already the
+  // ones that will match — a hand-written zh-TW instead of zh-Hant-TW is the
+  // easiest way to end up with a term that never fires.
+  function exampleGlossary() {
+    const codes = [...new Set(['en-US', ...selectedLanguages])]
+    return ['Jane Doe', 'OpenTransLive'].map(term => Object.fromEntries(
+      codes.map(code => [code, code === 'en-US' ? term : `${term} in ${code}`])
+    ))
+  }
+
+  function exportGlossary() {
+    const filled = glossary.length > 0
+    const blob = new Blob([JSON.stringify(filled ? glossary : exampleGlossary(), null, 2)],
+      { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filled ? `glossary-${sid}.json` : 'glossary-example.json'
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   // Merge imported entries into the current list. An imported entry replaces an
@@ -1548,7 +1573,10 @@
         if (firstInput) setTimeout(() => firstInput.focus(), 0)
       }
     })
-    modal.addEventListener('click', function (e) {
+    // mousedown, not click: a click's target is the common ancestor of press and
+    // release, so a drag that starts on the panel and ends outside it reports the
+    // overlay and would close the modal mid-edit.
+    modal.addEventListener('mousedown', function (e) {
       if (e.target === modal) modal.classList.add('hidden')
     })
     const closeBtn = modal.querySelector('[data-modal-close]')
@@ -1661,6 +1689,8 @@
       }
       reader.readAsText(file)
     })
+
+    document.getElementById('gl-export-btn').addEventListener('click', exportGlossary)
 
     document.getElementById('gl-clear-btn').addEventListener('click', function () {
       if (!glossary.length) return
