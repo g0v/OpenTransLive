@@ -74,9 +74,9 @@
           </button>
         </div>
 
-        <!-- Text mapping (opens modal) -->
+        <!-- Dictionary: glossary + text mapping (opens modal) -->
         <div class="toolbar-group">
-          <span class="toolbar-label">Text Mapping</span>
+          <span class="toolbar-label">Dictionary</span>
           <button id="td-dropdown-btn" type="button" class="dropdown-btn min-w-20 max-w-40">
             <span id="td-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
             <iconify-icon icon="mdi:pencil-outline" width="14" height="14" class="flex-shrink-0"></iconify-icon>
@@ -206,17 +206,30 @@
     aria-labelledby="td-modal-title">
     <div class="modal-panel">
       <div class="modal-header">
-        <h2 id="td-modal-title" class="modal-title">Text Mapping</h2>
+        <h2 id="td-modal-title" class="modal-title">Dictionary</h2>
         <button type="button" class="modal-close-btn" data-modal-close aria-label="Close">
           <iconify-icon icon="mdi:close" width="20" height="20"></iconify-icon>
         </button>
       </div>
       <div class="modal-body">
+        <h3 class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Glossary</h3>
+        <p class="text-[11px] text-gray-500 leading-snug">
+          Import a term list so names and jargon translate the same way every time. Each entry holds one term written
+          in several languages; the wanted spelling is swapped in before translating.
+        </p>
+        <div id="gl-list" class="modal-list max-h-48"></div>
+        <div class="modal-add-row">
+          <input id="gl-file-input" type="file" accept=".json,application/json" class="hidden">
+          <button id="gl-import-btn" type="button" class="panel-add-btn flex-1">Import JSON</button>
+          <button id="gl-clear-btn" type="button" class="panel-add-btn">Clear all</button>
+        </div>
+
+        <h3 class="text-xs font-semibold text-gray-300 uppercase tracking-wider mt-2">Replace</h3>
         <p class="text-[11px] text-gray-500 leading-snug">
           Replace specific phrases. Choose <span class="font-mono">Flow</span> to fix the source transcript, or a
           language to rewrite that translation's output.
         </p>
-        <div id="td-list" class="modal-list"></div>
+        <div id="td-list" class="modal-list max-h-48"></div>
         <div class="modal-add-row flex-col items-stretch gap-1">
           <div class="flex gap-1">
             <input id="td-from-input" type="text" placeholder="From" class="panel-input flex-1">
@@ -795,7 +808,10 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       })
-      if (statusEl) statusEl.textContent = res.ok ? 'Saved' : 'Error'
+      if (!statusEl) return
+      // Surface the endpoint's own message (size caps etc.) when it sends one.
+      const err = res.ok ? null : await res.json().catch(() => ({}))
+      statusEl.textContent = res.ok ? 'Saved' : (err.detail || 'Error')
     } catch (e) {
       if (statusEl) statusEl.textContent = 'Error'
       console.error(`Failed to save ${endpoint}:`, e)
@@ -832,23 +848,6 @@
       }
     } catch (e) {
       console.error('Failed to load translate tone:', e)
-    }
-  }
-
-  async function saveTranslateTone(tone) {
-    const statusEl = document.getElementById('settings-status')
-    if (statusEl) statusEl.textContent = 'Saving'
-    try {
-      const res = await fetch(`/api/session/${sid}/translate-tone`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tone })
-      })
-      if (statusEl) statusEl.textContent = res.ok ? 'Saved' : 'Error'
-    } catch (e) {
-      if (statusEl) statusEl.textContent = 'Error'
-      console.error('Failed to save translate tone:', e)
     }
   }
 
@@ -903,7 +902,7 @@
           selectedLanguages = selectedLanguages.filter(c => c !== code)
         }
         updateDropdownLabel()
-        renderTargetOptions()
+        onLanguagesChanged()
         debouncedSaveLanguages()
       })
       list.appendChild(row)
@@ -918,7 +917,7 @@
         selectedLanguages = data.languages
         updateDropdownLabel()
         renderCheckboxList()
-        renderTargetOptions()
+        onLanguagesChanged()
       }
     } catch (e) {
       console.error('Failed to load languages:', e)
@@ -1128,6 +1127,135 @@
     }
   }
 
+  // ── Glossary panel ───────────────────────────────────────────────────────
+  // [{ "en-US": "example", "zh-Hant-TW": "範例", ... }] — one term per entry,
+  // spelled out per language. The server swaps the other spellings for the
+  // target language's one before translating.
+  let glossary = []
+  let glossarySaveTimer = null
+  const GLOSSARY_MAX = 200
+
+  function updateDictLabel() {
+    const label = document.getElementById('td-dropdown-label')
+    const terms = glossary.length
+    const rules = textDictionary.length
+    if (!terms && !rules) {
+      label.textContent = 'None'
+      return
+    }
+    const parts = []
+    if (terms) parts.push(terms + ' term' + (terms === 1 ? '' : 's'))
+    if (rules) parts.push(rules + ' rule' + (rules === 1 ? '' : 's'))
+    label.textContent = parts.join(' · ')
+  }
+
+  function renderGlossaryList() {
+    const list = document.getElementById('gl-list')
+    list.innerHTML = ''
+    if (!glossary.length) {
+      const empty = document.createElement('div')
+      empty.className = 'text-xs text-gray-500 px-2 py-1'
+      empty.textContent = 'No glossary terms imported.'
+      list.appendChild(empty)
+      return
+    }
+    // A code that isn't a target language of this session can never be swapped
+    // in, so it is dimmed; an entry with no target language at all is inert and
+    // says so, instead of silently doing nothing (usually a code typo, e.g.
+    // zh-TW where the session uses zh-Hant-TW).
+    const targets = new Set(selectedLanguages)
+    glossary.forEach(function (entry, idx) {
+      const row = document.createElement('div')
+      row.className = 'flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300'
+      const inactive = !Object.keys(entry).some(lang => targets.has(lang))
+      const chips = Object.entries(entry).map(function ([lang, term]) {
+        const on = targets.has(lang)
+        return `
+        <span class="flex items-center gap-1 flex-shrink-0" ${on ? '' : 'title="Not a target language of this session"'}>
+          <span class="text-[10px] px-1 py-0.5 rounded bg-gray-700 ${on ? 'text-gray-400' : 'text-gray-600'}">${escapeHtml(lang)}</span>
+          <span class="font-mono text-xs ${on ? 'text-blue-300' : 'text-gray-600'}">${escapeHtml(term)}</span>
+        </span>`
+      }).join('')
+      const warning = inactive ? `
+        <span class="text-[10px] px-1 py-0.5 rounded bg-amber-900 text-amber-300 flex-shrink-0"
+          title="None of these language codes is a target language, so this term is never used">unused</span>` : ''
+      row.innerHTML = `
+        <div class="flex-1 flex flex-wrap gap-x-2 gap-y-1 min-w-0">${chips}</div>
+        ${warning}
+        <button class="gl-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove term">
+          <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
+        </button>
+      `
+      row.querySelector('.gl-remove-btn').addEventListener('click', function () {
+        glossary.splice(idx, 1)
+        updateDictLabel()
+        renderGlossaryList()
+        debouncedSaveGlossary()
+      })
+      list.appendChild(row)
+    })
+  }
+
+  async function loadGlossary() {
+    try {
+      const res = await fetch(`/api/session/${sid}/glossary`, { credentials: 'same-origin' })
+      if (res.ok) {
+        const data = await res.json()
+        glossary = Array.isArray(data.glossary) ? data.glossary : []
+        updateDictLabel()
+        renderGlossaryList()
+      }
+    } catch (e) {
+      console.error('Failed to load glossary:', e)
+    }
+  }
+
+  function debouncedSaveGlossary() {
+    document.getElementById('settings-status').textContent = 'Saving'
+    clearTimeout(glossarySaveTimer)
+    glossarySaveTimer = setTimeout(saveGlossary, 600)
+  }
+
+  function saveGlossary() {
+    return saveSessionField('glossary', { glossary }, 'settings-status')
+  }
+
+  // Parse an imported file into entries, or throw with a user-facing message.
+  function parseGlossaryFile(raw) {
+    let data
+    try {
+      data = JSON.parse(raw)
+    } catch (e) {
+      throw new Error('Invalid JSON')
+    }
+    if (!Array.isArray(data)) throw new Error('Expected a JSON array')
+    const entries = []
+    for (const item of data) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) continue
+      const entry = {}
+      for (const [lang, term] of Object.entries(item)) {
+        if (typeof term === 'string' && term.trim()) entry[lang] = term.trim()
+      }
+      // One spelling alone has nothing to replace; the server drops these too.
+      if (Object.keys(entry).length >= 2) entries.push(entry)
+    }
+    if (!entries.length) throw new Error('No usable terms')
+    return entries
+  }
+
+  // Merge imported entries into the current list. An imported entry replaces an
+  // existing one outright when they share a spelling for the same language, so
+  // re-importing a corrected file updates in place instead of duplicating.
+  function mergeGlossary(existing, incoming) {
+    const merged = existing.slice()
+    for (const entry of incoming) {
+      const idx = merged.findIndex(e => Object.entries(entry).some(([lang, term]) => e[lang] === term))
+      if (idx >= 0) merged[idx] = entry
+      else merged.push(entry)
+    }
+    return merged
+  }
+
   // ── Text mapping panel ───────────────────────────────────────────────────
   let textDictionary = []  // [{ from, to, target }] — target is 'flow' or a language code
   let textDictSaveTimer = null
@@ -1146,6 +1274,14 @@
     return (!target || target === 'flow') ? 'Flow' : langLabel(target)
   }
 
+  // Both halves of the Dictionary modal read the session's language set: the
+  // add-row target <select> offers it, and glossary rows grey out codes that
+  // aren't in it. Call this wherever selectedLanguages changes.
+  function onLanguagesChanged() {
+    renderTargetOptions()
+    renderGlossaryList()
+  }
+
   // Populate the add-row target <select> with Flow + the session's languages.
   function renderTargetOptions() {
     const sel = document.getElementById('td-target-select')
@@ -1155,13 +1291,6 @@
       .concat(selectedLanguages.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(langLabel(c))}</option>`))
     sel.innerHTML = opts.join('')
     if (prev && Array.from(sel.options).some(o => o.value === prev)) sel.value = prev
-  }
-
-  function updateTextDictLabel() {
-    const label = document.getElementById('td-dropdown-label')
-    const total = textDictionary.length
-    label.textContent = !total ? 'None'
-      : total + ' mapping' + (total === 1 ? '' : 's')
   }
 
   function renderTextDictList() {
@@ -1191,7 +1320,7 @@
       `
       row.querySelector('.td-remove-btn').addEventListener('click', function () {
         textDictionary.splice(idx, 1)
-        updateTextDictLabel()
+        updateDictLabel()
         renderTextDictList()
         reapplyFlowDict()
         debouncedSaveTextDict()
@@ -1206,7 +1335,7 @@
       if (res.ok) {
         const data = await res.json()
         textDictionary = Array.isArray(data.text_dictionary) ? data.text_dictionary : []
-        updateTextDictLabel()
+        updateDictLabel()
         renderTextDictList()
         reapplyFlowDict()
       }
@@ -1216,32 +1345,13 @@
   }
 
   function debouncedSaveTextDict() {
-    const statusEl = document.getElementById('settings-status')
-    statusEl.textContent = 'Saving...'
+    document.getElementById('settings-status').textContent = 'Saving'
     clearTimeout(textDictSaveTimer)
     textDictSaveTimer = setTimeout(saveTextDictionary, 600)
   }
 
-  async function saveTextDictionary() {
-    const statusEl = document.getElementById('settings-status')
-    statusEl.textContent = 'Saving'
-    try {
-      const res = await fetch(`/api/session/${sid}/text-dictionary`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text_dictionary: textDictionary })
-      })
-      if (res.ok) {
-        statusEl.textContent = 'Saved'
-      } else {
-        const err = await res.json()
-        statusEl.textContent = err.detail || 'Error'
-      }
-    } catch (e) {
-      statusEl.textContent = 'Error'
-      console.error('Failed to save text dictionary:', e)
-    }
+  function saveTextDictionary() {
+    return saveSessionField('text-dictionary', { text_dictionary: textDictionary }, 'settings-status')
   }
 
   // ── Co-owners panel (primary owner only) ────────────────────────────────
@@ -1363,6 +1473,7 @@
     'languages':       { load: loadLanguages,      isInteracting: () => langSaveInFlight || !!langSaveTimer, polled: true },
     'keywords':        { load: loadKeywords,       isInteracting: () => keywordSavePending,                  polled: false },
     'text-dictionary': { load: loadTextDictionary, isInteracting: () => !!textDictSaveTimer,                 polled: true },
+    'glossary':        { load: loadGlossary,       isInteracting: () => !!glossarySaveTimer,                 polled: true },
     'scribe-language': { load: loadScribeLanguage, isInteracting: () => focused('scribe-lang-select'),       polled: true },
     'translate-tone':  { load: loadTranslateTone,  isInteracting: () => focused('tone-custom-input'),        polled: true },
     'co-owners':       { load: loadCoOwners,       isInteracting: () => false,                               polled: false },
@@ -1469,6 +1580,7 @@
     loadLanguages()
     loadKeywords()
     loadTextDictionary()
+    loadGlossary()
     loadCoOwners()
 
     // Co-owners modal (primary owner only — element is absent for co-owners)
@@ -1514,9 +1626,50 @@
       }
     })
 
-    // Keywords + Text mapping modals
+    // Keywords + Dictionary modals
     setupModal(document.getElementById('kw-dropdown-panel'), document.getElementById('kw-dropdown-btn'))
     setupModal(document.getElementById('td-dropdown-panel'), document.getElementById('td-dropdown-btn'))
+
+    // Import a glossary JSON file
+    const glFileInput = document.getElementById('gl-file-input')
+    document.getElementById('gl-import-btn').addEventListener('click', () => glFileInput.click())
+    glFileInput.addEventListener('change', function () {
+      const file = this.files && this.files[0]
+      // Clear the input up front so re-picking the same file fires 'change' again.
+      this.value = ''
+      if (!file) return
+      const statusEl = document.getElementById('settings-status')
+      const reader = new FileReader()
+      reader.onerror = function () { statusEl.textContent = 'Read failed' }
+      reader.onload = function () {
+        let entries
+        try {
+          entries = parseGlossaryFile(String(reader.result))
+        } catch (e) {
+          statusEl.textContent = e.message
+          return
+        }
+        const merged = mergeGlossary(glossary, entries)
+        if (merged.length > GLOSSARY_MAX) {
+          statusEl.textContent = `Too many terms (max ${GLOSSARY_MAX})`
+          return
+        }
+        glossary = merged
+        updateDictLabel()
+        renderGlossaryList()
+        saveGlossary()
+      }
+      reader.readAsText(file)
+    })
+
+    document.getElementById('gl-clear-btn').addEventListener('click', function () {
+      if (!glossary.length) return
+      if (!confirm('Remove all glossary terms?')) return
+      glossary = []
+      updateDictLabel()
+      renderGlossaryList()
+      saveGlossary()
+    })
 
     // Add custom text mapping
     document.getElementById('td-add-btn').addEventListener('click', function () {
@@ -1530,7 +1683,7 @@
       const existing = textDictionary.find(r => r.from === from && (r.target || 'flow') === target)
       if (existing) existing.to = to
       else textDictionary.push({ from, to, target })
-      updateTextDictLabel()
+      updateDictLabel()
       renderTextDictList()
       reapplyFlowDict()
       saveTextDictionary()
@@ -1576,6 +1729,7 @@
         selectedLanguages.push(code)
         updateDropdownLabel()
         renderCheckboxList()
+        onLanguagesChanged()
         saveLanguages()
       }
       input.value = ''
