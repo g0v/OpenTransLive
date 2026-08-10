@@ -190,7 +190,8 @@
       <div class="modal-body">
         <p class="text-[11px] text-gray-500 leading-snug">
           Keywords help the transcriber recognize names, jargon, or phrases. Pin a keyword to keep it from being
-          auto-removed.
+          auto-removed, or use <iconify-icon icon="mdi:translate" width="11" height="11" class="align-middle"></iconify-icon>
+          to look its translations up on the web and add them to the glossary.
         </p>
         <div id="kw-list" class="modal-list"></div>
         <div class="modal-add-row">
@@ -214,8 +215,10 @@
       <div class="modal-body">
         <h3 class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Glossary</h3>
         <p class="text-[11px] text-gray-500 leading-snug">
-          Import a term list so names and jargon translate the same way every time. Each entry holds one term written
-          in several languages; the wanted spelling is swapped in before translating.
+          Names and jargon translate the same way every time. Each entry holds one term written in several languages;
+          the wanted spelling is swapped in before translating. Import a list, edit a term with
+          <iconify-icon icon="mdi:pencil" width="11" height="11" class="align-middle"></iconify-icon>, or let AI look
+          one up from the Keywords panel.
         </p>
         <div id="gl-list" class="modal-list max-h-48"></div>
         <div class="modal-add-row">
@@ -1009,12 +1012,18 @@
       list.appendChild(empty)
       return
     }
+    const knownSpellings = new Set(glossary.flatMap(e => Object.values(e)))
     currentKeywords.forEach(function (kw) {
       const isLocked = lockedKeywords.has(kw)
       const row = document.createElement('div')
       row.className = 'flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300 group'
+      const busy = glossaryGenerating.has(kw)
+      const look = glossaryButtonLook(kw, knownSpellings)
       row.innerHTML = `
         <span class="flex-1 font-mono text-xs truncate ${isLocked ? 'text-yellow-300' : 'text-gray-300'}">${escapeHtml(kw)}</span>
+        <button class="kw-glossary-btn flex-shrink-0 transition-colors ${look.cls}" title="${look.title}" ${busy || !selectedLanguages.length ? 'disabled' : ''}>
+          <iconify-icon icon="${busy ? 'mdi:loading' : 'mdi:translate'}" width="14" height="14" class="${busy ? 'animate-spin' : ''}"></iconify-icon>
+        </button>
         <button class="kw-lock-btn flex-shrink-0 transition-colors ${isLocked ? 'text-yellow-400 hover:text-yellow-200' : 'text-gray-600 hover:text-yellow-400'}" title="${isLocked ? 'Unpin keyword' : 'Pin keyword (preserve from auto-removal)'}" data-kw="${escapeHtml(kw)}">
           <iconify-icon icon="${isLocked ? 'mdi:pin' : 'mdi:pin-outline'}" width="14" height="14"></iconify-icon>
         </button>
@@ -1022,6 +1031,9 @@
           <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
         </button>
       `
+      row.querySelector('.kw-glossary-btn').addEventListener('click', function () {
+        generateGlossaryEntry(kw)
+      })
       row.querySelector('.kw-lock-btn').addEventListener('click', function () {
         if (lockedKeywords.has(kw)) {
           lockedKeywords.delete(kw)
@@ -1041,6 +1053,60 @@
       })
       list.appendChild(row)
     })
+  }
+
+  // Keywords being looked up right now. Held outside the DOM because
+  // syncKeywords repaints the whole list every 5s, which would wipe a spinner.
+  const glossaryGenerating = new Set()
+
+  // Look of a keyword row's "look this term up" button. `known` is the set of
+  // every spelling in the glossary, built once per repaint by the caller rather
+  // than rescanned per row.
+  function glossaryButtonLook(kw, known) {
+    if (glossaryGenerating.has(kw)) return { cls: 'text-blue-400', title: 'Looking the term up…' }
+    if (!selectedLanguages.length) return { cls: 'text-gray-700', title: 'Set target languages first' }
+    if (known.has(kw)) return { cls: 'text-blue-400 hover:text-blue-200', title: 'Already in the glossary — look it up again' }
+    return { cls: 'text-gray-600 hover:text-blue-400', title: 'Look this term up and add it to the glossary' }
+  }
+
+  // Ask the server to find this term's spelling in each target language, then
+  // merge it in the same way an imported file would be.
+  async function generateGlossaryEntry(kw) {
+    if (glossaryGenerating.has(kw) || !selectedLanguages.length) return
+    const statusEl = document.getElementById('settings-status')
+    if (glossary.length >= GLOSSARY_MAX) {
+      statusEl.textContent = `Glossary is full (max ${GLOSSARY_MAX} terms)`
+      return
+    }
+    glossaryGenerating.add(kw)
+    renderKeywordList()
+    statusEl.textContent = `Looking up "${kw}"`
+    try {
+      const res = await fetch(`/api/session/${sid}/glossary/generate`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ term: kw })
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        statusEl.textContent = data.detail || 'Error'
+        return
+      }
+      const count = Object.keys(data.entry).length
+      glossary = mergeGlossary(glossary, [data.entry])
+      updateDictLabel()
+      renderGlossaryList()
+      // After the save, so its own 'Saved' doesn't overwrite the summary.
+      await saveGlossary()
+      statusEl.textContent = `Added "${kw}" in ${count} language${count === 1 ? '' : 's'}`
+    } catch (e) {
+      statusEl.textContent = 'Error'
+      console.error('Failed to generate glossary entry:', e)
+    } finally {
+      glossaryGenerating.delete(kw)
+      renderKeywordList()
+    }
   }
 
   async function loadKeywords() {
@@ -1135,6 +1201,9 @@
   let glossary = []
   let glossarySaveTimer = null
   const GLOSSARY_MAX = 200
+  // Index of the row being edited in place (-1 = none). Only one at a time; the
+  // edit row itself holds the pending values, in its inputs.
+  let glossaryEditIndex = -1
 
   function updateDictLabel() {
     const label = document.getElementById('td-dropdown-label')
@@ -1154,10 +1223,13 @@
     const list = document.getElementById('gl-list')
     list.innerHTML = ''
     document.getElementById('gl-export-btn').textContent = glossary.length ? 'Export' : 'Export example'
+    // Which terms are in the glossary decides how the keyword rows' lookup
+    // buttons look, so the two lists always repaint together.
+    renderKeywordList()
     if (!glossary.length) {
       const empty = document.createElement('div')
       empty.className = 'text-xs text-gray-500 px-2 py-1'
-      empty.textContent = 'No glossary terms imported.'
+      empty.textContent = 'No glossary terms yet.'
       list.appendChild(empty)
       return
     }
@@ -1167,6 +1239,10 @@
     // zh-TW where the session uses zh-Hant-TW).
     const targets = new Set(selectedLanguages)
     glossary.forEach(function (entry, idx) {
+      if (idx === glossaryEditIndex) {
+        list.appendChild(buildGlossaryEditRow(idx))
+        return
+      }
       const row = document.createElement('div')
       row.className = 'flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300'
       const inactive = !Object.keys(entry).some(lang => targets.has(lang))
@@ -1184,10 +1260,17 @@
       row.innerHTML = `
         <div class="flex-1 flex flex-wrap gap-x-2 gap-y-1 min-w-0">${chips}</div>
         ${warning}
+        <button class="gl-edit-btn text-gray-600 hover:text-blue-400 transition-colors flex-shrink-0" title="Edit term">
+          <iconify-icon icon="mdi:pencil" width="14" height="14"></iconify-icon>
+        </button>
         <button class="gl-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove term">
           <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
         </button>
       `
+      row.querySelector('.gl-edit-btn').addEventListener('click', function () {
+        glossaryEditIndex = idx
+        renderGlossaryList()
+      })
       row.querySelector('.gl-remove-btn').addEventListener('click', function () {
         glossary.splice(idx, 1)
         updateDictLabel()
@@ -1198,12 +1281,94 @@
     })
   }
 
+  // The in-place editor for one term: a spelling input per language, a row to
+  // add another language, and save/cancel. AI lookups and imports both land
+  // guesses in the glossary, so a wrong rendering has to be fixable without
+  // deleting the term and re-importing a hand-written file.
+  function buildGlossaryEditRow(idx) {
+    const row = document.createElement('div')
+    row.className = 'flex flex-col gap-1 px-2 py-2 rounded bg-gray-800 border border-gray-600'
+    const listId = `gl-lang-options-${idx}`
+    row.innerHTML = `
+      <div class="gl-edit-fields flex flex-col gap-1"></div>
+      <div class="flex items-center gap-1">
+        <input class="gl-new-lang panel-input flex-none w-24 font-mono" placeholder="Code" list="${listId}">
+        <datalist id="${listId}">${selectedLanguages.map(c => `<option value="${escapeHtml(c)}"></option>`).join('')}</datalist>
+        <input class="gl-new-term panel-input font-mono" placeholder="Spelling">
+        <button class="gl-lang-add-btn panel-add-btn">Add</button>
+      </div>
+      <div class="flex justify-end gap-1">
+        <button class="gl-cancel-btn panel-add-btn">Cancel</button>
+        <button class="gl-save-btn panel-add-btn">Save</button>
+      </div>
+    `
+    // The fields are the edit state — no separate draft object to keep in step
+    // with what the user has typed. Adding and removing a language touches only
+    // this container, so the rest of the list (and the focused input) stays put.
+    const fields = row.querySelector('.gl-edit-fields')
+
+    function addField(lang, term) {
+      const field = document.createElement('div')
+      field.className = 'flex items-center gap-1'
+      field.innerHTML = `
+        <span class="text-[10px] px-1 py-0.5 rounded bg-gray-700 text-gray-400 w-24 flex-shrink-0 truncate" title="${escapeHtml(langLabel(lang))}">${escapeHtml(lang)}</span>
+        <input class="gl-edit-input panel-input font-mono" data-lang="${escapeHtml(lang)}" value="${escapeHtml(term)}">
+        <button class="gl-lang-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove this language">
+          <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
+        </button>
+      `
+      field.querySelector('.gl-lang-remove-btn').addEventListener('click', () => field.remove())
+      fields.appendChild(field)
+    }
+
+    Object.entries(glossary[idx]).forEach(([lang, term]) => addField(lang, term))
+
+    row.querySelector('.gl-lang-add-btn').addEventListener('click', function () {
+      const langInput = row.querySelector('.gl-new-lang')
+      const termInput = row.querySelector('.gl-new-term')
+      const lang = langInput.value.trim()
+      const term = termInput.value.trim()
+      if (!lang || !term) return
+      addField(lang, term)
+      langInput.value = ''
+      termInput.value = ''
+      langInput.focus()
+    })
+    row.querySelector('.gl-cancel-btn').addEventListener('click', function () {
+      glossaryEditIndex = -1
+      renderGlossaryList()
+    })
+    row.querySelector('.gl-save-btn').addEventListener('click', function () {
+      const edited = {}
+      row.querySelectorAll('.gl-edit-input').forEach(function (input) {
+        const term = input.value.trim()
+        if (term) edited[input.dataset.lang] = term
+      })
+      // The server drops a one-spelling entry outright, so say so here rather
+      // than let the term vanish on the next reload.
+      if (Object.keys(edited).length < 2) {
+        document.getElementById('settings-status').textContent = 'A term needs at least two spellings'
+        return
+      }
+      glossary[idx] = edited
+      glossaryEditIndex = -1
+      updateDictLabel()
+      renderGlossaryList()
+      debouncedSaveGlossary()
+    })
+    return row
+  }
+
   async function loadGlossary() {
     try {
       const res = await fetch(`/api/session/${sid}/glossary`, { credentials: 'same-origin' })
       if (res.ok) {
         const data = await res.json()
         glossary = Array.isArray(data.glossary) ? data.glossary : []
+        // Row indices don't survive a reload, so an open editor can't either.
+        // Syncing is suppressed while any modal is open, so this only fires
+        // between edits, not under the user's fingers.
+        glossaryEditIndex = -1
         updateDictLabel()
         renderGlossaryList()
       }

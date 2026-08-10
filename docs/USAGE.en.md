@@ -103,6 +103,7 @@ Constraints:
 | Keywords | Names, terminology, or event-specific terms used by correction and translation |
 | Pinned keywords | Lock specific keywords against auto-rotation or eviction |
 | Text dictionary | Direct text substitution before correction and translation |
+| Glossary | Multilingual term table; each term's spelling per language, swapped in before translating |
 | Co-owners | The primary owner may add collaborators |
 | Microphone | Toggle realtime audio input |
 
@@ -162,6 +163,9 @@ Requires session management permission.
 | `POST` | `/api/session/{sid}/keywords` | Update keywords and locked keywords |
 | `GET` | `/api/session/{sid}/text-dictionary` | Read text dictionary |
 | `POST` | `/api/session/{sid}/text-dictionary` | Update text dictionary |
+| `GET` | `/api/session/{sid}/glossary` | Read the multilingual glossary |
+| `POST` | `/api/session/{sid}/glossary` | Update the multilingual glossary |
+| `POST` | `/api/session/{sid}/glossary/generate` | Look one term up on the web with AI (needs a Gemini or OpenAI key) |
 | `GET` | `/api/session/{sid}/scribe-language` | Read Scribe language |
 | `POST` | `/api/session/{sid}/scribe-language` | Update Scribe language |
 | `GET` | `/api/session/{sid}/translate-tone` | Read translation tone |
@@ -211,6 +215,7 @@ Key management API:
 | Redis `keywords:{sid}` | Session keywords cache |
 | Redis `locked_keywords:{sid}` | Pinned keywords cache |
 | Redis `text_dictionary:{sid}` | Text dictionary cache |
+| Redis `glossary:{sid}` | Multilingual glossary cache |
 
 ## 7. Acceptance Checks
 
@@ -303,3 +308,5 @@ Key management API:
 - SRT export reflects committed segments only and excludes in-flight partials.
 - After edits via `/edit/{session_id}`, already-open viewer pages may need a reload to see historical changes.
 - The text dictionary is a direct substitution; avoid strings that are too short or easily collide.
+- AI glossary lookup ignores `AI_PROVIDER`: it prefers Gemini (Google Search grounding) and falls back to OpenAI's Responses API `web_search` tool when there is no `GEMINI_API_KEY`. With neither key the button reports the feature as unconfigured. Translation itself still uses the account's chosen provider.
+- A looked-up rendering is a search result, not a guarantee — review or edit the entries in the Dictionary modal before a live event.

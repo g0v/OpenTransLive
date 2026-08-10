@@ -103,6 +103,7 @@ Session 擁有者或 co-owner 可開啟 `/edit/{session_id}`：
 | Keywords | 提供人名、專有名詞或活動術語給修正與翻譯流程使用 |
 | Pinned keywords | 鎖定特定 keyword，避免被自動排序或淘汰 |
 | Text dictionary | 在修正與翻譯前做直接文字替換 |
+| Glossary | 多語詞條表；同一個詞在各語言的寫法，翻譯前會換成目標語言的寫法 |
 | Co-owners | 主要擁有者可新增協作者 |
 | Microphone | 開啟或關閉即時音訊輸入 |
 
@@ -162,6 +163,9 @@ Server to client：
 | `POST` | `/api/session/{sid}/keywords` | 更新 keywords 與 locked keywords |
 | `GET` | `/api/session/{sid}/text-dictionary` | 讀取文字字典 |
 | `POST` | `/api/session/{sid}/text-dictionary` | 更新文字字典 |
+| `GET` | `/api/session/{sid}/glossary` | 讀取多語詞條表 |
+| `POST` | `/api/session/{sid}/glossary` | 更新多語詞條表 |
+| `POST` | `/api/session/{sid}/glossary/generate` | 以 AI 搜尋網路產生單一詞條（需 Gemini 或 OpenAI key） |
 | `GET` | `/api/session/{sid}/scribe-language` | 讀取 Scribe 語言設定 |
 | `POST` | `/api/session/{sid}/scribe-language` | 更新 Scribe 語言設定 |
 | `GET` | `/api/session/{sid}/translate-tone` | 讀取翻譯語氣 |
@@ -211,6 +215,7 @@ Key 管理 API：
 | Redis `keywords:{sid}` | session keywords 快取 |
 | Redis `locked_keywords:{sid}` | pinned keywords 快取 |
 | Redis `text_dictionary:{sid}` | 文字字典快取 |
+| Redis `glossary:{sid}` | 多語詞條表快取 |
 
 ## 7. 成果確認清單
 
@@ -303,3 +308,5 @@ Key 管理 API：
 - SRT 匯出以已儲存的 committed segments 為準，不包含仍在處理中的 partial segment。
 - `/edit/{session_id}` 修改後，已開啟的觀眾頁可能需要重新整理才會看到歷史片段修正。
 - Text dictionary 是直接替換，設定時應避免過短或容易誤傷的字串。
+- Glossary 的 AI 產生功能不受 `AI_PROVIDER` 影響：優先使用 Gemini（Google Search grounding），沒有 `GEMINI_API_KEY` 時退回 OpenAI Responses API 的 `web_search` 工具，兩把 key 都沒有時該按鈕回報功能未設定。翻譯本身仍使用帳號選定的 provider。
+- AI 產生的譯名是查詢結果而非保證正確，正式活動前建議在 Dictionary modal 內逐條確認或修改。

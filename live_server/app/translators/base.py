@@ -53,5 +53,29 @@ class BaseTranslator(ABC):
             existing_keywords: Already-known keywords (name → score).
         """
 
+    def supports_glossary(self) -> bool:
+        """Whether generate_glossary can actually run here.
+
+        False when the backend has no web search at all, and also when it has one
+        but this deployment hasn't configured it (no API key, no prompt). Lets a
+        caller pick a backend that will work instead of paying for a failed call.
+        """
+        return False
+
+    async def generate_glossary(self, term: str, languages: list[str]) -> dict[str, str] | None:
+        """Return ``{language code: spelling}`` for *term*, or None if unsupported.
+
+        Deliberately not abstract: it needs web-grounded search to be worth
+        anything, which only some backends offer. The default says "not
+        available here" so callers can report that instead of guessing.
+
+        Args:
+            term: The word or name to look up.
+            languages: BCP-47 codes wanted in the result. The backend also
+                reports the term's own language, and omits any language it
+                cannot find an established spelling for.
+        """
+        return None
+
     async def close(self) -> None:
         """Release any held resources (HTTP connections, etc.)."""
