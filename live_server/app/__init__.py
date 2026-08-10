@@ -1796,6 +1796,63 @@ async def update_session_glossary_endpoint(request: Request, sid: str):
     return {"glossary": entries}
 
 
+# A web-grounded LLM lookup, an order of magnitude more expensive than the other
+# settings writes, so the limit is per-minute rather than the usual 100/10s.
+@app.post("/api/session/{sid}/glossary/generate", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_identifier))])
+async def generate_session_glossary_entry_endpoint(request: Request, sid: str):
+    """Look a term up on the web and return its spelling in each target language.
+
+    Generation only — the caller merges the entry into the glossary and saves it
+    through the regular glossary endpoint, so imported and generated terms share
+    one merge path.
+    """
+    sid = sanitize_query_param(sid, "session ID")
+    await _require_session_owner(request, sid)
+
+    from .translation_service import (
+        GLOSSARY_MAX_LANGS,
+        GLOSSARY_MAX_TERM_LEN,
+        get_session_languages,
+        glossary_entry_is_inert,
+        normalize_generated_glossary_entry,
+    )
+    from .translators import get_glossary_translator
+
+    body = await request.json()
+    term = body.get("term")
+    if not isinstance(term, str) or not term.strip():
+        raise HTTPException(status_code=400, detail="term must be a non-empty string")
+    term = term.strip()
+    if len(term) > GLOSSARY_MAX_TERM_LEN:
+        raise HTTPException(status_code=400, detail=f"term too long (max {GLOSSARY_MAX_TERM_LEN} chars)")
+
+    # Taken from the session rather than the request: the languages decide how
+    # much work the lookup does, so they are not the client's to inflate.
+    languages = await get_session_languages(redis_client, sid)
+    if not languages:
+        raise HTTPException(status_code=400, detail="Set target languages first")
+
+    # Not the session's provider: grounding is what makes the lookup worth
+    # anything, and only some backends have it. Translation still runs on
+    # whichever provider the account chose.
+    translator = get_glossary_translator()
+    if translator is None:
+        raise HTTPException(status_code=503, detail="Glossary lookup is not configured on this server")
+    entry = await translator.generate_glossary(term, languages[:GLOSSARY_MAX_LANGS])
+    if entry is None:
+        raise HTTPException(status_code=502, detail="The glossary lookup failed — try again")
+
+    entry = normalize_generated_glossary_entry(entry)
+    if glossary_entry_is_inert(entry):
+        # An unknown term looks like either of these: nothing came back, or the
+        # model padded its answer by repeating the term in every language.
+        raise HTTPException(status_code=422, detail=(
+            f'No established translations found for "{term}"' if len(entry) < 2
+            else f'Every language writes "{term}" the same way — the keyword already covers it'
+        ))
+    return {"entry": entry}
+
+
 @app.get("/api/session/{sid}/scribe-language", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def get_session_scribe_language_endpoint(request: Request, sid: str):
     """Get the forced detect language for Scribe (empty means auto-detect)."""

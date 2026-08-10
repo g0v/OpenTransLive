@@ -133,6 +133,24 @@ def get_translator(provider: str | None = None) -> BaseTranslator:
     return inst
 
 
+# Backends that can look a glossary term up on the web, best first. Gemini leads
+# on cost: the same lookup measured ~9k input tokens on OpenAI's Responses API
+# and far more through any chat-completions search model, while Gemini's
+# grounding runs on the flash tier. Deliberately independent of AI_PROVIDER — a
+# deployment translating on Groq should still get the lookup if it holds either
+# of these keys.
+_GLOSSARY_PROVIDERS = ("gemini", "openai")
+
+
+def get_glossary_translator() -> BaseTranslator | None:
+    """Return the preferred backend for glossary lookups, or None if unconfigured."""
+    for provider in _GLOSSARY_PROVIDERS:
+        translator = get_translator(provider)
+        if translator.supports_glossary():
+            return translator
+    return None
+
+
 async def close_translator() -> None:
     """Release resources held by all cached translators."""
     instances = list(_instances.values())
@@ -140,4 +158,10 @@ async def close_translator() -> None:
     await asyncio.gather(*(inst.close() for inst in instances), return_exceptions=True)
 
 
-__all__ = ["BaseTranslator", "get_translator", "close_translator", "AVAILABLE_PROVIDERS"]
+__all__ = [
+    "BaseTranslator",
+    "get_translator",
+    "get_glossary_translator",
+    "close_translator",
+    "AVAILABLE_PROVIDERS",
+]

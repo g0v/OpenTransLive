@@ -425,6 +425,11 @@ GLOSSARY_MAX_LANGS = 20         # spellings per entry
 GLOSSARY_MAX_TERM_LEN = 200     # per language code and per spelling
 _GLOSSARY_KEYWORD_CAP = 30      # max glossary spellings added to the correction prompt
 
+# Shape of a BCP-47 code (en-US, zh-Hant-TW). Only applied to machine-generated
+# entries: hand-written and imported ones are the user's business, and a typo
+# there already shows up in the panel as an `unused` badge.
+LANGUAGE_CODE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{1,8}){0,4}$")
+
 
 def normalize_glossary(data) -> list[dict[str, str]]:
     """Normalize stored glossary data into a list of term entries.
@@ -446,6 +451,28 @@ def normalize_glossary(data) -> list[dict[str, str]]:
         }
         if len(entry) >= 2:
             out.append(entry)
+    return out
+
+
+def normalize_generated_glossary_entry(entry) -> dict[str, str]:
+    """Clean one machine-generated entry down to what the glossary can store.
+
+    Stricter than `normalize_glossary`, which trusts that a human wrote the file:
+    keys here must look like language codes, because a model that finds nothing
+    sometimes keys a spelling by the term itself. The caps that `POST /glossary`
+    would reject outright are trimmed instead — a chatty answer should not make
+    the user's whole save fail later.
+    """
+    cleaned = normalize_glossary([entry])
+    if not cleaned:
+        return {}
+    out: dict[str, str] = {}
+    for lang, spelling in cleaned[0].items():
+        if not LANGUAGE_CODE_RE.match(lang) or len(spelling) > GLOSSARY_MAX_TERM_LEN:
+            continue
+        out[lang] = spelling
+        if len(out) >= GLOSSARY_MAX_LANGS:
+            break
     return out
 
 
@@ -477,6 +504,16 @@ def build_glossary_map(entries: list[dict[str, str]], language: str) -> dict[str
                 continue
             mapping.setdefault(src, dst)
     return mapping
+
+
+def glossary_entry_is_inert(entry: dict[str, str]) -> bool:
+    """True when an entry can never swap anything, so storing it is pointless.
+
+    `build_glossary_map` skips a source spelling equal to its target, so an entry
+    down to one spelling, or one whose languages all write the term the same way,
+    produces an empty map for every target language.
+    """
+    return len({spelling.casefold() for spelling in entry.values()}) < 2
 
 
 def glossary_keywords(entries: list[dict[str, str]], cap: int = _GLOSSARY_KEYWORD_CAP) -> list[str]:
