@@ -153,8 +153,13 @@ active_scribe_managers: TTLCache = _ManagerTTLCache(
 active_translation_managers: TTLCache = _ManagerTTLCache(
     maxsize=_MANAGER_CACHE_MAX, ttl=_MANAGER_CACHE_TTL
 )
-# Pending debounce tasks for partial transcription broadcasts, keyed by session_id.
-_partial_debounce_tasks: dict = {}
+# Emit the leading partial immediately, then collapse bursts to their latest payload.
+_PARTIAL_DEBOUNCE_WINDOW = 0.075  # seconds
+_partial_debounce_tasks: dict[str, asyncio.Task] = {}
+# TTL prevents inactive session IDs from accumulating indefinitely.
+_partial_last_emit_started: TTLCache = TTLCache(
+    maxsize=_MANAGER_CACHE_MAX, ttl=_MANAGER_CACHE_TTL
+)
 # Per-session locks serializing the read-modify-write on transcription:{sid}:partial so that
 # flow_only client partials, server scribe translation partials, and commits cannot interleave
 # across the read->write await gap and stomp each other. Valid only while SERVER_WORKERS == 1
@@ -2905,24 +2910,38 @@ async def _process_transcription_update(session_id, sync_data):
         await sio.emit('transcription_update', p, room=session_id)
         await _publish_transcription_update(session_id, p)
 
+    async def _emit_partial(p):
+        # Mark before awaiting I/O so concurrent updates observe the open window.
+        _partial_last_emit_started[session_id] = time.monotonic()
+        await _emit_now(p)
+
     if is_partial:
-        # Cancel any pending broadcast for this session and schedule a fresh one
-        # after 75 ms so only the latest partial is sent when updates burst.
+        # A newer partial supersedes whatever is still pending for this session.
         existing = _partial_debounce_tasks.pop(session_id, None)
         if existing and not existing.done():
             existing.cancel()
 
-        async def _debounced(p):
-            await asyncio.sleep(0.075)
-            _partial_debounce_tasks.pop(session_id, None)
-            await _emit_now(p)
+        last_emit = _partial_last_emit_started.get(session_id)
+        if last_emit is None or (time.monotonic() - last_emit) >= _PARTIAL_DEBOUNCE_WINDOW:
+            await _emit_partial(payload)
+        else:
+            async def _debounced(p):
+                try:
+                    await asyncio.sleep(_PARTIAL_DEBOUNCE_WINDOW)
+                    await _emit_partial(p)
+                finally:
+                    # Do not let a cancelled task remove its replacement.
+                    if _partial_debounce_tasks.get(session_id) is asyncio.current_task():
+                        _partial_debounce_tasks.pop(session_id, None)
 
-        _partial_debounce_tasks[session_id] = asyncio.create_task(_debounced(payload))
+            _partial_debounce_tasks[session_id] = asyncio.create_task(_debounced(payload))
     else:
         # Committed segments broadcast immediately; cancel any pending partial debounce.
         existing = _partial_debounce_tasks.pop(session_id, None)
         if existing and not existing.done():
             existing.cancel()
+        # The next partial belongs to a new segment and starts a fresh window.
+        _partial_last_emit_started.pop(session_id, None)
         await _emit_now(payload)
     
 @sio.event
