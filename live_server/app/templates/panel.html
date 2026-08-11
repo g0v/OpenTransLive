@@ -220,7 +220,7 @@
           <iconify-icon icon="mdi:pencil" width="11" height="11" class="align-middle"></iconify-icon>, or let AI look
           one up from the Keywords panel.
         </p>
-        <div id="gl-list" class="modal-list max-h-48"></div>
+        <div id="gl-list" class="modal-list"></div>
         <div class="modal-add-row">
           <input id="gl-file-input" type="file" accept=".json,application/json" class="hidden">
           <button id="gl-import-btn" type="button" class="panel-add-btn flex-1">Import JSON</button>
@@ -233,7 +233,7 @@
           Replace specific phrases. Choose <span class="font-mono">Flow</span> to fix the source transcript, or a
           language to rewrite that translation's output.
         </p>
-        <div id="td-list" class="modal-list max-h-48"></div>
+        <div id="td-list" class="modal-list"></div>
         <div class="modal-add-row flex-col items-stretch gap-1">
           <div class="flex gap-1">
             <input id="td-from-input" type="text" placeholder="From" class="panel-input flex-1">
@@ -588,6 +588,9 @@
     color: #e5e7eb;
   }
 
+  /* The lists inside absorb the height, so in practice only they scroll and
+     the headings, hints and add-rows stay put; the body's own scrollbar is a
+     fallback for viewports too short to fit even the shrunken lists. */
   .modal-body {
     padding: 0.75rem 1rem 1rem;
     overflow-y: auto;
@@ -598,12 +601,20 @@
     min-height: 0;
   }
 
+  /* Lists are the only part that shrinks (min-height lets them), and
+     flex-basis: auto makes them claim height in proportion to how many rows
+     they hold, so a short glossary does not steal room from a long replace
+     list when both share the same modal. */
   .modal-list {
     display: flex;
     flex-direction: column;
     gap: 2px;
     overflow-y: auto;
-    min-height: 0;
+    flex: 1 1 auto;
+    min-height: 3.5rem;
+    padding-right: 0.25rem;
+    scrollbar-width: thin;
+    scrollbar-color: #4b5563 transparent;
   }
 
   .modal-add-row {
