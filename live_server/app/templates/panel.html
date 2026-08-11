@@ -1995,6 +1995,13 @@
       const flowCountEl = document.getElementById('flow-count')
       const renderedStartTimes = new Set()
       let partialEl = null
+      // Children of partialEl, kept as refs so an update writes textContent only.
+      // Rebuilding the row with innerHTML on every partial (several times a
+      // second) re-created the spinner element and fired the Tailwind browser
+      // build's MutationObserver each time — a new class candidate there costs a
+      // full in-browser stylesheet recompile, which is what froze the panel.
+      let partialTextEl = null
+      let partialLatencyEl = null
       let segmentCount = 0
       // end_time of the partial currently on screen, so a translated partial that
       // lands after newer flow-only ones can't drag the line back to older text.
@@ -2043,7 +2050,7 @@
       function appendCommitted(segment, fresh) {
         const src = segment.result?.corrected || segment.text || ''
         if (!src) return
-        if (partialEl) { partialEl.remove(); partialEl = null }
+        if (partialEl) { partialEl.remove(); partialEl = null; partialTextEl = null; partialLatencyEl = null }
         partialEndTime = 0
         const p = document.createElement('p')
         p.className = 'flow-item flex justify-between items-start group'
@@ -2070,7 +2077,7 @@
 
       function updatePartial(segment) {
         if (!segment) {
-          if (partialEl) { partialEl.remove(); partialEl = null }
+          if (partialEl) { partialEl.remove(); partialEl = null; partialTextEl = null; partialLatencyEl = null }
           partialEndTime = 0
           return
         }
@@ -2084,7 +2091,7 @@
         // corrected wording lands once, on commit.
         const src = segment.text || ''
         if (!src) {
-          if (partialEl) { partialEl.remove(); partialEl = null }
+          if (partialEl) { partialEl.remove(); partialEl = null; partialTextEl = null; partialLatencyEl = null }
           partialEndTime = 0
           return
         }
@@ -2092,11 +2099,15 @@
         if (!partialEl) {
           partialEl = document.createElement('p')
           partialEl.className = 'flow-item-partial flex justify-between items-start'
+          partialEl.innerHTML = `<span class="flex-1"></span><iconify-icon icon="mdi:loading" class="animate-spin text-gray-600 mt-0.5 ml-1" width="10"></iconify-icon><span class="text-[10px] text-gray-700 ml-1 tabular-nums"></span>`
+          partialTextEl = partialEl.querySelector('.flex-1')
+          partialLatencyEl = partialEl.lastElementChild
           flowContent.appendChild(partialEl)
         }
         partialEl.dataset.src = src
         const latency = segmentLatency(segment)
-        partialEl.innerHTML = `<span class="flex-1">${escapeHtml(applyFlowDict(src))}</span><iconify-icon icon="mdi:loading" class="animate-spin text-gray-600 mt-0.5 ml-1" width="10"></iconify-icon><span class="text-[10px] text-gray-700 ml-1 tabular-nums">${latency.toFixed(2)}s</span>`
+        partialTextEl.textContent = applyFlowDict(src)
+        partialLatencyEl.textContent = latency.toFixed(2) + 's'
         scrollToBottom()
       }
 

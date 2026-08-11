@@ -285,6 +285,11 @@ function startLevelMeter() {
   let smoothPct = 0;
   const RISE_COEFF = 0.25;  // fast attack
   const FALL_COEFF = 0.025;  // slow decay
+  // Last painted values: the meter runs at 60fps, and rewriting className /
+  // textContent every frame costs a style recalc per frame for nothing. Only
+  // touch the DOM when the rendered value actually changes.
+  let lastColor = null;
+  let lastDbText = null;
 
   function update() {
     if (!analyserNode) return;
@@ -310,20 +315,18 @@ function startLevelMeter() {
 
     bar.style.width = smoothPct + '%';
     // Color: green below 70%, yellow 70-90%, red above 90%
-    if (smoothPct > 90) {
-      bar.className = bar.className.replace(/bg-\w+-500/, 'bg-red-500');
-      if (dbLabel) {
-        console.log("peak");
-        dbLabel.classList.remove('peak-active');
-        dbLabel.classList.add('peak-active');
-      }
-    } else if (smoothPct > 70) {
-      bar.className = bar.className.replace(/bg-\w+-500/, 'bg-yellow-500');
-    } else {
-      bar.className = bar.className.replace(/bg-\w+-500/, 'bg-green-500');
+    const color = smoothPct > 90 ? 'bg-red-500' : smoothPct > 70 ? 'bg-yellow-500' : 'bg-green-500';
+    if (color !== lastColor) {
+      bar.className = bar.className.replace(/bg-\w+-500/, color);
+      lastColor = color;
     }
+    dbLabel.classList.toggle('peak-active', smoothPct > 90);
 
-    dbLabel.textContent = (db > -100 ? db.toFixed(0) : '--') + 'dB';
+    const dbText = (db > -100 ? db.toFixed(0) : '--') + 'dB';
+    if (dbText !== lastDbText) {
+      dbLabel.textContent = dbText;
+      lastDbText = dbText;
+    }
     levelAnimFrame = requestAnimationFrame(update);
   }
   levelAnimFrame = requestAnimationFrame(update);
