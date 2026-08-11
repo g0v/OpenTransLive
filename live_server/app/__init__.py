@@ -328,26 +328,12 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
         return manager
 
 
-async def _read_stored_partial(session_id):
-    """The partial transcription currently stored for a session, or None.
-
-    Handed to TranslationQueueManager so a queued item can re-read the partial at
-    dispatch time instead of translating against the snapshot it was enqueued with.
-    """
-    try:
-        raw = await redis_client.get(f"transcription:{session_id}:partial")
-    except Exception as e:
-        log_exception(logger, e, "Redis get partial error")
-        raise
-    return json.loads(raw) if raw else None
-
-
 def _get_or_create_translation_manager(session_id):
     """Return existing TranslationQueueManager or create and start a new one."""
     manager = active_translation_managers.get(session_id)
     if not manager:
         from .translation_service import TranslationQueueManager
-        manager = TranslationQueueManager(on_translation_completed, _read_stored_partial)
+        manager = TranslationQueueManager(on_translation_completed)
         active_translation_managers[session_id] = manager
         asyncio.create_task(manager.start())
     return manager

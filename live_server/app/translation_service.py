@@ -778,12 +778,8 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
 class TranslationQueueManager:
     _COMMIT_QUEUE_MAXSIZE = 50  # bound commit queue to prevent OOM under slow LLM
 
-    def __init__(self, callback, refresh_partial=None):
+    def __init__(self, callback):
         self.callback = callback
-        # Reads back the partial a session has stored right now. Optional so tests
-        # can build a manager without Redis; without it queued items keep the
-        # context snapshot they were enqueued with.
-        self.refresh_partial = refresh_partial
         self.partial_task = None
         self._pending_partial = None  # latest partial waiting for in-flight to finish
         self.commit_queue = asyncio.Queue(maxsize=self._COMMIT_QUEUE_MAXSIZE)
@@ -927,38 +923,11 @@ class TranslationQueueManager:
                 )
             await self.commit_queue.put(item)
 
-    async def _refreshed(self, item):
-        """Re-read the stored partial into a queued item's context snapshot.
-
-        cached_data is captured in the scribe callback, before the item may sit
-        parked behind an in-flight translation. By the time it runs, the partial it
-        carries can be a full round out of date: partial N+1 is snapshotted while N
-        is still translating, so it sees N-1's result and gets handed N-1's wording
-        as prev_*. N then broadcasts its own wording and N+1 overwrites it with a
-        rendering that ignored it, which is what makes terms flip back and forth
-        between partials. Re-reading here anchors every dispatch on the newest
-        translation actually broadcast.
-
-        A missing partial is a real answer, not a failure: the commit that closed the
-        segment deletes the key, and carrying the deleted one forward would feed the
-        LLM a line that already ended. Only an outright Redis error keeps the
-        snapshot, since a stale context still beats no context.
-        """
-        if self.refresh_partial is None:
-            return item
-        session_id, sync_data, cached_data, redis_client = item
-        try:
-            latest = await self.refresh_partial(session_id)
-        except Exception as e:
-            log_exception(logger, e, "Refresh partial context error")
-            return item
-        return (session_id, sync_data, {**cached_data, "partial": latest}, redis_client)
-
     async def _loop(self):
         while self.is_running:
             try:
                 item = await self.commit_queue.get()
-                await self._process(*await self._refreshed(item))
+                await self._process(*item)
                 self.commit_queue.task_done()
             except asyncio.CancelledError:
                 break
@@ -967,20 +936,21 @@ class TranslationQueueManager:
             await asyncio.sleep(0.01)
 
     async def _process_partial(self, session_id, sync_data, cached_data, redis_client):
-        await self._process(session_id, sync_data, cached_data, redis_client)
+        completed = await self._process(session_id, sync_data, cached_data, redis_client)
         # Dispatch the next queued partial if one arrived while we were in-flight,
         # unless a commit has since closed its segment.
         pending, self._pending_partial = self._pending_partial, None
         self._inflight_partial_start = None
-        if pending is None or self._stale(pending[1]):
-            return
-        # Claim the slot before awaiting the refresh: a partial arriving during it
-        # must park behind us in _pending_partial (this task is still running, so
-        # put() sees partial_task as unfinished) rather than replace the item we
-        # already took off the slot.
-        self._inflight_partial_start = segment_start(pending[1])
-        pending = await self._refreshed(pending)
-        self.partial_task = asyncio.create_task(self._process_partial(*pending))
+        if pending is not None and not self._stale(pending[1]):
+            # pending was snapshotted while this request was still in flight, so its
+            # cached partial is one translation behind. Hand it the result we just
+            # produced directly; waiting for the callback to persist it would race
+            # the next dispatch and an extra Redis read would not fix that race.
+            if completed and segment_start(completed) == segment_start(pending[1]):
+                sid, data, context, redis = pending
+                pending = (sid, data, {**context, "partial": completed}, redis)
+            self._inflight_partial_start = segment_start(pending[1])
+            self.partial_task = asyncio.create_task(self._process_partial(*pending))
 
     async def _process(self, session_id, sync_data, cached_data, redis_client):
         try:
@@ -990,6 +960,7 @@ class TranslationQueueManager:
             # The partial key is cleared by the callback's broadcast path, which owns
             # it and holds the per-session lock (see _should_delete_partial).
             asyncio.create_task(self.callback(session_id, result_data))
+            return result_data
         except asyncio.CancelledError:
             logger.debug(f"Translation task cancelled for session {session_id}")
         except Exception as e:
