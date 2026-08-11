@@ -49,6 +49,11 @@ _EXTRACT_KEYWORDS_PROMPT = _CONFIG["prompts"]["extract_keywords"]
 # crashing the import.
 _GENERATE_GLOSSARY_PROMPT = _CONFIG["prompts"].get("generate_glossary")
 _TONE_MAP = _CONFIG["tone_map"]
+# Shown instead of an empty prev_corrected/prev_translation. A bare "Previous:"
+# with nothing after it reads as a truncated instruction, and models fill the
+# gap by inventing continuity that isn't there; saying the line just started is
+# unambiguous.
+_NO_PREV = "(none - this line just started)"
 _PROVIDER_PARAMS = _CONFIG["providers"]
 
 
@@ -215,7 +220,9 @@ class ChatCompletionTranslator(BaseTranslator):
             "messages": [
                 {
                     "role": self.system_role,
-                    "content": _CORRECT_PROMPT.format(keywords=keywords, prev_corrected=prev_corrected),
+                    "content": _CORRECT_PROMPT.format(
+                        keywords=keywords, prev_corrected=prev_corrected or _NO_PREV
+                    ),
                 },
                 {"role": "user", "content": text},
             ],
@@ -254,7 +261,7 @@ class ChatCompletionTranslator(BaseTranslator):
                         language=language,
                         tone=tone_desc,
                         keywords=keywords,
-                        prev_translation=prev_translation,
+                        prev_translation=prev_translation or _NO_PREV,
                     ),
                 },
                 {
