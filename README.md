@@ -186,8 +186,6 @@ Copyright (c) 2025 Sean Gau <rrtw0627@gmail.com>
 
 **商標**：`OpenTransLive` 名稱與相關識別標誌不在 AGPL 授權範圍內（AGPL 第 7 條不授予商標權）。Fork 或衍生作品請使用不同的名稱與品牌識別。
 
-**商業授權**：若 AGPL 的 copyleft 條款不適用於你的情境（例如需要閉源整合進商業產品），可另行取得商業授權。請聯絡 Sean Gau <rrtw0627@gmail.com>。
-
 ## 貢獻
 
 歡迎 issue 與 pull request。主要貢獻者：[SeanGau](https://github.com/SeanGau)。

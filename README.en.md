@@ -186,8 +186,6 @@ This project is released under the **GNU AGPL v3.0**. See [LICENSE](LICENSE). In
 
 **Trademark**: the `OpenTransLive` name and logos are not covered by the AGPL (section 7 grants no trademark rights). Forks and derivative works must use a different name and branding.
 
-**Commercial licensing**: if the AGPL's copyleft terms do not fit your use case (for example, integrating into a closed-source commercial product), a separate commercial license is available. Contact Sean Gau [rrtw0627@gmail.com](mailto:rrtw0627@gmail.com).
-
 ## Contributing
 
 Issues and pull requests welcome. Lead contributor: [SeanGau](https://github.com/SeanGau).
