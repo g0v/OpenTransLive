@@ -22,7 +22,11 @@ services:
       - opentranslive-net
 
   backend:
-    build: .
+    build:
+      context: .
+      args:
+        SOURCE_REPOSITORY_URL: ${SOURCE_REPOSITORY_URL:-https://github.com/g0v/OpenTransLive}
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
     container_name: opentranslive-app
     ports:
       - "127.0.0.1:${SERVER_PORT:-5000}:5000"
@@ -30,6 +34,11 @@ services:
       # Without this the container never sees ENVIRONMENT and silently runs in
       # development mode (insecure cookies, permissive CORS, dev-only logging).
       ENVIRONMENT: ${ENVIRONMENT:-development}
+      # Production deployments must point users to this deployed version's
+      # complete corresponding source (preferably an immutable tag or commit).
+      SOURCE_CODE_URL: ${SOURCE_CODE_URL:-}
+      SOURCE_REPOSITORY_URL: ${SOURCE_REPOSITORY_URL:-}
+      SOURCE_REVISION: ${SOURCE_REVISION:-}
     volumes:
       - ./app:/app/app
       - ./logs:/app/logs

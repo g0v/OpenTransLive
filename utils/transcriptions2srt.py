@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# This file is part of g0v/OpenTransLive.
+# Copyright (c) 2025 Sean Gau <rrtw0627@gmail.com>
+# Licensed under the GNU AGPL v3.0
+# See LICENSE for details.
 """Convert OpenTransLive transcription JSON to per-language SRT files."""
 
 import json

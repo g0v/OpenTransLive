@@ -175,11 +175,24 @@ docker-compose up -d
 
 ## License
 
-GNU AGPL v3.0. See [LICENSE](LICENSE).
+Copyright (c) 2025 Sean Gau [rrtw0627@gmail.com](mailto:rrtw0627@gmail.com)
+
+This project is released under the **GNU AGPL v3.0**. See [LICENSE](LICENSE). In short:
+
+- You are free to use, modify, and self-host it.
+- If you **modify** the project and let users interact with it over a network (e.g. running it as a public service), AGPL section 13 requires you to offer those users the complete corresponding source of your modified version.
+- Any derivative work must also be licensed under AGPL v3.0.
+- Copyright notices and license headers must be preserved.
+
+**Trademark**: the `OpenTransLive` name and logos are not covered by the AGPL (section 7 grants no trademark rights). Forks and derivative works must use a different name and branding.
+
+**Commercial licensing**: if the AGPL's copyleft terms do not fit your use case (for example, integrating into a closed-source commercial product), a separate commercial license is available. Contact Sean Gau [rrtw0627@gmail.com](mailto:rrtw0627@gmail.com).
 
 ## Contributing
 
 Issues and pull requests welcome. Lead contributor: [SeanGau](https://github.com/SeanGau).
+
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR: this project uses a Contributor License Agreement, and every contribution must carry a `Signed-off-by` line to be merged.
 
 1. Fork the repo
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
@@ -195,5 +208,7 @@ Issues and pull requests welcome. Lead contributor: [SeanGau](https://github.com
 - [Issue tracker](https://github.com/g0v/opentranslive/issues)
 
 ## Acknowledgements
+
+This project is supported by **FtO (Facing the Ocean, 面海松)** and **g0v intl**.
 
 Thanks to every contributor and to the g0v community.

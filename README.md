@@ -175,11 +175,24 @@ docker-compose up -d
 
 ## 授權
 
-GNU AGPL v3.0。詳見 [LICENSE](LICENSE)。
+Copyright (c) 2025 Sean Gau <rrtw0627@gmail.com>
+
+本專案以 **GNU AGPL v3.0** 授權釋出，詳見 [LICENSE](LICENSE)。重點提醒：
+
+- 你可以自由使用、修改、自行部署。
+- 若你**修改過**本專案並讓使用者透過網路使用（例如自架成對外服務），AGPL 第 13 條要求你必須向這些使用者提供你修改後的完整原始碼。
+- 任何衍生作品也必須以 AGPL v3.0 授權。
+- 授權不得移除原始的著作權標示與授權聲明。
+
+**商標**：`OpenTransLive` 名稱與相關識別標誌不在 AGPL 授權範圍內（AGPL 第 7 條不授予商標權）。Fork 或衍生作品請使用不同的名稱與品牌識別。
+
+**商業授權**：若 AGPL 的 copyleft 條款不適用於你的情境（例如需要閉源整合進商業產品），可另行取得商業授權。請聯絡 Sean Gau <rrtw0627@gmail.com>。
 
 ## 貢獻
 
 歡迎 issue 與 pull request。主要貢獻者：[SeanGau](https://github.com/SeanGau)。
+
+送出 PR 前請先閱讀 [CONTRIBUTING.md](CONTRIBUTING.md)：本專案採用 CLA（貢獻者授權同意書），所有貢獻需附上 `Signed-off-by` 才能合併。
 
 1. Fork 本專案
 2. 建立功能分支 (`git checkout -b feature/amazing-feature`)
@@ -196,4 +209,6 @@ GNU AGPL v3.0。詳見 [LICENSE](LICENSE)。
 
 ## 致謝
 
-感謝所有為本專案做出貢獻的開發者和 g0v 社群成員。
+本專案由 **FtO 面海松**與 **g0v intl 國際交流小組** 支持。
+
+感謝所有為本專案做出貢獻的開發者和 g0v 社群。

@@ -1,3 +1,9 @@
+{#
+  This file is part of g0v/OpenTransLive.
+  Copyright (c) 2025 Sean Gau <rrtw0627@gmail.com>
+  Licensed under the GNU AGPL v3.0
+  See LICENSE for details.
+-#}
 <!DOCTYPE html>
 <html lang="en">
 
@@ -47,6 +53,17 @@
 
 <body>
   {% block content %} {% endblock %} {% block scripts %} {% endblock %}
+
+  {# AGPL v3.0 section 13: users interacting with the server over a network must be
+     offered the corresponding source. Pages that already show a source link in their
+     own layout override this block with an empty one. #}
+  {% block source_offer %}
+  <a href="{{ source_code_url }}" target="_blank" rel="noopener"
+    class="fixed bottom-2 right-2 z-40 inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-[10px] leading-none text-white/75 backdrop-blur-sm transition hover:text-white"
+    title="OpenTransLive is licensed under the GNU AGPL v3.0. Get the source code.">
+    <iconify-icon icon="ph:github-logo" width="11" height="11"></iconify-icon>AGPL · Source
+  </a>
+  {% endblock %}
 </body>
 
 </html>

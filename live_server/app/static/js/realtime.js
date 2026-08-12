@@ -1,3 +1,9 @@
+/*
+ * This file is part of g0v/OpenTransLive.
+ * Copyright (c) 2025 Sean Gau <rrtw0627@gmail.com>
+ * Licensed under the GNU AGPL v3.0
+ * See LICENSE for details.
+ */
 // Passing creds via the io() auth payload pre-verifies the socket on the
 // server's connect handler, so events firing before join_session completes
 // (e.g. mic_on right after a reconnect) don't race and see verified=False.

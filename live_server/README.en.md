@@ -39,8 +39,10 @@ uv run uvicorn app:socket_app --reload --host 0.0.0.0 --port 5000
 ```bash
 cp app/secret/config.example.toml app/secret/config.toml
 # Edit app/secret/config.toml
-docker-compose up -d
+./scripts/compose.sh up -d
 ```
+
+The script derives the current repository and commit from Git, injects the exact source URL into the service, and records the provenance in OCI image labels. It refuses production deployments from a dirty worktree so the published source cannot differ from the running service. For non-GitHub forges, set `SOURCE_CODE_URL` to override the generated URL.
 
 Compose starts the FastAPI server, MongoDB, and Redis.
 
@@ -79,6 +81,9 @@ Some runtime options still come from environment variables:
 | Variable | Description | Default |
 |---|---|---|
 | `ENVIRONMENT` | `production` enables Secure cookies and a strict Socket.IO CORS allowlist, and stops OTPs from being logged | `development` |
+| `SOURCE_CODE_URL` | Complete corresponding source URL for the deployed version; required in production, preferably pinned to a tag or commit | Upstream repository in development |
+| `SOURCE_REPOSITORY_URL` | Build source repository; derived by `scripts/compose.sh` | Git remote `origin` |
+| `SOURCE_REVISION` | Build source commit SHA; derived by `scripts/compose.sh` | Git `HEAD` |
 | `SOCKET_CORS_ALLOWED_ORIGINS` | Comma-separated Socket.IO allowlist in production | Built-in localhost allowlist |
 | `SEGMENT_WRITE_WORKERS` | MongoDB segment-write worker count | `2` |
 | `SEGMENT_WRITE_QUEUE_MAXSIZE` | Max segments queued before backpressure | `500` |

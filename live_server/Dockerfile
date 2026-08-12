@@ -25,6 +25,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Build provenance is supplied by scripts/compose.sh (or the CI system). Keep
+# it in standard OCI labels so registries and deployment tooling can identify
+# the exact source without copying .git into the production image.
+ARG SOURCE_REPOSITORY_URL="https://github.com/g0v/OpenTransLive"
+ARG SOURCE_REVISION="unknown"
+LABEL org.opencontainers.image.source="${SOURCE_REPOSITORY_URL}" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}"
+
 # Copy the virtual environment with all dependencies from the build stage
 COPY --from=build /app/.venv ./.venv
 

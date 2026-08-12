@@ -1,3 +1,9 @@
+{#
+  This file is part of g0v/OpenTransLive.
+  Copyright (c) 2025 Sean Gau <rrtw0627@gmail.com>
+  Licensed under the GNU AGPL v3.0
+  See LICENSE for details.
+-#}
 {% extends "base.html" %}
 {% block title %}OpenTransLive - Real-time Translation{% endblock %}
 
@@ -279,10 +285,10 @@
                 transparency and open collaboration.
             </p>
             <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
-                <a href="https://github.com/g0v/OpenTransLive" target="_blank"
+                <a href="{{ source_code_url }}" target="_blank" rel="noopener"
                     class="inline-flex items-center gap-2 border border-gray-300 text-gray-700 font-semibold py-2 px-6 rounded-full hover:bg-gray-100 transition duration-300">
                     <iconify-icon icon="mdi:github" width="20" height="20"></iconify-icon>
-                    View on GitHub
+                    Source code
                 </a>
                 <a href="https://g0v.tw" target="_blank"
                     class="inline-flex items-center gap-2 bg-gray-900 text-white font-semibold py-2 px-6 rounded-full hover:bg-gray-700 transition duration-300">
@@ -410,3 +416,6 @@
     })
 </script>
 {% endblock %}
+
+{# Source link is already part of this page's own layout. #}
+{% block source_offer %}{% endblock %}

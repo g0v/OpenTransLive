@@ -1,3 +1,9 @@
+{#
+  This file is part of g0v/OpenTransLive.
+  Copyright (c) 2025 Sean Gau <rrtw0627@gmail.com>
+  Licensed under the GNU AGPL v3.0
+  See LICENSE for details.
+-#}
 {% extends "base.html" %} {% block content %}
 <div id="app-root" class="flex flex-col h-svh font-sans">
 
@@ -193,9 +199,9 @@
     class="shrink-0 border-t border-divider px-4 py-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs opacity-50">
     <span>OpenTransLive</span>
     <span class="opacity-30">·</span>
-    <a href="https://github.com/g0v/OpenTransLive" target="_blank" rel="noopener"
+    <a href="{{ source_code_url }}" target="_blank" rel="noopener"
       class="inline-flex items-center gap-1 underline hover:opacity-80">
-      <iconify-icon icon="ph:github-logo" width="12" height="12"></iconify-icon>View on GitHub
+      <iconify-icon icon="ph:github-logo" width="12" height="12"></iconify-icon>Source code
     </a>
     <span class="opacity-30">·</span>
     <span>AI-generated content — may contain errors</span>
@@ -1641,3 +1647,6 @@
   });
 </script>
 {% endblock %}
+
+{# Source link is already part of this page's own layout. #}
+{% block source_offer %}{% endblock %}

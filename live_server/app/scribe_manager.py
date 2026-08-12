@@ -1,3 +1,7 @@
+# This file is part of g0v/OpenTransLive.
+# Copyright (c) 2025 Sean Gau <rrtw0627@gmail.com>
+# Licensed under the GNU AGPL v3.0
+# See LICENSE for details.
 import asyncio
 import json
 import random

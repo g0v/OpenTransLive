@@ -1,5 +1,5 @@
 # This file is part of g0v/OpenTransLive.
-# Copyright (c) 2025 Sean Gau
+# Copyright (c) 2025 Sean Gau <rrtw0627@gmail.com>
 # Licensed under the GNU AGPL v3.0
 # See LICENSE for details.
 
@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 dotenv.load_dotenv(override=True)
 
-from .config import SETTINGS, REDIS_URL, IS_PRODUCTION
+from .config import SETTINGS, REDIS_URL, IS_PRODUCTION, SOURCE_CODE_URL
 try:
     from .config import EMAIL_SETTINGS
 except ImportError:
@@ -523,6 +523,7 @@ app.add_middleware(
 timestamp = datetime.now(timezone.utc).timestamp()
 templates = Jinja2Templates(directory="app/templates")
 templates.env.globals["timestamp"] = timestamp
+templates.env.globals["source_code_url"] = SOURCE_CODE_URL
 
 # Mount static files
 static_dir = Path("app/static")

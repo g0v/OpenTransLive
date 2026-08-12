@@ -39,8 +39,10 @@ uv run uvicorn app:socket_app --reload --host 0.0.0.0 --port 5000
 ```bash
 cp app/secret/config.example.toml app/secret/config.toml
 # 編輯 app/secret/config.toml
-docker-compose up -d
+./scripts/compose.sh up -d
 ```
+
+腳本會從 Git 自動取得目前 repository 與 commit，將精確的原始碼網址注入服務，並把來源資訊寫入 OCI image labels。正式環境若含有未提交變更，腳本會拒絕部署，避免公開的原始碼與實際服務內容不一致。若使用非 GitHub forge，可設定 `SOURCE_CODE_URL` 覆寫自動產生的網址。
 
 Compose 會啟動 FastAPI server、MongoDB、Redis。
 
@@ -76,6 +78,9 @@ Compose 會啟動 FastAPI server、MongoDB、Redis。
 | 變數 | 說明 | 預設 |
 |---|---|---|
 | `ENVIRONMENT` | 設為 `production` 會開啟 Secure cookie 與嚴格的 Socket.IO CORS，並停止在 log 印出 OTP | `development` |
+| `SOURCE_CODE_URL` | 實際部署版本的完整對應原始碼網址；production 必填，建議指向固定 tag 或 commit | 開發環境使用上游 repository |
+| `SOURCE_REPOSITORY_URL` | 建置來源 repository；`scripts/compose.sh` 會自動取得 | Git remote `origin` |
+| `SOURCE_REVISION` | 建置來源 commit SHA；`scripts/compose.sh` 會自動取得 | Git `HEAD` |
 | `SOCKET_CORS_ALLOWED_ORIGINS` | production 模式下的 Socket.IO 允許來源（逗號分隔）| 內建 localhost 清單 |
 | `SEGMENT_WRITE_WORKERS` | MongoDB segment 寫入 worker 數 | `2` |
 | `SEGMENT_WRITE_QUEUE_MAXSIZE` | 寫入佇列容量上限 | `500` |

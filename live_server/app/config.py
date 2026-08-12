@@ -1,3 +1,7 @@
+# This file is part of g0v/OpenTransLive.
+# Copyright (c) 2025 Sean Gau <rrtw0627@gmail.com>
+# Licensed under the GNU AGPL v3.0
+# See LICENSE for details.
 """Application configuration, loaded from secret/config.toml.
 
 Copy secret/config.example.toml to secret/config.toml and fill in your values::
@@ -22,6 +26,14 @@ _SECRET_DIR = Path(__file__).with_name("secret")
 # production (Secure cookies, strict Socket.IO CORS, no dev-only debug logging).
 # Defined once here so the polarity can't drift between call sites.
 IS_PRODUCTION = os.environ.get("ENVIRONMENT", "development").strip().lower() == "production"
+
+SOURCE_CODE_URL = os.environ.get("SOURCE_CODE_URL", "").strip()
+if IS_PRODUCTION and not SOURCE_CODE_URL:
+    raise RuntimeError(
+        "SOURCE_CODE_URL must point to the corresponding source of the deployed version."
+    )
+if not SOURCE_CODE_URL:
+    SOURCE_CODE_URL = "https://github.com/g0v/OpenTransLive"
 
 
 def load_secret_toml(name: str, *, example_fallback: bool = False) -> dict:
