@@ -6,16 +6,14 @@ import asyncio
 import json
 import re
 from functools import lru_cache
-from opencc import OpenCC
 from .config import REALTIME_SETTINGS
 from .database import rooms_collection, users_collection
 from .logger_config import setup_logger, log_exception
 from .socket_schema import is_finite_number
+from .text_script import should_force_traditional, to_simplified, to_taiwan_traditional
 from .translators import get_translator
 
 logger = setup_logger(__name__)
-_cc_s2tw = OpenCC('s2tw')
-_cc_tw2s = OpenCC('tw2s')
 
 
 def _normalize_chinese_output(text: str, language: str) -> str:
@@ -28,9 +26,9 @@ def _normalize_chinese_output(text: str, language: str) -> str:
         return text
     lang = language.lower()
     if "hant" in lang or lang.endswith("-tw"):
-        return _cc_s2tw.convert(text)
+        return to_taiwan_traditional(text)
     if "hans" in lang or lang.endswith("-cn"):
-        return _cc_tw2s.convert(text)
+        return to_simplified(text)
     return text
 
 _KEYWORD_CAP = 30          # max keywords sent in prompts
@@ -713,8 +711,8 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     # The correction LLM can reintroduce Simplified characters even when scribe
     # already handed us Traditional; re-apply the same s2tw gate scribe uses so
     # the flow (source) panel stays consistent downstream (translate + rerank).
-    if scribe_language.startswith("zh"):
-        result["corrected"] = _cc_s2tw.convert(result["corrected"])
+    if should_force_traditional(scribe_language):
+        result["corrected"] = to_taiwan_traditional(result["corrected"])
 
     # 2. Parallel translations
     translated = {}

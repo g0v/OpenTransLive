@@ -13,11 +13,10 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
 from datetime import datetime, timezone
 from .config import REALTIME_SETTINGS
 from .logger_config import setup_logger, log_exception
-from opencc import OpenCC
+from .text_script import dominant_script, should_force_traditional, to_taiwan_traditional
 
 logger = setup_logger(__name__)
 encoding = tiktoken.get_encoding("o200k_base")
-_cc_s2tw = OpenCC('s2tw')
 
 # No retry ceiling on purpose: as long as audio keeps arriving we keep trying to
 # reconnect, because a session that silently stops transcribing mid-stream is worse
@@ -55,8 +54,18 @@ _IDLE_TIMEOUT_SECS = 60       # stop session after 1 minute with no audio
 _IDLE_CHECK_INTERVAL = 30     # how often the watchdog checks (seconds)
 _MAX_SESSION_SECS = 300       # while audio keeps flowing, proactively restart a connection older than this
                               # to bound ElevenLabs session length (avoids long-run buildup / queue_overflow)
-_MAX_PARTIAL_TOKENS = 150     # maximum length of partial transcript
-_MIN_COMMIT_TOKENS = 50       # commits shorter than this are buffered and merged into the next segment
+_MAX_PARTIAL_TOKENS = 150     # maximum length of partial transcript; token-based on purpose,
+                              # since what it protects is prompt size and LLM cost
+# Whether a commit is long enough to stand on its own is measured in elapsed time,
+# the only unit that means the same thing in every language. Tokens are not: the same
+# sentence runs ~1.2 characters per token in Chinese but ~5.4 in English, so a
+# token-only floor buffers and merges far more aggressively in Latin-script languages
+# — precisely the merging that glues two languages into one segment.
+_MIN_COMMIT_SECS = 2.5        # wall clock since the segment's first transcript, which
+                              # approximates its speech length: VAD commits after ~1s of
+                              # silence, so a segment holds little dead air
+_MIN_COMMIT_TOKENS = 50       # second gate for a commit that arrived with no preceding
+                              # partial, where the elapsed time is still ~0
 _COMMIT_TIMEOUT_SECS = 10     # force-flush buffered short commits after this delay if no follow-up arrives
 
 class ScribeSessionManager:
@@ -238,6 +247,24 @@ class ScribeSessionManager:
         self.should_commit = False
         self._cancel_commit_timeout()
 
+    def _flush_pending(self, now: datetime, reason: str, cancel_timeout: bool = True):
+        """Emit the buffered short-commit text as its own committed segment and close
+        the segment behind it.
+
+        Both callers need the identical four-field reset, so it is written once here.
+        `cancel_timeout` is False for _commit_timeout_handler, which *is* the pending
+        timeout task and must not cancel itself.
+        """
+        text = self.pending_commit_text.strip()
+        transcription = self._build_transcription(text, False, now)
+        self.pending_commit_text = ""
+        self.seg_start_time = None
+        self.should_commit = False
+        if cancel_timeout:
+            self._cancel_commit_timeout()
+        logger.info(f"{reason} for {self.session_id}, flushing: {repr(text)}")
+        asyncio.create_task(self.callback(self.session_id, transcription))
+
     def _cancel_commit_timeout(self):
         """Cancel the pending short-commit flush task, if any is scheduled."""
         if self._commit_timeout_task and not self._commit_timeout_task.done():
@@ -330,8 +357,11 @@ class ScribeSessionManager:
 
     def _build_transcription(self, text: str, partial: bool, end_time: datetime) -> dict:
         if self.seg_start_time is None: return {}
-        if self.language_code.startswith('zh') or (self.language_code == '' and REALTIME_SETTINGS.get("FORCE_OPENCC", False)):
-            text = _cc_s2tw.convert(text)
+        if should_force_traditional(self.language_code):
+            # to_taiwan_traditional leaves Japanese alone. That guard matters even when
+            # the operator forced 'zho': kana in the output means this line was not
+            # Chinese, whatever the setting says.
+            text = to_taiwan_traditional(text)
         return {
             "text": text,
             "partial": partial,
@@ -359,15 +389,23 @@ class ScribeSessionManager:
     async def handle_transcript(self, data):
         try:
             transcript = data.get("text", "").strip()
-            if not transcript or len(transcript) <= 2:
+            # Strip trailing punctuation before deciding whether anything is left; a
+            # lone "。" carries no content.
+            transcript = transcript.rstrip(",.。，").strip()
+            if not transcript:
+                return
+            # A minimum length only means something where a single character is not a
+            # word: one or two letters of an alphabetic script ("a", "uh") is almost
+            # always ASR noise, while one or two Han/kana/Hangul characters is a
+            # complete reply — 「はい」「好」「對」「네」 were all being dropped by the
+            # blanket length check this replaces. Longer junk is still caught by
+            # _is_hallucination below.
+            if len(transcript) <= 2 and dominant_script(transcript) not in ("han", "kana", "hangul"):
                 return
 
             msg_type = data.get("message_type")
             partial = (msg_type == "partial_transcript")
             now = datetime.now(timezone.utc)
-
-            # Efficiently strip specific punctuation
-            transcript = transcript.rstrip(",.。，").strip()
 
             if self._is_hallucination(transcript):
                 logger.warning(f"Hallucination detected, dropping: {repr(transcript)}")
@@ -382,12 +420,32 @@ class ScribeSessionManager:
             kind = "flow-only partial" if flow_only else "partial" if partial else "committed"
             print(f"accept transcript {kind}: {transcript}, {delta_t}", flush=True)
 
+            # A short commit parked in pending_commit_text belongs to whatever language
+            # was being spoken then. When the writing system flips, merging the two would
+            # hand the corrector and translator one mixed-language segment, so close the
+            # pending text out on its own and let this transcript open a fresh segment.
+            if self.pending_commit_text and self.seg_start_time is not None:
+                pending_script = dominant_script(self.pending_commit_text)
+                new_script = dominant_script(transcript)
+                # "other" means no letters at all (a bare number). That is not evidence
+                # of a language change, and treating it as one would cut a sentence in
+                # half every time someone says a figure.
+                if (pending_script != new_script
+                        and "other" not in (pending_script, new_script)):
+                    self._flush_pending(now, f"Script boundary ({pending_script} -> {new_script})")
+
             if self.seg_start_time is None:
                 self.seg_start_time = now
 
             combined_text = self.pending_commit_text + transcript
             encode_len = len(encoding.encode(combined_text))
-            emit_partial = partial or encode_len < _MIN_COMMIT_TOKENS
+            # seg_start_time spans the buffered pending text too, so this is the whole
+            # candidate segment's elapsed time. Either gate clearing lets the commit
+            # stand alone; see _MIN_COMMIT_SECS for why time leads.
+            seg_secs = (now - self.seg_start_time).total_seconds()
+            emit_partial = partial or (
+                seg_secs < _MIN_COMMIT_SECS and encode_len < _MIN_COMMIT_TOKENS
+            )
 
             if emit_partial:
                 transcription = self._build_transcription(combined_text, True, now)
@@ -425,16 +483,10 @@ class ScribeSessionManager:
         try:
             await asyncio.sleep(_COMMIT_TIMEOUT_SECS)
             if self.pending_commit_text and self.seg_start_time is not None:
-                now = datetime.now(timezone.utc)
-                text = self.pending_commit_text.strip()
-                transcription = self._build_transcription(text, False, now)
-                self.pending_commit_text = ""
-                self.seg_start_time = None
-                self.should_commit = False
-                logger.info(
-                    f"Commit timeout reached for {self.session_id}, flushing: {repr(text)}"
+                self._flush_pending(
+                    datetime.now(timezone.utc), "Commit timeout reached",
+                    cancel_timeout=False,
                 )
-                asyncio.create_task(self.callback(self.session_id, transcription))
         except asyncio.CancelledError:
             pass
         except Exception as e:
