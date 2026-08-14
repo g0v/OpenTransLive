@@ -740,6 +740,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
                 keywords=keywords_str,
                 tone=tone,
                 commit=not partial,
+                source=scribe_language,
             )
         except Exception as e:
             log_exception(logger, e, f"Translation error for {language}")

@@ -254,8 +254,12 @@ class ChatCompletionTranslator(BaseTranslator):
         keywords: str,
         tone: str = "",
         commit: bool = False,
+        source: str = "",
     ) -> str | None:
         tone_desc = _TONE_MAP.get(tone, tone) if tone else _TONE_MAP["fluent"]
+        # Carries its own leading space, so an empty source leaves the Task line
+        # exactly as it reads without one.
+        source_clause = f" from {source}" if source else ""
         body = {
             **self.translate_params,
             "messages": [
@@ -263,6 +267,7 @@ class ChatCompletionTranslator(BaseTranslator):
                     "role": self.system_role,
                     "content": _TRANSLATE_PROMPT.format(
                         language=language,
+                        source=source_clause,
                         tone=tone_desc,
                         keywords=keywords,
                         prev_translation=prev_translation or _NO_PREV,

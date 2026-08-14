@@ -33,6 +33,7 @@ class BaseTranslator(ABC):
         keywords: str,
         tone: str = "",
         commit: bool = False,
+        source: str = "",
     ) -> str | None:
         """Return *text* translated into *language*, or None if translation failed.
 
@@ -44,6 +45,11 @@ class BaseTranslator(ABC):
             keywords: Comma-separated domain keywords.
             commit: True for durable committed segments, which retry harder
                 since an unrecovered translation is stored as a permanent gap.
+            source: Source language code, empty on auto detect. Only ever set
+                from the operator's explicit setting, so the prompt can state
+                it as fact rather than as a guess — a detector's guess here
+                would be worse than saying nothing, since the model reads the
+                text better than any detector we could put in front of it.
         """
 
     @abstractmethod
