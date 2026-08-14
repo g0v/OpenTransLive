@@ -14,6 +14,8 @@ Both OpenCC converters live here and are private: every conversion goes through 
 functions below so the kana guard cannot be bypassed by reaching for the raw one.
 """
 import re
+import unicodedata
+
 from opencc import OpenCC
 
 from .config import REALTIME_SETTINGS
@@ -28,17 +30,21 @@ _KANA_RE = re.compile(r'[぀-ヿｦ-ﾝ]')
 # Syllables + conjoining jamo + compatibility jamo. Checked second for the same
 # reason: Korean can carry Han hanja.
 _HANGUL_RE = re.compile(r'[가-힣ᄀ-ᇿ㄰-㆏]')
-# Everything else is decided by which script carries the most *content*, which is
-# not the same as the most characters: one Han character is a morpheme while one
-# Latin word takes about five letters. Comparing raw counts would call
-# "開放原始碼 open source" Latin, so a Chinese talk sprinkled with English terms
-# would look like it changed language every other sentence. Each script's
-# character count is therefore divided by roughly how many characters one of its
-# words takes. Punctuation, digits and whitespace match nothing here on purpose —
-# they say nothing about language, and letting them vote would make a short
-# numeric fragment look like a script of its own.
-_COUNTED_SCRIPTS = (
-    ("han", re.compile(r'[一-鿿㐀-䶿豈-﫿]'), 1),
+# Roughly how many characters one word of each script takes. Character counts are
+# not comparable across scripts — one Han character is a morpheme while one Latin
+# word takes about five letters — so everything that wants "how much was said"
+# divides by these instead of counting characters or tokens. Punctuation, digits
+# and whitespace match nothing here on purpose: they say nothing about language,
+# and letting them vote would make a short numeric fragment look like a script of
+# its own.
+_CHARS_PER_WORD = (
+    ("kana", _KANA_RE, 2),
+    ("hangul", _HANGUL_RE, 3),
+    # Ext A, URO, then the compatibility ideographs. That last range starts at
+    # U+F900, a character visually identical to the ordinary U+8C48 — this range was
+    # written with the U+8C48 one, which silently widened it to U+8C48-U+FAFF and
+    # swallowed all of Hangul and Yi. Keep the endpoints escaped so they stay legible.
+    ("han", re.compile('[\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff]'), 1),
     ("latin", re.compile(r'[A-Za-zÀ-ɏ]'), 5),
     ("cyrillic", re.compile(r'[Ѐ-ӿ]'), 5),
     ("thai", re.compile(r'[฀-๿]'), 3),
@@ -60,12 +66,34 @@ def dominant_script(text: str) -> str:
         return "kana"
     if _HANGUL_RE.search(text):
         return "hangul"
+    # The two checks above already returned if any kana or hangul was present, so
+    # those entries necessarily score 0 here and cannot win — no need to skip them.
     winner, best = "other", 0.0
-    for name, pattern, chars_per_word in _COUNTED_SCRIPTS:
+    for name, pattern, chars_per_word in _CHARS_PER_WORD:
         score = len(pattern.findall(text)) / chars_per_word
         if score > best:
             winner, best = name, score
     return winner
+
+
+def approx_word_count(text: str) -> float:
+    """Roughly how many words this text carries, on a scale that means the same
+    thing in every script.
+
+    "好" and "Okay" both count as about one word, where a character count would
+    make them differ fivefold and a token count about fourfold. Callers that need
+    to ask "was enough said here" use this; token counts are for questions that
+    really are about tokens, such as prompt size.
+
+    Coarse on purpose, and it over-counts mixed Japanese slightly because kanji
+    and the kana inflecting them are each counted (食べる scores ~2). Nothing here
+    needs better than that.
+    """
+    # Decomposed Hangul is two or three conjoining jamo per syllable, all of which
+    # _HANGUL_RE matches, so counting without composing first triples Korean.
+    text = unicodedata.normalize("NFC", text)
+    return sum(len(pattern.findall(text)) / chars_per_word
+               for _, pattern, chars_per_word in _CHARS_PER_WORD)
 
 
 def should_force_traditional(language_code: str | None) -> bool:

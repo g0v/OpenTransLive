@@ -13,7 +13,8 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
 from datetime import datetime, timezone
 from .config import REALTIME_SETTINGS
 from .logger_config import setup_logger, log_exception
-from .text_script import dominant_script, should_force_traditional, to_taiwan_traditional
+from .text_script import (approx_word_count, dominant_script, should_force_traditional,
+                          to_taiwan_traditional)
 
 logger = setup_logger(__name__)
 encoding = tiktoken.get_encoding("o200k_base")
@@ -56,16 +57,16 @@ _MAX_SESSION_SECS = 300       # while audio keeps flowing, proactively restart a
                               # to bound ElevenLabs session length (avoids long-run buildup / queue_overflow)
 _MAX_PARTIAL_TOKENS = 150     # maximum length of partial transcript; token-based on purpose,
                               # since what it protects is prompt size and LLM cost
-# Whether a commit is long enough to stand on its own is measured in elapsed time,
-# the only unit that means the same thing in every language. Tokens are not: the same
-# sentence runs ~1.2 characters per token in Chinese but ~5.4 in English, so a
-# token-only floor buffers and merges far more aggressively in Latin-script languages
-# — precisely the merging that glues two languages into one segment.
-_MIN_COMMIT_SECS = 2.5        # wall clock since the segment's first transcript, which
-                              # approximates its speech length: VAD commits after ~1s of
-                              # silence, so a segment holds little dead air
-_MIN_COMMIT_TOKENS = 50       # second gate for a commit that arrived with no preceding
-                              # partial, where the elapsed time is still ~0
+# Whether a commit is long enough to stand on its own is measured on the text itself,
+# in approximate words (see approx_word_count). Neither of the units this replaces
+# worked. Tokens run ~1.2 characters each in Chinese but ~5.4 in English, so a token
+# floor merges far more aggressively in Latin-script languages — precisely the merging
+# that glues two languages into one segment. Elapsed wall clock is worse: it spans
+# message arrival times, so it carries ASR latency, network jitter and the ~1s of
+# silence VAD waits for before committing, and it is ~0 whenever a commit arrives with
+# no preceding partial. Words are comparable across scripts and are the same number
+# whether or not a partial came first, so one gate covers both paths.
+_MIN_COMMIT_WORDS = 6       # ~6 Han characters, ~7 English words, ~2 Korean eojeol
 _COMMIT_TIMEOUT_SECS = 10     # force-flush buffered short commits after this delay if no follow-up arrives
 
 class ScribeSessionManager:
@@ -438,14 +439,9 @@ class ScribeSessionManager:
                 self.seg_start_time = now
 
             combined_text = self.pending_commit_text + transcript
-            encode_len = len(encoding.encode(combined_text))
-            # seg_start_time spans the buffered pending text too, so this is the whole
-            # candidate segment's elapsed time. Either gate clearing lets the commit
-            # stand alone; see _MIN_COMMIT_SECS for why time leads.
-            seg_secs = (now - self.seg_start_time).total_seconds()
-            emit_partial = partial or (
-                seg_secs < _MIN_COMMIT_SECS and encode_len < _MIN_COMMIT_TOKENS
-            )
+            # Judged on the buffered pending text plus this one, so it asks whether the
+            # whole candidate segment says enough to stand alone.
+            emit_partial = partial or approx_word_count(combined_text) < _MIN_COMMIT_WORDS
 
             if emit_partial:
                 transcription = self._build_transcription(combined_text, True, now)
@@ -463,7 +459,9 @@ class ScribeSessionManager:
                     self.pending_commit_text = combined_text + " "
                     if self._commit_timeout_task is None or self._commit_timeout_task.done():
                         self._commit_timeout_task = asyncio.create_task(self._commit_timeout_handler())
-                if encode_len > _MAX_PARTIAL_TOKENS:
+                # Only the partial path can outgrow the cap; a committed segment is
+                # closed out below regardless of size, so it never needs the encode.
+                if len(encoding.encode(combined_text)) > _MAX_PARTIAL_TOKENS:
                     self.should_commit = True
                 asyncio.create_task(self.callback(self.session_id, transcription))
             else:
