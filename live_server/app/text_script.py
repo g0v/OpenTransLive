@@ -13,14 +13,75 @@ because the setting is silent exactly when the session is multilingual.
 Both OpenCC converters live here and are private: every conversion goes through the
 functions below so the kana guard cannot be bypassed by reaching for the raw one.
 """
+import json
+import os
 import re
+import tempfile
 import unicodedata
 
+import opencc
 from opencc import OpenCC
 
 from .config import REALTIME_SETTINGS
 
-_cc_s2tw = OpenCC('s2tw')
+# Characters that are current Taiwanese Traditional in their own right, but that
+# OpenCC lists late among the several Traditional forms one Simplified character can
+# take. Whenever no phrase rule covers the word, the single-character rule picks that
+# first form and rewrites text that was already correct: 干擾 → 幹擾, 里長 → 裡長,
+# 姓范 → 姓範. s2tw assumes its input really is Simplified, and both scribe and the
+# LLMs hand us Traditional often enough that this fires constantly.
+#
+# The fix is the one OpenCC's maintainers recommend for this (BYVoid/OpenCC#165):
+# convert these characters to themselves, ahead of the single-character table. The
+# phrase table is still consulted first — mmseg takes the longest match — so genuinely
+# Simplified 干扰/干活/主干/这里/准备 still become 干擾/幹活/主幹/這裡/準備.
+#
+# A character earns its place here only if it is common in Taiwanese Traditional and
+# its Simplified uses are covered by the phrase table. 后 and 于 are deliberately left
+# out: 然后/由于 chopped into a partial leave a bare Simplified character behind too
+# often to be worth it. 游, 征, 占 and 采 are left out because the phrase table already
+# gets them right, so listing them would add risk and fix nothing.
+_INHERITED_CHARS = "干里范岳准托丑咸"
+
+
+def _build_s2tw() -> OpenCC:
+    """s2tw with _INHERITED_CHARS pinned to themselves.
+
+    OpenCC only takes a config as a file on disk, and it resolves the dictionaries a
+    config names relative to the process, not to the config — so both files have to be
+    written out with absolute paths rather than shipped in the repo.
+    """
+    data_dir = os.path.join(os.path.dirname(opencc.__file__), 'clib', 'share', 'opencc')
+    out_dir = os.path.join(tempfile.gettempdir(), 'opentranslive-opencc')
+    os.makedirs(out_dir, exist_ok=True)
+
+    inherited = os.path.join(out_dir, 'Inherited.txt')
+    with open(inherited, 'w', encoding='utf-8') as f:
+        f.writelines(f"{c}\t{c}\n" for c in _INHERITED_CHARS)
+
+    # Mirrors the stock s2tw.json, with the pinned characters inserted between the
+    # phrase table and the single-character table.
+    config = os.path.join(out_dir, 's2tw_inherited.json')
+    with open(config, 'w', encoding='utf-8') as f:
+        json.dump({
+            "name": "Simplified to Traditional (Taiwan), keeping inherited characters",
+            "segmentation": {
+                "type": "mmseg",
+                "dict": {"type": "ocd2", "file": os.path.join(data_dir, 'STPhrases.ocd2')},
+            },
+            "conversion_chain": [
+                {"dict": {"type": "group", "dicts": [
+                    {"type": "ocd2", "file": os.path.join(data_dir, 'STPhrases.ocd2')},
+                    {"type": "text", "file": inherited},
+                    {"type": "ocd2", "file": os.path.join(data_dir, 'STCharacters.ocd2')},
+                ]}},
+                {"dict": {"type": "ocd2", "file": os.path.join(data_dir, 'TWVariants.ocd2')}},
+            ],
+        }, f)
+    return OpenCC(config)
+
+
+_cc_s2tw = _build_s2tw()
 _cc_tw2s = OpenCC('tw2s')
 
 # Hiragana + katakana + halfwidth katakana. Checked first in dominant_script:
