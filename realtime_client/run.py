@@ -9,7 +9,6 @@ from pathlib import Path
 import os
 import asyncio
 import logging
-import opencc
 import httpx
 import socketio
 import dotenv
@@ -24,7 +23,6 @@ parser.add_argument("-t", "--target-sid", help="target session id", default=None
 parser.add_argument("-s", "--service", help="transcribe service provider (elevenlabs or google)", default="elevenlabs")
 args = parser.parse_args()
 sio = socketio.Client()
-converter = opencc.OpenCC("s2tw")
 
 SERVER_URL = os.getenv("SERVER_ENDPOINT", 'http://localhost:5000')
 AI_MODEL = os.getenv("AI_MODEL", "gpt-4.1-mini")

@@ -10,7 +10,6 @@ import asyncio
 import pyaudio
 import base64
 import logging
-import opencc
 import queue
 import dotenv
 from websockets.asyncio.client import connect as ws_connect
@@ -21,7 +20,6 @@ dotenv.load_dotenv(override=True)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 pya = pyaudio.PyAudio()
-converter = opencc.OpenCC("s2tw")
 
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
