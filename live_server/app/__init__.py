@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 dotenv.load_dotenv(override=True)
 
-from .config import SETTINGS, REDIS_URL, IS_PRODUCTION, SOURCE_CODE_URL
+from .config import SETTINGS, REDIS_URL, IS_PRODUCTION, SOURCE_CODE_URL, PROFESSIONAL_SERVICES_URL
 try:
     from .config import EMAIL_SETTINGS
 except ImportError:
@@ -524,6 +524,7 @@ timestamp = datetime.now(timezone.utc).timestamp()
 templates = Jinja2Templates(directory="app/templates")
 templates.env.globals["timestamp"] = timestamp
 templates.env.globals["source_code_url"] = SOURCE_CODE_URL
+templates.env.globals["professional_services_url"] = PROFESSIONAL_SERVICES_URL
 
 # Mount static files
 static_dir = Path("app/static")

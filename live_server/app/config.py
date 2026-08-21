@@ -35,6 +35,12 @@ if IS_PRODUCTION and not SOURCE_CODE_URL:
 if not SOURCE_CODE_URL:
     SOURCE_CODE_URL = "https://github.com/g0v/OpenTransLive"
 
+# Optional link to a third-party offering commercial support for this deployment
+# (managed hosting, customization, on-site event support). Left empty by default:
+# OpenTransLive is an independent open-source project, so a deployment only
+# advertises a vendor when its own operator opts in.
+PROFESSIONAL_SERVICES_URL = os.environ.get("PROFESSIONAL_SERVICES_URL", "").strip()
+
 
 def load_secret_toml(name: str, *, example_fallback: bool = False) -> dict:
     """Parse ``secret/<name>.toml`` into a dict.

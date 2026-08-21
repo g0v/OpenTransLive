@@ -82,6 +82,7 @@ Some runtime options still come from environment variables:
 |---|---|---|
 | `ENVIRONMENT` | `production` enables Secure cookies and a strict Socket.IO CORS allowlist, and stops OTPs from being logged | `development` |
 | `SOURCE_CODE_URL` | Complete corresponding source URL for the deployed version; required in production, preferably pinned to a tag or commit | Upstream repository in development |
+| `PROFESSIONAL_SERVICES_URL` | Optional; when set, the landing page shows a low-key "Professional Services" link pointing at a provider of deployment, customization, and event support. Hidden entirely when unset | Empty (hidden) |
 | `SOURCE_REPOSITORY_URL` | Build source repository; derived by `scripts/compose.sh` | Git remote `origin` |
 | `SOURCE_REVISION` | Build source commit SHA; derived by `scripts/compose.sh` | Git `HEAD` |
 | `SOCKET_CORS_ALLOWED_ORIGINS` | Comma-separated Socket.IO allowlist in production | Built-in localhost allowlist |
