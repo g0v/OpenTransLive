@@ -79,6 +79,7 @@ Compose 會啟動 FastAPI server、MongoDB、Redis。
 |---|---|---|
 | `ENVIRONMENT` | 設為 `production` 會開啟 Secure cookie 與嚴格的 Socket.IO CORS，並停止在 log 印出 OTP | `development` |
 | `SOURCE_CODE_URL` | 實際部署版本的完整對應原始碼網址；production 必填，建議指向固定 tag 或 commit | 開發環境使用上游 repository |
+| `PROFESSIONAL_SERVICES_URL` | 選填；設定後首頁底部會出現一個低調的「Professional Services」連結，指向提供部署／客製／活動技術支援的服務方。未設定則完全不顯示 | 空（不顯示）|
 | `SOURCE_REPOSITORY_URL` | 建置來源 repository；`scripts/compose.sh` 會自動取得 | Git remote `origin` |
 | `SOURCE_REVISION` | 建置來源 commit SHA；`scripts/compose.sh` 會自動取得 | Git `HEAD` |
 | `SOCKET_CORS_ALLOWED_ORIGINS` | production 模式下的 Socket.IO 允許來源（逗號分隔）| 內建 localhost 清單 |
