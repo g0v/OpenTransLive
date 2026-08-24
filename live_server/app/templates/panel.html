@@ -13,22 +13,35 @@
 {% endblock %}
 
 {% block content %}
-<div class="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
+<div id="studio-root" class="flex h-dvh flex-col bg-[#0b1018] font-sans text-[#edf3fa]">
   <!-- Top Bar -->
-  <header class="">
+  <header id="studio-header" class="relative z-30 shrink-0 border-b border-[#2a3646] bg-[#111925] shadow-[0_10px_32px_rgba(4,9,16,0.22)]">
 
     <!-- Login status -->
-    <div class="flex items-center justify-end gap-2 px-2 py-1">
+    <div class="flex min-h-9 items-center justify-end gap-1.5 border-b border-[#2a3646] px-2.5 max-md:min-h-10">
+      <div class="me-auto inline-flex min-w-0 items-center gap-1.5">
+        <span class="inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-[#326fbd] text-[#dceaff] shadow-[inset_0_1px_0_rgba(255,255,255,0.18)]" aria-hidden="true">
+          <iconify-icon icon="ph:waveform" width="16" height="16"></iconify-icon>
+        </span>
+        <span class="text-[0.82rem] font-bold tracking-[-0.015em] max-[420px]:hidden">OpenTransLive</span>
+        <span class="border-l border-[#3b4a5d] pl-2 text-[0.72rem] text-[#8d9aae] max-md:hidden">Studio</span>
+      </div>
       {% if email %}
-      <span class="text-xs text-gray-400 me-auto">Hi {{ email }}</span>
+      <span class="max-w-[min(28vw,18rem)] truncate text-xs text-gray-400 max-md:hidden">{{ email }}</span>
       <a href="/user-dashboard" class="nav-link">My Sessions</a>
+      <a href="{{ source_code_url }}" target="_blank" rel="noopener" class="nav-link inline-flex items-center gap-1">
+        <iconify-icon icon="ph:github-logo" width="13" height="13"></iconify-icon><span class="max-[420px]:hidden">Source</span>
+      </a>
       <a href="/logout" class="nav-link">Logout</a>
       {% else %}
+      <a href="{{ source_code_url }}" target="_blank" rel="noopener" class="nav-link inline-flex items-center gap-1">
+        <iconify-icon icon="ph:github-logo" width="13" height="13"></iconify-icon><span class="max-[420px]:hidden">Source</span>
+      </a>
       <a href="/login" class="nav-link">Login</a>
       {% endif %}
     </div>
-    <div id="header-toolbar-wrap">
-      <div id="header-toolbar" class="px-3 py-3 bg-gray-800 flex items-center flex-wrap gap-x-3 gap-y-1">
+    <div id="header-toolbar-wrap" class="max-md:absolute max-md:inset-x-0 max-md:top-full max-md:z-50 max-md:grid max-md:grid-rows-[0fr] max-md:transition-[grid-template-rows] max-md:duration-200 max-md:[.header-open_&]:grid-rows-[1fr] max-md:[.header-open_&]:shadow-xl">
+      <div id="header-toolbar" class="flex flex-nowrap items-center gap-1.5 overflow-x-auto overscroll-x-contain border-b border-[#2a3646] bg-[#182230] px-2 py-1.5 [scrollbar-color:#46566b_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1 md:[&_.toolbar-group]:shrink-0 md:[&_.toolbar-group]:gap-1.5 md:[&_.toolbar-group]:p-0.5 md:[&_.toolbar-label]:pl-1.5 md:[&_.toolbar-label]:text-[0.65rem] max-md:min-h-0 max-md:max-h-[min(68vh,34rem)] max-md:flex-wrap max-md:content-start max-md:overflow-hidden max-md:border-x max-md:border-[#2a3646] max-md:py-0 max-md:transition-[padding] max-md:duration-200 max-md:[.header-open_&]:overflow-y-auto max-md:[.header-open_&]:py-2 max-md:[&_.toolbar-group]:w-full max-md:[&_.toolbar-group]:justify-between">
         <div class="toolbar-group">
           <span class="toolbar-label">KEY</span>
           <div class="relative group">
@@ -36,16 +49,16 @@
               class="copyable-input w-full max-w-40 bg-gray-800 border-none text-xs text-gray-400 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none cursor-pointer readonly font-mono"
               readonly title="{{ user_secret_key }}">
             <div class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
-              <iconify-icon icon="mdi:content-copy" class="text-gray-500" width="16" height="16"></iconify-icon>
+              <iconify-icon icon="ph:copy" class="text-gray-500" width="16" height="16"></iconify-icon>
             </div>
           </div>
         </div>
         <!-- Mic Toggle Button -->
         {% if is_realtime_enabled %}
         <div class="toolbar-group" id="mic-group">
-          <button id="mic-toggle-btn" title="Toggle microphone" class="mic-btn mic-off" aria-pressed="false">
-            <iconify-icon class="mic-icon-on" icon="mdi:microphone" width="20" height="20"></iconify-icon>
-            <iconify-icon class="mic-icon-off" icon="mdi:microphone-off" width="20" height="20"></iconify-icon>
+          <button id="mic-toggle-btn" title="Toggle microphone" class="mic-btn mic-off inline-flex min-h-[30px] select-none items-center gap-1.5 rounded-lg border border-transparent px-1.5 py-[3px] text-[0.6rem] font-bold tracking-[0.08em] outline-none transition-colors active:translate-y-px disabled:cursor-not-allowed" aria-pressed="false">
+            <iconify-icon class="mic-icon-on" icon="ph:microphone" width="20" height="20"></iconify-icon>
+            <iconify-icon class="mic-icon-off" icon="ph:microphone-slash" width="20" height="20"></iconify-icon>
             <span id="mic-label">MIC OFF</span>
           </button>
           <div id="mic-level-container" class="flex items-center gap-1" style="display:none;">
@@ -76,7 +89,7 @@
           <span class="toolbar-label">Keywords</span>
           <button id="kw-dropdown-btn" type="button" class="dropdown-btn min-w-20 max-w-40">
             <span id="kw-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
-            <iconify-icon icon="mdi:pencil-outline" width="14" height="14" class="flex-shrink-0"></iconify-icon>
+            <iconify-icon icon="ph:pencil-simple" width="14" height="14" class="flex-shrink-0"></iconify-icon>
           </button>
         </div>
 
@@ -85,7 +98,7 @@
           <span class="toolbar-label">Dictionary</span>
           <button id="td-dropdown-btn" type="button" class="dropdown-btn min-w-20 max-w-40">
             <span id="td-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
-            <iconify-icon icon="mdi:pencil-outline" width="14" height="14" class="flex-shrink-0"></iconify-icon>
+            <iconify-icon icon="ph:pencil-simple" width="14" height="14" class="flex-shrink-0"></iconify-icon>
           </button>
         </div>
 
@@ -94,7 +107,7 @@
           <span class="toolbar-label">Languages</span>
           <button id="lang-dropdown-btn" type="button" class="dropdown-btn min-w-32 max-w-48">
             <span id="lang-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
-            <iconify-icon icon="mdi:pencil-outline" width="14" height="14" class="flex-shrink-0"></iconify-icon>
+            <iconify-icon icon="ph:pencil-simple" width="14" height="14" class="flex-shrink-0"></iconify-icon>
           </button>
         </div>
         <!-- Translate Tone -->
@@ -112,46 +125,46 @@
             class="hidden w-full max-w-36 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none font-mono">
         </div>
 
-        <!-- Co-owners (primary owner only — opens modal) -->
+        <!-- Co-owners (primary owner only - opens modal) -->
         {% if is_primary_owner %}
         <div class="toolbar-group">
           <span class="toolbar-label">Co-owners</span>
           <button id="co-dropdown-btn" type="button" class="dropdown-btn min-w-20 max-w-40">
             <span id="co-dropdown-label" class="truncate flex-1 text-xs">Loading...</span>
-            <iconify-icon icon="mdi:pencil-outline" width="14" height="14" class="flex-shrink-0"></iconify-icon>
+            <iconify-icon icon="ph:pencil-simple" width="14" height="14" class="flex-shrink-0"></iconify-icon>
           </button>
         </div>
         {% endif %}
 
-        <!-- Unified save status for all settings (languages, keywords, tone, etc.) -->
-        <div class="toolbar-group">
-          <span id="settings-status" class="text-xs text-gray-200 px-1 ms-auto">Saved</span>
-        </div>
       </div>
     </div>
     <div class="md:hidden flex items-stretch">
       <button id="header-toggle" type="button"
         class="header-bar flex-1 px-3 py-2 border-b border-gray-700 flex items-center gap-2 text-left"
         aria-label="Toggle controls" aria-expanded="false">
-        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Controls</span>
-        <iconify-icon id="header-chevron" icon="mdi:chevron-down" width="16" height="16"
-          class="text-gray-500 ml-auto"></iconify-icon>
+        <span class="text-xs font-semibold text-gray-300">Controls</span>
+        <iconify-icon id="header-chevron" icon="ph:caret-down" width="16" height="16"
+          class="ml-auto text-gray-500 transition-transform duration-200 [.header-open_&]:rotate-180"></iconify-icon>
       </button>
     </div>
-    <div class="flex py-1 items-center px-2 gap-2">
-      <span class="flex items-center gap-1 text-xs mx-auto">
-        <span id="status-indicator" class="status-dot-md bg-gray-400"></span>
+    <div class="flex min-h-7 items-center gap-2.5 bg-[#111925] px-2.5 text-[#c6d1df] max-md:min-h-9">
+      <span class="flex items-center gap-2 text-xs">
+        <span id="status-indicator" class="status-dot-sm bg-gray-400"></span>
         <span id="status-text">Connecting...</span>
       </span>
-      <span id="viewer-count-display" class="text-xs text-gray-500 pr-4"
+      <span class="flex items-center gap-1.5 border-l border-[#2a3646] pl-2.5 text-xs text-[#8d9aae]">
+        <span class="max-sm:hidden">Settings</span>
+        <span id="settings-status" class="max-w-[min(28vw,16rem)] min-w-12 truncate tabular-nums text-[#bdc9d7] max-sm:max-w-24" role="status" aria-live="polite">Saved</span>
+      </span>
+      <span id="viewer-count-display" class="ms-auto border-l border-[#2a3646] pl-3 text-xs tabular-nums text-[#8d9aae] max-md:pl-2"
         title="Current viewers connected to this session">Viewers: --</span>
       {% if is_realtime_enabled %}
-      <span id="audio-usage-display" class="text-xs text-gray-500 pr-4"
+      <span id="audio-usage-display" class="border-l border-[#2a3646] pl-3 text-xs tabular-nums text-[#8d9aae] max-md:pl-2"
         title="Audio sent to transcription service this session">Audio: --</span>
-      <button id="mic-mobile-btn" title="Toggle microphone" class="mic-btn mic-off my-auto md:hidden!"
+      <button id="mic-mobile-btn" title="Toggle microphone" class="mic-btn mic-off my-auto inline-flex min-h-[30px] select-none items-center gap-1.5 rounded-lg border border-transparent px-1.5 py-[3px] text-[0.6rem] font-bold tracking-[0.08em] outline-none transition-colors active:translate-y-px disabled:cursor-not-allowed md:hidden!"
         aria-pressed="false">
-        <iconify-icon class="mic-icon-on" icon="mdi:microphone" width="20" height="20"></iconify-icon>
-        <iconify-icon class="mic-icon-off" icon="mdi:microphone-off" width="20" height="20"></iconify-icon>
+        <iconify-icon class="mic-icon-on" icon="ph:microphone" width="20" height="20"></iconify-icon>
+        <iconify-icon class="mic-icon-off" icon="ph:microphone-slash" width="20" height="20"></iconify-icon>
       </button>
       {% endif %}
     </div>
@@ -159,22 +172,22 @@
   </header>
 
   <!-- Languages modal -->
-  <div id="lang-dropdown-panel" class="modal-overlay hidden" role="dialog" aria-modal="true"
+  <div id="lang-dropdown-panel" class="modal-overlay hidden fixed flex inset-0 z-[100] items-center justify-center bg-[rgba(3,7,13,0.72)] p-4 backdrop-blur-sm" role="dialog" aria-modal="true"
     aria-labelledby="lang-modal-title">
-    <div class="modal-panel">
-      <div class="modal-header">
-        <h2 id="lang-modal-title" class="modal-title">Languages</h2>
-        <button type="button" class="modal-close-btn" data-modal-close aria-label="Close">
-          <iconify-icon icon="mdi:close" width="20" height="20"></iconify-icon>
+    <div class="modal-panel flex max-h-[85vh] w-full max-w-[30rem] flex-col overflow-hidden rounded-xl border border-[#3b4a5d] bg-[#182230] shadow-[0_24px_72px_rgba(3,8,15,0.48)]">
+      <div class="modal-header flex min-h-[52px] shrink-0 items-center gap-2 border-b border-[#2a3646] px-4 py-3">
+        <h2 id="lang-modal-title" class="modal-title m-0 flex-1 text-base font-bold text-[#edf3fa]">Languages</h2>
+        <button type="button" class="modal-close-btn inline-flex size-8 items-center justify-center rounded-lg text-[#8d9aae] transition-colors hover:bg-[#273548] hover:text-[#edf3fa]" data-modal-close aria-label="Close">
+          <iconify-icon icon="ph:x" width="20" height="20"></iconify-icon>
         </button>
       </div>
-      <div class="modal-body">
-        <p class="text-[11px] text-gray-500 leading-snug">
+      <div class="modal-body flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+        <p class="text-[11px] leading-snug text-[#9eacbf]">
           Select target translation languages. Add a custom BCP-47 code (e.g. <span class="font-mono">ja-JP</span>) if
           it's not in the list.
         </p>
-        <div id="lang-checkbox-list" class="modal-list"></div>
-        <div class="modal-add-row">
+        <div id="lang-checkbox-list" class="modal-list flex min-h-14 flex-1 basis-auto flex-col gap-1 overflow-y-auto pr-1 [scrollbar-color:#4d5d72_transparent] [scrollbar-width:thin] [&>div]:rounded-lg [&>label]:rounded-lg"></div>
+        <div class="modal-add-row flex shrink-0 gap-1 border-t border-[#2a3646] pt-3">
           <input id="lang-custom-input" type="text" placeholder="Custom (e.g. ja-JP)"
             class="panel-input font-mono flex-1">
           <button id="lang-custom-add-btn" type="button" class="panel-add-btn">Add</button>
@@ -184,23 +197,23 @@
   </div>
 
   <!-- Keywords modal -->
-  <div id="kw-dropdown-panel" class="modal-overlay hidden" role="dialog" aria-modal="true"
+  <div id="kw-dropdown-panel" class="modal-overlay hidden fixed flex inset-0 z-[100] items-center justify-center bg-[rgba(3,7,13,0.72)] p-4 backdrop-blur-sm" role="dialog" aria-modal="true"
     aria-labelledby="kw-modal-title">
-    <div class="modal-panel">
-      <div class="modal-header">
-        <h2 id="kw-modal-title" class="modal-title">Keywords</h2>
-        <button type="button" class="modal-close-btn" data-modal-close aria-label="Close">
-          <iconify-icon icon="mdi:close" width="20" height="20"></iconify-icon>
+    <div class="modal-panel flex max-h-[85vh] w-full max-w-[30rem] flex-col overflow-hidden rounded-xl border border-[#3b4a5d] bg-[#182230] shadow-[0_24px_72px_rgba(3,8,15,0.48)]">
+      <div class="modal-header flex min-h-[52px] shrink-0 items-center gap-2 border-b border-[#2a3646] px-4 py-3">
+        <h2 id="kw-modal-title" class="modal-title m-0 flex-1 text-base font-bold text-[#edf3fa]">Keywords</h2>
+        <button type="button" class="modal-close-btn inline-flex size-8 items-center justify-center rounded-lg text-[#8d9aae] transition-colors hover:bg-[#273548] hover:text-[#edf3fa]" data-modal-close aria-label="Close">
+          <iconify-icon icon="ph:x" width="20" height="20"></iconify-icon>
         </button>
       </div>
-      <div class="modal-body">
-        <p class="text-[11px] text-gray-500 leading-snug">
+      <div class="modal-body flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+        <p class="text-[11px] leading-snug text-[#9eacbf]">
           Keywords help the transcriber recognize names, jargon, or phrases. Pin a keyword to keep it from being
-          auto-removed, or use <iconify-icon icon="mdi:translate" width="11" height="11" class="align-middle"></iconify-icon>
+          auto-removed, or use <iconify-icon icon="ph:translate" width="11" height="11" class="align-middle"></iconify-icon>
           to look its translations up on the web and add them to the glossary.
         </p>
-        <div id="kw-list" class="modal-list"></div>
-        <div class="modal-add-row">
+        <div id="kw-list" class="modal-list flex min-h-14 flex-1 basis-auto flex-col gap-1 overflow-y-auto pr-1 [scrollbar-color:#4d5d72_transparent] [scrollbar-width:thin] [&>div]:rounded-lg [&>label]:rounded-lg"></div>
+        <div class="modal-add-row flex shrink-0 gap-1 border-t border-[#2a3646] pt-3">
           <input id="kw-custom-input" type="text" placeholder="Add keyword" class="panel-input flex-1">
           <button id="kw-custom-add-btn" type="button" class="panel-add-btn">Add</button>
         </div>
@@ -209,36 +222,36 @@
   </div>
 
   <!-- Text mapping modal -->
-  <div id="td-dropdown-panel" class="modal-overlay hidden" role="dialog" aria-modal="true"
+  <div id="td-dropdown-panel" class="modal-overlay hidden fixed flex inset-0 z-[100] items-center justify-center bg-[rgba(3,7,13,0.72)] p-4 backdrop-blur-sm" role="dialog" aria-modal="true"
     aria-labelledby="td-modal-title">
-    <div class="modal-panel">
-      <div class="modal-header">
-        <h2 id="td-modal-title" class="modal-title">Dictionary</h2>
-        <button type="button" class="modal-close-btn" data-modal-close aria-label="Close">
-          <iconify-icon icon="mdi:close" width="20" height="20"></iconify-icon>
+    <div class="modal-panel flex max-h-[85vh] w-full max-w-[30rem] flex-col overflow-hidden rounded-xl border border-[#3b4a5d] bg-[#182230] shadow-[0_24px_72px_rgba(3,8,15,0.48)]">
+      <div class="modal-header flex min-h-[52px] shrink-0 items-center gap-2 border-b border-[#2a3646] px-4 py-3">
+        <h2 id="td-modal-title" class="modal-title m-0 flex-1 text-base font-bold text-[#edf3fa]">Dictionary</h2>
+        <button type="button" class="modal-close-btn inline-flex size-8 items-center justify-center rounded-lg text-[#8d9aae] transition-colors hover:bg-[#273548] hover:text-[#edf3fa]" data-modal-close aria-label="Close">
+          <iconify-icon icon="ph:x" width="20" height="20"></iconify-icon>
         </button>
       </div>
-      <div class="modal-body">
-        <h3 class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Glossary</h3>
-        <p class="text-[11px] text-gray-500 leading-snug">
+      <div class="modal-body flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+        <h3 class="text-xs font-semibold text-gray-200">Glossary</h3>
+        <p class="text-[11px] leading-snug text-[#9eacbf]">
           Keeps names and jargon translating the same way every time. One entry holds one term written in several
           languages; the wanted spelling is swapped in before translating.
         </p>
-        <div id="gl-list" class="modal-list"></div>
-        <div class="modal-add-row">
+        <div id="gl-list" class="modal-list flex min-h-14 flex-1 basis-auto flex-col gap-1 overflow-y-auto pr-1 [scrollbar-color:#4d5d72_transparent] [scrollbar-width:thin] [&>div]:rounded-lg [&>label]:rounded-lg"></div>
+        <div class="modal-add-row flex shrink-0 gap-1 border-t border-[#2a3646] pt-3">
           <input id="gl-file-input" type="file" accept=".json,application/json" class="hidden">
           <button id="gl-import-btn" type="button" class="panel-add-btn flex-1">Import JSON</button>
           <button id="gl-export-btn" type="button" class="panel-add-btn">Export</button>
           <button id="gl-clear-btn" type="button" class="panel-add-btn">Clear all</button>
         </div>
 
-        <h3 class="text-xs font-semibold text-gray-300 uppercase tracking-wider mt-2">Replace</h3>
-        <p class="text-[11px] text-gray-500 leading-snug">
+        <h3 class="text-xs font-semibold text-gray-200 mt-2">Replace</h3>
+        <p class="text-[11px] leading-snug text-[#9eacbf]">
           Replace specific phrases. Choose <span class="font-mono">Flow</span> to fix the source transcript, or a
           language to rewrite that translation's output.
         </p>
-        <div id="td-list" class="modal-list"></div>
-        <div class="modal-add-row flex-col items-stretch gap-1">
+        <div id="td-list" class="modal-list flex min-h-14 flex-1 basis-auto flex-col gap-1 overflow-y-auto pr-1 [scrollbar-color:#4d5d72_transparent] [scrollbar-width:thin] [&>div]:rounded-lg [&>label]:rounded-lg"></div>
+        <div class="modal-add-row flex shrink-0 gap-1 border-t border-[#2a3646] pt-3 flex-col items-stretch gap-1">
           <div class="flex gap-1">
             <input id="td-from-input" type="text" placeholder="From" class="panel-input flex-1">
             <input id="td-to-input" type="text" placeholder="To" class="panel-input flex-1">
@@ -254,21 +267,21 @@
 
   {% if is_primary_owner %}
   <!-- Co-owners modal -->
-  <div id="co-dropdown-panel" class="modal-overlay hidden" role="dialog" aria-modal="true"
+  <div id="co-dropdown-panel" class="modal-overlay hidden fixed flex inset-0 z-[100] items-center justify-center bg-[rgba(3,7,13,0.72)] p-4 backdrop-blur-sm" role="dialog" aria-modal="true"
     aria-labelledby="co-modal-title">
-    <div class="modal-panel">
-      <div class="modal-header">
-        <h2 id="co-modal-title" class="modal-title">Co-owners</h2>
-        <button type="button" class="modal-close-btn" data-modal-close aria-label="Close">
-          <iconify-icon icon="mdi:close" width="20" height="20"></iconify-icon>
+    <div class="modal-panel flex max-h-[85vh] w-full max-w-[30rem] flex-col overflow-hidden rounded-xl border border-[#3b4a5d] bg-[#182230] shadow-[0_24px_72px_rgba(3,8,15,0.48)]">
+      <div class="modal-header flex min-h-[52px] shrink-0 items-center gap-2 border-b border-[#2a3646] px-4 py-3">
+        <h2 id="co-modal-title" class="modal-title m-0 flex-1 text-base font-bold text-[#edf3fa]">Co-owners</h2>
+        <button type="button" class="modal-close-btn inline-flex size-8 items-center justify-center rounded-lg text-[#8d9aae] transition-colors hover:bg-[#273548] hover:text-[#edf3fa]" data-modal-close aria-label="Close">
+          <iconify-icon icon="ph:x" width="20" height="20"></iconify-icon>
         </button>
       </div>
-      <div class="modal-body">
-        <p class="text-[11px] text-gray-500 leading-snug">
+      <div class="modal-body flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+        <p class="text-[11px] leading-snug text-[#9eacbf]">
           Co-owners can join the panel and edit session settings. Only the primary owner can add or remove co-owners.
         </p>
-        <div id="co-list" class="modal-list"></div>
-        <div class="modal-add-row">
+        <div id="co-list" class="modal-list flex min-h-14 flex-1 basis-auto flex-col gap-1 overflow-y-auto pr-1 [scrollbar-color:#4d5d72_transparent] [scrollbar-width:thin] [&>div]:rounded-lg [&>label]:rounded-lg"></div>
+        <div class="modal-add-row flex shrink-0 gap-1 border-t border-[#2a3646] pt-3">
           <input id="co-email-input" type="email" placeholder="co-owner@example.com" class="panel-input flex-1">
           <button id="co-add-btn" type="button" class="panel-add-btn">Add</button>
         </div>
@@ -278,19 +291,19 @@
   {% endif %}
 
   <div class="flex-1 flex min-h-0">
-    <div id="viewer-wrap" class="flex-1 relative bg-white min-w-0">
+    <div id="viewer-wrap" class="relative m-1 min-w-0 flex-1 overflow-hidden rounded-xl border border-[#2a3646] bg-[#101826] shadow-[0_18px_44px_rgba(3,8,15,0.24)] max-md:mx-1.5 max-md:mt-1.5 max-md:mb-0 max-md:rounded-[10px] max-md:pb-10">
       <iframe src="/rt/{{ sid }}?theme=dark&show=all" class="w-full h-full border-0" allow="autoplay; fullscreen"></iframe>
     </div>
     <!-- Flow panel (side column on desktop, bottom drawer on mobile) -->
-    <div id="flow-panel" class="w-72 flex flex-col bg-gray-900 border-l border-gray-700 shrink-0">
-      <button id="flow-toggle" type="button"
-        class="flow-header px-3 py-2 border-b border-gray-700 flex items-center gap-2 text-left w-full">
-        <span class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Current Flow</span>
-        <span id="flow-count" class="text-xs text-gray-600 ml-auto">0 segments</span>
-        <iconify-icon id="flow-chevron" icon="mdi:chevron-up" width="16" height="16"
-          class="flow-chevron text-gray-500"></iconify-icon>
+    <div id="flow-panel" class="mr-1 my-1 flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border border-[#2a3646] bg-[#111925] max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-40 max-md:m-0 max-md:grid max-md:max-h-[60vh] max-md:w-auto max-md:grid-rows-[auto_0fr] max-md:rounded-t-[10px] max-md:rounded-b-none max-md:border-x-0 max-md:border-b-0 max-md:shadow-[0_-4px_12px_rgba(0,0,0,0.4)] max-md:transition-[grid-template-rows] max-md:duration-200 max-md:[&.flow-open]:grid-rows-[auto_1fr]">
+      <button id="flow-toggle" type="button" aria-expanded="false"
+        class="flow-header flex min-h-[42px] w-full cursor-pointer items-center gap-2 border-b border-[#2a3646] bg-[#182230] px-3 py-2 text-left transition-colors hover:bg-[#1d2938] md:cursor-default md:hover:bg-[#182230]">
+        <span class="text-xs font-semibold text-gray-300">Current Flow</span>
+        <span id="flow-count" class="ml-auto text-xs tabular-nums text-[#8d9aae]">0 segments</span>
+        <iconify-icon id="flow-chevron" icon="ph:caret-up" width="16" height="16"
+          class="hidden text-gray-500 transition-transform duration-200 max-md:inline-flex max-md:[.flow-open_&]:rotate-180"></iconify-icon>
       </button>
-      <div id="flow-content" class="flex-1 overflow-y-auto px-3 py-2 space-y-1"></div>
+      <div id="flow-content" class="flex-1 space-y-1 overflow-y-auto px-3 py-2 text-[0.78rem] leading-[1.55] max-md:min-h-0 max-md:overflow-hidden max-md:py-0 max-md:transition-[padding] max-md:duration-200 max-md:[.flow-open_&]:overflow-y-auto max-md:[.flow-open_&]:py-2"></div>
     </div>
   </div>
 </div>
@@ -298,24 +311,9 @@
 
 {% block scripts %}
 <style>
-  .mic-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 6px;
-    border-radius: 9999px;
-    border: 2px solid transparent;
-    font-size: 0.6rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    cursor: pointer;
-    transition: background 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.1s;
-    user-select: none;
-    outline: none;
-  }
-
-  .mic-btn:active {
-    transform: scale(0.95);
+  #studio-root :is(button, a, input, select):focus-visible {
+    outline: 2px solid #6d9ee8;
+    outline-offset: 2px;
   }
 
   .mic-btn .mic-icon-on,
@@ -331,23 +329,23 @@
 
   /* OFF state */
   .mic-off {
-    background: #1f2937;
-    border-color: #374151;
-    color: #9ca3af;
+    background: #202b3a;
+    border-color: #3b4a5d;
+    color: #b5c0ce;
   }
 
   .mic-off:hover {
-    background: #374151;
-    border-color: #6b7280;
-    color: #e5e7eb;
+    background: #293749;
+    border-color: #52647a;
+    color: #edf3fa;
   }
 
   /* ON / recording state */
   .mic-on {
-    background: #7f1d1d;
-    border-color: #ef4444;
-    color: #fca5a5;
-    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+    background: #8b2635;
+    border-color: #e76476;
+    color: #fff0f2;
+    box-shadow: 0 0 0 0 rgba(231, 100, 118, 0.55);
     animation: mic-pulse 1.6s ease-in-out infinite;
   }
 
@@ -373,15 +371,15 @@
 
   @keyframes mic-pulse {
     0% {
-      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+      box-shadow: 0 0 0 0 rgba(231, 100, 118, 0.55);
     }
 
     50% {
-      box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+      box-shadow: 0 0 0 7px rgba(231, 100, 118, 0);
     }
 
     100% {
-      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+      box-shadow: 0 0 0 0 rgba(231, 100, 118, 0);
     }
   }
 
@@ -394,240 +392,17 @@
     animation: none;
   }
 
-  /* Mobile: collapse the toolbar by default; toggle reveals it. Mirrors the
-     flow drawer's collapse pattern (single full-width row, label + chevron,
-     180deg chevron rotation when open) and animates the reveal smoothly via
-     a grid-template-rows transition (animates to natural content height). */
-  @media (max-width: 767px) {
-    header {
-      position: relative;
-    }
-
-    #header-toolbar-wrap {
-      display: grid;
-      grid-template-rows: 0fr;
-      transition: grid-template-rows 0.25s ease;
-      position: absolute;
-      top: 100%;
-      left: 0;
-      right: 0;
-      z-index: 50;
-    }
-
-    #header-toolbar {
-      overflow: hidden;
-      min-height: 0;
-      padding-top: 0;
-      padding-bottom: 0;
-      transition: padding 0.25s ease;
-    }
-
-    header.header-open #header-toolbar-wrap {
-      grid-template-rows: 1fr;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    }
-
-    header.header-open #header-toolbar {
-      padding-top: 0.75rem;
-      padding-bottom: 0.75rem;
-      transition: padding 0.25s ease;
-    }
-
-    .header-bar {
-      cursor: pointer;
-    }
-
-    #header-chevron {
-      transition: transform 0.25s ease;
-    }
-
-    header.header-open #header-chevron {
-      transform: rotate(180deg);
+  @media (prefers-reduced-motion: reduce) {
+    #studio-root *,
+    #studio-root *::before,
+    #studio-root *::after {
+      scroll-behavior: auto !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
     }
   }
 
-  /* Flow panel */
-  #flow-content {
-    font-size: 0.78rem;
-    line-height: 1.55;
-  }
-
-  .flow-item {
-    color: #cbd5e1;
-    padding: 0.2rem 0.4rem;
-    border-radius: 3px;
-  }
-
-  .flow-item-partial {
-    color: #475569;
-    font-style: italic;
-    padding: 0.2rem 0.4rem;
-    border-radius: 3px;
-  }
-
-  /* Desktop: flow panel is a static side column; hide the drawer chevron. */
-  .flow-chevron {
-    display: none;
-  }
-
-  /* Mobile: turn the flow panel into a bottom drawer. Header stays pinned;
-     content area animates to natural height via grid-template-rows + padding
-     collapse (same pattern as the mobile controls toolbar). */
-  @media (max-width: 767px) {
-    #flow-panel {
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      width: auto;
-      max-height: 60vh;
-      border-left: none;
-      border-top: 1px solid #374151;
-      z-index: 40;
-      box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.4);
-      display: grid;
-      grid-template-rows: auto 0fr;
-      transition: grid-template-rows 0.25s ease;
-    }
-
-    #flow-panel.flow-open {
-      grid-template-rows: auto 1fr;
-    }
-
-    #flow-content {
-      overflow: hidden;
-      min-height: 0;
-      padding-top: 0;
-      padding-bottom: 0;
-      transition: padding 0.25s ease;
-    }
-
-    #flow-panel.flow-open #flow-content {
-      padding-top: 0.5rem;
-      padding-bottom: 0.5rem;
-      overflow-y: auto;
-    }
-
-    #flow-panel .flow-header {
-      cursor: pointer;
-      min-height: 2.5rem;
-    }
-
-    .flow-chevron {
-      display: inline-flex;
-      transition: transform 0.25s ease;
-    }
-
-    #flow-panel.flow-open .flow-chevron {
-      transform: rotate(180deg);
-    }
-
-    /* Leave space at the bottom of the viewer so the collapsed drawer
-       header doesn't cover iframe content. */
-    #viewer-wrap {
-      padding-bottom: 2.5rem;
-    }
-  }
-
-  /* Modal — centered popup used by Keywords / Text Mapping / Co-owners. */
-  .modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.65);
-    z-index: 100;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1rem;
-  }
-
-  .modal-overlay.hidden {
-    display: none;
-  }
-
-  .modal-panel {
-    background: #1f2937;
-    border: 1px solid #374151;
-    border-radius: 0.5rem;
-    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
-    width: 100%;
-    max-width: 30rem;
-    max-height: 85vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .modal-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid #374151;
-    flex-shrink: 0;
-  }
-
-  .modal-title {
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #e5e7eb;
-    flex: 1;
-    margin: 0;
-  }
-
-  .modal-close-btn {
-    background: transparent;
-    border: none;
-    color: #9ca3af;
-    padding: 0.25rem;
-    border-radius: 0.25rem;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .modal-close-btn:hover {
-    background: #374151;
-    color: #e5e7eb;
-  }
-
-  /* The lists inside absorb the height, so in practice only they scroll and
-     the headings, hints and add-rows stay put; the body's own scrollbar is a
-     fallback for viewports too short to fit even the shrunken lists. */
-  .modal-body {
-    padding: 0.75rem 1rem 1rem;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    flex: 1;
-    min-height: 0;
-  }
-
-  /* Lists are the only part that shrinks (min-height lets them), and
-     flex-basis: auto makes them claim height in proportion to how many rows
-     they hold, so a short glossary does not steal room from a long replace
-     list when both share the same modal. */
-  .modal-list {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    overflow-y: auto;
-    flex: 1 1 auto;
-    min-height: 3.5rem;
-    padding-right: 0.25rem;
-    scrollbar-width: thin;
-    scrollbar-color: #4b5563 transparent;
-  }
-
-  .modal-add-row {
-    display: flex;
-    gap: 0.25rem;
-    border-top: 1px solid #374151;
-    padding-top: 0.75rem;
-    flex-shrink: 0;
-  }
 </style>
 <script>
   const sid = "{{ sid }}"
@@ -685,7 +460,7 @@
 
   // The only two writers of `recording`. It lives here with setMicState(), while
   // startSession()/stopSession()/socket live in realtime.js, so every caller used to
-  // hand-assemble the sequence from both files — and each one that forgot a step left
+  // hand-assemble the sequence from both files - and each one that forgot a step left
   // the state machine skewed: realtime.js's error handler dropped `recording`, so the
   // next click took the mic_off branch on an already-dead session and the operator had
   // to press twice to get back on air.
@@ -719,13 +494,13 @@
   // Send heartbeat every 10 seconds to maintain admin lock.
   // The response also carries audio-usage stats so we avoid a separate poll.
   //
-  // This is the lock's only lifecycle signal — the panel deliberately does not release
+  // This is the lock's only lifecycle signal - the panel deliberately does not release
   // it on unload. beforeunload cannot tell a refresh from a true navigation-away (the
   // performance navigation entry describes how THIS document was *loaded*, not where it
   // is going), and the release beacon that tried raced the reload's own GET /panel: when
   // the GET won, the fresh page had already been rendered with the secret_key the beacon
-  // then nulled, so it came back "Unauthorized — microphone stopped" until a second
-  // refresh minted a new key. Nothing waits on a prompt release — an abandoned lock is
+  // then nulled, so it came back "Unauthorized - microphone stopped" until a second
+  // refresh minted a new key. Nothing waits on a prompt release - an abandoned lock is
   // reclaimed by the 30 s timeout on the next /panel load, and /panel hands the live key
   // to any owner/co-owner that loads it while the lock is still held.
   let heartbeatInterval = null
@@ -751,7 +526,7 @@
   let keywordSyncInterval = setInterval(syncKeywords, 5000)
 
   // No beforeunload handler: with the release beacon gone it would only clear the
-  // timers above, which the document tear-down does anyway — and registering one costs
+  // timers above, which the document tear-down does anyway - and registering one costs
   // bfcache eligibility, so a back-navigation would pay a full panel reload.
 
   // ── Scribe detect language select ────────────────────────────────────────
@@ -912,7 +687,7 @@
       row.innerHTML = `
         <input type="checkbox" value="${code}" ${checked ? 'checked' : ''}
           class="accent-blue-500 w-4 h-4 flex-shrink-0">
-        <span class="truncate"><span class="font-mono text-xs text-gray-400">${code}</span> <span class="text-gray-400">${label !== code ? '— ' + label : ''}</span></span>
+        <span class="truncate"><span class="font-mono text-xs text-gray-400">${code}</span> <span class="text-gray-400">${label !== code ? '- ' + label : ''}</span></span>
       `
       row.querySelector('input').addEventListener('change', function () {
         if (this.checked) {
@@ -1037,13 +812,13 @@
       row.innerHTML = `
         <span class="flex-1 font-mono text-xs truncate ${isLocked ? 'text-yellow-300' : 'text-gray-300'}">${escapeHtml(kw)}</span>
         <button class="kw-glossary-btn flex-shrink-0 transition-colors ${look.cls}" title="${look.title}" ${busy || !selectedLanguages.length ? 'disabled' : ''}>
-          <iconify-icon icon="${busy ? 'mdi:loading' : 'mdi:translate'}" width="14" height="14" class="${busy ? 'animate-spin' : ''}"></iconify-icon>
+          <iconify-icon icon="${busy ? 'ph:spinner-gap' : 'ph:translate'}" width="14" height="14" class="${busy ? 'animate-spin' : ''}"></iconify-icon>
         </button>
         <button class="kw-lock-btn flex-shrink-0 transition-colors ${isLocked ? 'text-yellow-400 hover:text-yellow-200' : 'text-gray-600 hover:text-yellow-400'}" title="${isLocked ? 'Unpin keyword' : 'Pin keyword (preserve from auto-removal)'}" data-kw="${escapeHtml(kw)}">
-          <iconify-icon icon="${isLocked ? 'mdi:pin' : 'mdi:pin-outline'}" width="14" height="14"></iconify-icon>
+          <iconify-icon icon="${isLocked ? 'ph:push-pin-fill' : 'ph:push-pin'}" width="14" height="14"></iconify-icon>
         </button>
         <button class="kw-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove keyword" data-kw="${escapeHtml(kw)}">
-          <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
+          <iconify-icon icon="ph:x" width="14" height="14"></iconify-icon>
         </button>
       `
       row.querySelector('.kw-glossary-btn').addEventListener('click', function () {
@@ -1080,7 +855,7 @@
   function glossaryButtonLook(kw, known) {
     if (glossaryGenerating.has(kw)) return { cls: 'text-blue-400', title: 'Looking the term up…' }
     if (!selectedLanguages.length) return { cls: 'text-gray-700', title: 'Set target languages first' }
-    if (known.has(kw)) return { cls: 'text-blue-400 hover:text-blue-200', title: 'Already in the glossary — look it up again' }
+    if (known.has(kw)) return { cls: 'text-blue-400 hover:text-blue-200', title: 'Already in the glossary - look it up again' }
     return { cls: 'text-gray-600 hover:text-blue-400', title: 'Look this term up and add it to the glossary' }
   }
 
@@ -1210,7 +985,7 @@
   }
 
   // ── Glossary panel ───────────────────────────────────────────────────────
-  // [{ "en-US": "example", "zh-Hant-TW": "範例", ... }] — one term per entry,
+  // [{ "en-US": "example", "zh-Hant-TW": "範例", ... }] - one term per entry,
   // spelled out per language. The server swaps the other spellings for the
   // target language's one before translating.
   let glossary = []
@@ -1231,7 +1006,7 @@
     const parts = []
     if (terms) parts.push(terms + ' term' + (terms === 1 ? '' : 's'))
     if (rules) parts.push(rules + ' rule' + (rules === 1 ? '' : 's'))
-    label.textContent = parts.join(' · ')
+    label.textContent = parts.join(', ')
   }
 
   function renderGlossaryList() {
@@ -1276,10 +1051,10 @@
         <div class="flex-1 flex flex-wrap gap-x-2 gap-y-1 min-w-0">${chips}</div>
         ${warning}
         <button class="gl-edit-btn text-gray-600 hover:text-blue-400 transition-colors flex-shrink-0" title="Edit term">
-          <iconify-icon icon="mdi:pencil" width="14" height="14"></iconify-icon>
+          <iconify-icon icon="ph:pencil-simple" width="14" height="14"></iconify-icon>
         </button>
         <button class="gl-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove term">
-          <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
+          <iconify-icon icon="ph:x" width="14" height="14"></iconify-icon>
         </button>
       `
       row.querySelector('.gl-edit-btn').addEventListener('click', function () {
@@ -1317,7 +1092,7 @@
         <button class="gl-save-btn panel-add-btn">Save</button>
       </div>
     `
-    // The fields are the edit state — no separate draft object to keep in step
+    // The fields are the edit state - no separate draft object to keep in step
     // with what the user has typed. Adding and removing a language touches only
     // this container, so the rest of the list (and the focused input) stays put.
     const fields = row.querySelector('.gl-edit-fields')
@@ -1329,7 +1104,7 @@
         <span class="text-[10px] px-1 py-0.5 rounded bg-gray-700 text-gray-400 w-24 flex-shrink-0 truncate" title="${escapeHtml(langLabel(lang))}">${escapeHtml(lang)}</span>
         <input class="gl-edit-input panel-input font-mono" data-lang="${escapeHtml(lang)}" value="${escapeHtml(term)}">
         <button class="gl-lang-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove this language">
-          <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
+          <iconify-icon icon="ph:x" width="14" height="14"></iconify-icon>
         </button>
       `
       field.querySelector('.gl-lang-remove-btn').addEventListener('click', () => field.remove())
@@ -1427,11 +1202,11 @@
 
   // A starter file for an empty glossary, keyed by this session's own target
   // languages (plus en-US, the usual spoken one) so the codes are already the
-  // ones that will match — a hand-written zh-TW instead of zh-Hant-TW is the
+  // ones that will match - a hand-written zh-TW instead of zh-Hant-TW is the
   // easiest way to end up with a term that never fires.
   function exampleGlossary() {
     const codes = [...new Set(['en-US', ...selectedLanguages])]
-    return ['Jane Doe', 'OpenTransLive'].map(term => Object.fromEntries(
+    return ['Lin Wei-ting', 'OpenTransLive'].map(term => Object.fromEntries(
       codes.map(code => [code, code === 'en-US' ? term : `${term} in ${code}`])
     ))
   }
@@ -1462,7 +1237,7 @@
   }
 
   // ── Text mapping panel ───────────────────────────────────────────────────
-  let textDictionary = []  // [{ from, to, target }] — target is 'flow' or a language code
+  let textDictionary = []  // [{ from, to, target }] - target is 'flow' or a language code
   let textDictSaveTimer = null
   // Re-run the flow dictionary over on-screen flow lines. Assigned by the flow
   // panel IIFE; called whenever textDictionary changes so a rule added to fix a
@@ -1517,10 +1292,10 @@
           <span class="badge-target text-[10px] px-1 py-0.5 rounded bg-gray-700 text-gray-300 flex-shrink-0">${escapeHtml(targetLabel(rule.target))}</span>
           <span class="flex-1 font-mono text-xs truncate text-gray-300">${escapeHtml(rule.from)}</span>
         </div>
-        <iconify-icon icon="mdi:arrow-right" width="14" height="14" class="text-gray-500 flex-shrink-0"></iconify-icon>
+        <iconify-icon icon="ph:arrow-right" width="14" height="14" class="text-gray-500 flex-shrink-0"></iconify-icon>
         <span class="flex-1 font-mono text-xs truncate text-blue-300">${escapeHtml(rule.to)}</span>
         <button class="td-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove mapping">
-          <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
+          <iconify-icon icon="ph:x" width="14" height="14"></iconify-icon>
         </button>
       `
       row.querySelector('.td-remove-btn').addEventListener('click', function () {
@@ -1586,7 +1361,7 @@
       row.innerHTML = `
         <span class="flex-1 font-mono text-xs truncate text-gray-300">${escapeHtml(e)}</span>
         <button class="co-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove co-owner" data-email="${escapeHtml(e)}">
-          <iconify-icon icon="mdi:close" width="14" height="14"></iconify-icon>
+          <iconify-icon icon="ph:x" width="14" height="14"></iconify-icon>
         </button>
       `
       row.querySelector('.co-remove-btn').addEventListener('click', function () {
@@ -1791,7 +1566,7 @@
     loadGlossary()
     loadCoOwners()
 
-    // Co-owners modal (primary owner only — element is absent for co-owners)
+    // Co-owners modal (primary owner only - element is absent for co-owners)
     const coDropdownBtn = document.getElementById('co-dropdown-btn')
     const coDropdownPanel = document.getElementById('co-dropdown-panel')
     if (coDropdownBtn && coDropdownPanel) {
@@ -1963,14 +1738,24 @@
         setTimeout(() => { element.style.backgroundColor = origBg }, 200)
       })
     })
-    // Flow drawer toggle (only active on mobile via CSS; button is a no-op
-    // on desktop since the panel is statically visible).
+    // Flow drawer toggle is an actual control only on mobile. Disable it on
+    // desktop so the pointer and keyboard behavior match the static heading.
     const flowPanel = document.getElementById('flow-panel')
     const flowToggle = document.getElementById('flow-toggle')
     if (flowPanel && flowToggle) {
+      const flowDrawerQuery = window.matchMedia('(max-width: 767px)')
+      const syncFlowToggle = function () {
+        const isMobile = flowDrawerQuery.matches
+        flowToggle.disabled = !isMobile
+        if (!isMobile) flowPanel.classList.remove('flow-open')
+        flowToggle.setAttribute('aria-expanded', isMobile && flowPanel.classList.contains('flow-open') ? 'true' : 'false')
+      }
       flowToggle.addEventListener('click', function () {
-        flowPanel.classList.toggle('flow-open')
+        const isOpen = flowPanel.classList.toggle('flow-open')
+        flowToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false')
       })
+      flowDrawerQuery.addEventListener('change', syncFlowToggle)
+      syncFlowToggle()
     }
 
     // Mobile header toolbar toggle (no-op on desktop since the toolbar is
@@ -2003,7 +1788,7 @@
 </script>
 <script src="/static/js/realtime.js?v={{ timestamp }}"></script>
 <script>
-    // Flow panel — shows corrected transcriptions in real-time
+    // Flow panel - shows corrected transcriptions in real-time
     ; (function () {
       const MAX_FLOW_ITEMS = 150
       const flowContent = document.getElementById('flow-content')
@@ -2013,7 +1798,7 @@
       // Children of partialEl, kept as refs so an update writes textContent only.
       // Rebuilding the row with innerHTML on every partial (several times a
       // second) re-created the spinner element and fired the Tailwind browser
-      // build's MutationObserver each time — a new class candidate there costs a
+      // build's MutationObserver each time - a new class candidate there costs a
       // full in-browser stylesheet recompile, which is what froze the panel.
       let partialTextEl = null
       let partialLatencyEl = null
@@ -2039,7 +1824,7 @@
       // Mirrors the server's apply_text_dictionary (longest `from` first) so the
       // panel shows the same result the server would produce, and re-runs after a
       // rule changes. Lines keep their original source in data-src, so re-applying
-      // always starts from the raw text — no compounding on repeated runs.
+      // always starts from the raw text - no compounding on repeated runs.
       function applyFlowDict(text) {
         if (!text) return text
         const rules = textDictionary
@@ -2060,7 +1845,7 @@
 
       // `fresh` marks a segment that just arrived as the event's own payload, so
       // now - end_time is a real latency. A segment backfilled from
-      // `last_committed` was read out of Redis and may be minutes old — timing it
+      // `last_committed` was read out of Redis and may be minutes old - timing it
       // would print a made-up number, so it renders without one.
       function appendCommitted(segment, fresh) {
         const src = segment.result?.corrected || segment.text || ''
@@ -2068,7 +1853,7 @@
         if (partialEl) { partialEl.remove(); partialEl = null; partialTextEl = null; partialLatencyEl = null }
         partialEndTime = 0
         const p = document.createElement('p')
-        p.className = 'flow-item flex justify-between items-start group'
+        p.className = 'flow-item group flex items-start justify-between rounded-md px-[0.45rem] py-[0.32rem] text-[#cbd6e4]'
         p.dataset.src = src
 
         const latencyHtml = fresh
@@ -2098,7 +1883,7 @@
         }
         // A translated partial is emitted after its LLM round trip, so it can land
         // behind flow-only partials that already carry newer source text. Keeping
-        // the newest end_time stops the line from rewinding — and stops the latency
+        // the newest end_time stops the line from rewinding - and stops the latency
         // readout from flipping between the stale and the fresh one.
         if (segment.end_time < partialEndTime) return
         // Partials always render raw `text`: flow-only ones have no `corrected`, so
@@ -2113,8 +1898,8 @@
         partialEndTime = segment.end_time
         if (!partialEl) {
           partialEl = document.createElement('p')
-          partialEl.className = 'flow-item-partial flex justify-between items-start'
-          partialEl.innerHTML = `<span class="flex-1"></span><iconify-icon icon="mdi:loading" class="animate-spin text-gray-600 mt-0.5 ml-1" width="10"></iconify-icon><span class="text-[10px] text-gray-700 ml-1 tabular-nums"></span>`
+          partialEl.className = 'flow-item-partial flex items-start justify-between rounded-md px-[0.4rem] py-[0.2rem] italic text-[#78869a]'
+          partialEl.innerHTML = `<span class="flex-1"></span><iconify-icon icon="ph:spinner-gap" class="animate-spin text-gray-600 mt-0.5 ml-1" width="10"></iconify-icon><span class="text-[10px] text-gray-700 ml-1 tabular-nums"></span>`
           partialTextEl = partialEl.querySelector('.flex-1')
           partialLatencyEl = partialEl.lastElementChild
           flowContent.appendChild(partialEl)
@@ -2174,3 +1959,6 @@
 </script>
 {% endif %}
 {% endblock %}
+
+{# Source link is already part of this page's own layout. #}
+{% block source_offer %}{% endblock %}

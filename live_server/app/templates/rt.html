@@ -4,25 +4,38 @@
   Licensed under the GNU AGPL v3.0
   See LICENSE for details.
 -#}
-{% extends "base.html" %} {% block content %}
-<div id="app-root" class="flex flex-col h-svh font-sans">
+{% extends "base.html" %}
+{% block title %}OpenTransLive - Live Transcript{% endblock %}
+{% block content %}
+<div id="app-root" class="relative flex h-dvh flex-col !bg-[var(--rt-canvas)] font-sans !text-[var(--rt-text)]">
 
   <!-- Top Bar -->
-  <div id="top-bar" class="flex px-3 py-1 shrink-0 border-b top-bar">
+  <div id="top-bar" class="top-bar flex min-h-10 shrink-0 items-center gap-2 border-b border-[var(--rt-border)] !bg-[var(--rt-surface)] px-2 shadow-[0_8px_28px_color-mix(in_srgb,var(--rt-canvas)_64%,transparent)] max-md:min-h-9 max-md:gap-1 max-md:px-1.5">
+    <div class="viewer-brand flex min-w-0 items-center gap-1.5">
+      <span class="viewer-brand-mark inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-[#326fbd] text-[#f4f8fd] shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]" aria-hidden="true">
+        <iconify-icon icon="ph:waveform" width="15" height="15"></iconify-icon>
+      </span>
+      <span class="whitespace-nowrap text-xs font-bold tracking-[-0.015em] text-[var(--rt-text)] max-md:hidden">OpenTransLive</span>
+      <span class="whitespace-nowrap border-l border-[var(--rt-border-strong)] pl-1.5 text-[0.65rem] text-[var(--rt-muted)] max-md:hidden">Live transcript</span>
+      <span class="ml-0.5 flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[0.7rem] text-[var(--rt-muted)]">
+        <span id="status-indicator" class="status-dot-sm bg-gray-400"></span>
+        <span id="status-text" class="max-md:hidden">Connecting...</span>
+      </span>
+    </div>
 
-    <div class="flex flex-wrap gap-2 ms-auto items-center justify-end">
+    <div class="viewer-controls ms-auto flex min-w-0 items-center justify-end gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-md:gap-0.5 max-md:[&>div]:ml-0 max-md:[&>div]:gap-0.5 max-md:[&>div]:pl-1.5">
       <!-- Theme buttons -->
       <div class="flex items-center gap-1 shrink-0">
         <button id="theme-light" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="Light theme"
-          title="Light theme">
+          aria-pressed="false" title="Light theme">
           <iconify-icon icon="ph:sun" width="15" height="15"></iconify-icon>
         </button>
         <button id="theme-dark" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="Dark theme"
-          title="Dark theme">
+          aria-pressed="false" title="Dark theme">
           <iconify-icon icon="ph:moon" width="15" height="15"></iconify-icon>
         </button>
         <button id="theme-hc" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="High contrast theme"
-          title="High contrast theme">
+          aria-pressed="false" title="High contrast theme">
           <iconify-icon icon="ph:circle-half" width="15" height="15"></iconify-icon>
         </button>
       </div>
@@ -30,16 +43,17 @@
       <!-- Font size controls -->
       <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider" title="Font size">
         <button id="font-decrease" class="icon-btn icon-btn-sm" aria-label="Decrease font size"><iconify-icon
-            icon="mdi:format-font-size-decrease" width="18" height="18"></iconify-icon></button>
+            icon="ph:minus" width="18" height="18"></iconify-icon></button>
         <button id="font-increase" class="icon-btn icon-btn-sm" aria-label="Increase font size"><iconify-icon
-            icon="mdi:format-font-size-increase" width="18" height="18"></iconify-icon></button>
+            icon="ph:plus" width="18" height="18"></iconify-icon></button>
         <!-- Fade highlight toggle -->
         <button id="fade-toggle" class="icon-btn icon-btn-sm active" aria-label="Toggle highlight fade"
-          title="Toggle highlight fade">
+          aria-pressed="true" title="Toggle highlight fade">
           <iconify-icon icon="ph:highlighter-circle" width="18" height="18"></iconify-icon>
         </button>
         <!-- Language settings button -->
-        <button id="lang-btn" class="icon-btn icon-btn-sm" aria-label="Language settings" title="Language settings">
+        <button id="lang-btn" class="icon-btn icon-btn-sm" aria-label="Language settings" aria-expanded="false"
+          title="Language settings">
           <iconify-icon icon="ph:translate" width="18" height="18"></iconify-icon>
         </button>
       </div>
@@ -52,52 +66,55 @@
         </button>
         <!-- QR code button -->
         <div id="qr-area" class="relative">
-          <button id="qr-btn" class="icon-btn icon-btn-sm" aria-label="Show QR code" title="Show QR code">
+          <button id="qr-btn" class="icon-btn icon-btn-sm" aria-label="Show QR code" aria-expanded="false"
+            title="Show QR code">
             <iconify-icon icon="ph:qr-code" width="15" height="15"></iconify-icon>
           </button>
           <!-- QR popup -->
           <div id="qr-popup"
-            class="hidden absolute right-0 top-9 z-50 p-3 rounded-xl shadow-xl border qr-popup-bg min-w-max">
-            <div class="text-xs font-semibold mb-2 opacity-70">Scan to open</div>
+            class="qr-popup-bg hidden absolute right-0 top-9 z-50 min-w-max rounded-xl border border-[var(--rt-border-strong)] bg-[var(--rt-surface)] p-3 text-[var(--rt-text)] shadow-[0_24px_70px_color-mix(in_srgb,var(--rt-canvas)_82%,transparent)]">
+            <div class="mb-2 text-xs font-semibold text-[var(--rt-muted)]">Scan to open</div>
             <img id="qr-img" class="w-40 h-40 rounded-lg" src="" alt="QR code" />
             <div id="qr-url-text"
-              class="text-xs mt-2 opacity-50 max-w-40 flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer qr-url-copy"
+              class="qr-url-copy mt-2 flex max-w-40 cursor-pointer items-center gap-1 rounded px-1.5 py-1 text-xs text-[var(--rt-muted)]"
               role="button" tabindex="0" title="Click to copy">
               <span class="truncate flex-1" id="qr-url-value"></span>
-              <iconify-icon icon="mdi:content-copy" width="12" height="12" class="shrink-0"></iconify-icon>
+              <iconify-icon icon="ph:copy" width="12" height="12" class="shrink-0"></iconify-icon>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Connection status -->
-      <div class="flex items-center gap-1.5 shrink-0 border-l pl-2 ml-1 border-divider text-xs">
-        <span id="status-indicator" class="status-dot-sm bg-gray-400"></span>
-        <span id="status-text" class="inline opacity-70">Connecting...</span>
-      </div>
     </div>
   </div>
 
+  <div id="viewer-empty" class="viewer-empty pointer-events-none absolute inset-[40px_0_32px] z-[2] flex flex-col items-center justify-center gap-2 p-8 text-center text-[var(--rt-muted)] max-md:inset-[36px_0_32px]" role="status">
+    <iconify-icon icon="ph:closed-captioning" width="24" height="24" class="mb-1 text-[var(--rt-accent)]" aria-hidden="true"></iconify-icon>
+    <strong class="text-[0.95rem] font-bold text-[var(--rt-text)]">Waiting for transcript</strong>
+    <span class="max-w-[28ch] text-[0.78rem]">New speech will appear here automatically.</span>
+  </div>
+
   <!-- Single Language View -->
-  <div id="single-view" class="flex-1 overflow-hidden p-2">
-    <div id="single-content" class="overflow-hidden flex flex-col w-full h-full min-h-0 relative rt-text"></div>
+  <div id="single-view" class="flex-1 overflow-hidden bg-[var(--rt-canvas)] p-1 max-md:p-0.5">
+    <div id="single-content" class="rt-text relative flex h-full min-h-0 w-full flex-col overflow-hidden rounded-xl border border-[var(--rt-border)] bg-[var(--rt-surface)] shadow-[0_14px_36px_color-mix(in_srgb,var(--rt-canvas)_72%,transparent)]"></div>
   </div>
 
   <!-- Grid Layout View -->
-  <div id="grid-view" class="flex-1 overflow-hidden p-2 hidden">
-    <div id="grid-content" class="grid h-full w-full gap-2 rt-text">
+  <div id="grid-view" class="hidden flex-1 overflow-hidden bg-[var(--rt-canvas)] p-1 max-md:p-0.5">
+    <div id="grid-content" class="rt-text grid h-full w-full gap-1">
     </div>
   </div>
 
   <!-- Info popup (modal overlay) -->
-  <div id="info-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+  <div id="info-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center" role="dialog"
+    aria-modal="true" aria-labelledby="info-modal-title">
     <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="info-backdrop"></div>
-    <div class="relative z-10 rounded-2xl shadow-2xl border max-w-lg w-full mx-4 info-modal-bg overflow-hidden">
+    <div class="info-modal-bg relative z-10 mx-4 w-full max-w-lg overflow-hidden rounded-xl border border-[var(--rt-border-strong)] bg-[var(--rt-surface)] text-[var(--rt-text)] shadow-[0_24px_70px_color-mix(in_srgb,var(--rt-canvas)_82%,transparent)]">
       <!-- Header -->
       <div class="flex items-center justify-between px-5 py-4 border-b border-divider">
         <div>
-          <h2 class="text-base font-semibold">URL Parameters</h2>
-          <p class="text-xs opacity-50 mt-0.5">Customize the viewer by adding these parameters to the URL</p>
+          <h2 id="info-modal-title" class="text-base font-semibold">URL Parameters</h2>
+          <p class="mt-0.5 text-xs text-[var(--rt-muted)]">Customize the viewer by adding these parameters to the URL</p>
         </div>
         <button id="info-close" class="icon-btn icon-btn-md" aria-label="Close">
           <iconify-icon icon="ph:x" width="16" height="16"></iconify-icon>
@@ -111,9 +128,9 @@
         <div>
           <div class="param-header">
             <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">font-size</code>
-            <span class="text-xs opacity-50">default: 1.25rem</span>
+            <span class="text-xs text-[var(--rt-muted)]">default: 1.25rem</span>
           </div>
-          <p class="text-sm opacity-80 mb-2">Controls the text size of the transcript. Accepts any CSS length value or a
+          <p class="mb-2 text-sm text-[var(--rt-muted)]">Controls the text size of the transcript. Accepts any CSS length value or a
             bare number (treated as pixels).</p>
           <div class="param-btn-row">
             <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
@@ -137,9 +154,9 @@
         <div>
           <div class="param-header">
             <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">theme</code>
-            <span class="text-xs opacity-50">default: light</span>
+            <span class="text-xs text-[var(--rt-muted)]">default: light</span>
           </div>
-          <p class="text-sm opacity-80 mb-2">Sets the color scheme of the viewer.</p>
+          <p class="mb-2 text-sm text-[var(--rt-muted)]">Sets the color scheme of the viewer.</p>
           <div class="param-btn-row">
             <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="theme"
               data-value="light">light</button>
@@ -156,14 +173,14 @@
         <div>
           <div class="param-header">
             <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">show</code>
-            <span class="text-xs opacity-50">default: all</span>
+            <span class="text-xs text-[var(--rt-muted)]">default: all</span>
           </div>
-          <p class="text-sm opacity-80 mb-2">Comma-separated language codes to display. Omit to show every language. Use
+          <p class="mb-2 text-sm text-[var(--rt-muted)]">Comma-separated language codes to display. Omit to show every language. Use
             the language settings popup to toggle visibility and order interactively.</p>
           <div class="param-btn-row">
             <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="show"
               data-value="">all</button>
-            <span class="text-xs opacity-40 self-center">or codes:</span>
+            <span class="self-center text-xs text-[var(--rt-muted)]">or codes:</span>
             <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="show"
               data-value="en-US">en</button>
             <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="show"
@@ -179,7 +196,7 @@
 
         <!-- current URL preview -->
         <div>
-          <div class="text-xs font-semibold mb-1.5 opacity-60">Current URL</div>
+          <div class="mb-1.5 text-xs font-semibold text-[var(--rt-muted)]">Current URL</div>
           <div class="copyable-row">
             <code id="current-url-display"
               class="text-xs font-mono break-all flex-1 px-2.5 py-2 rounded-lg param-code"></code>
@@ -187,7 +204,7 @@
               <iconify-icon icon="ph:copy" width="15" height="15"></iconify-icon>
             </button>
           </div>
-          <div id="copy-feedback" class="hidden text-xs opacity-60 mt-1 text-right">Copied!</div>
+          <div id="copy-feedback" class="mt-1 hidden text-right text-xs text-[var(--rt-muted)]">Copied!</div>
         </div>
 
       </div>
@@ -195,26 +212,24 @@
   </div>
 
   <!-- Footer -->
-  <footer
-    class="shrink-0 border-t border-divider px-4 py-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs opacity-50">
-    <span>OpenTransLive</span>
-    <span class="opacity-30">·</span>
+  <footer class="viewer-footer flex min-h-8 shrink-0 flex-wrap items-center justify-center gap-y-1 overflow-x-auto border-t border-[var(--rt-border)] bg-[var(--rt-surface)] px-4 text-xs text-[var(--rt-muted)] [scrollbar-width:none] max-md:flex-nowrap max-md:justify-start">
+    <span class="inline-flex min-h-[18px] items-center whitespace-nowrap px-3 text-[0.68rem]">OpenTransLive</span>
     <a href="{{ source_code_url }}" target="_blank" rel="noopener"
-      class="inline-flex items-center gap-1 underline hover:opacity-80">
+      class="inline-flex min-h-[18px] items-center gap-1 whitespace-nowrap border-l border-[var(--rt-border)] px-3 text-[0.68rem]">
       <iconify-icon icon="ph:github-logo" width="12" height="12"></iconify-icon>Source code
     </a>
-    <span class="opacity-30">·</span>
-    <span>AI-generated content — may contain errors</span>
+    <span class="inline-flex min-h-[18px] items-center whitespace-nowrap border-l border-[var(--rt-border)] px-3 text-[0.68rem]">AI-generated content may contain errors.</span>
   </footer>
 
   <!-- Language picker modal -->
-  <div id="lang-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+  <div id="lang-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center" role="dialog"
+    aria-modal="true" aria-labelledby="lang-modal-title">
     <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="lang-backdrop"></div>
-    <div class="relative z-10 rounded-2xl shadow-2xl border max-w-sm w-full mx-4 info-modal-bg overflow-hidden">
+    <div class="info-modal-bg relative z-10 mx-4 w-full max-w-sm overflow-hidden rounded-xl border border-[var(--rt-border-strong)] bg-[var(--rt-surface)] text-[var(--rt-text)] shadow-[0_24px_70px_color-mix(in_srgb,var(--rt-canvas)_82%,transparent)]">
       <div class="flex items-start justify-between px-5 pt-5 pb-2">
         <div>
-          <h2 class="text-base font-semibold">Choose a language</h2>
-          <p class="text-xs opacity-50 mt-0.5" id="lang-subtitle">Select which language to display</p>
+          <h2 id="lang-modal-title" class="text-base font-semibold">Choose a language</h2>
+          <p class="mt-0.5 text-xs text-[var(--rt-muted)]" id="lang-subtitle">Select which language to display</p>
         </div>
         <button id="lang-close" class="icon-btn icon-btn-md shrink-0" aria-label="Close">
           <iconify-icon icon="ph:x" width="16" height="16"></iconify-icon>
@@ -223,11 +238,11 @@
       <div class="px-4 py-3 space-y-2 max-h-[60vh] overflow-y-auto" id="lang-list"></div>
       <div class="px-4 pb-4 space-y-2">
         <button id="lang-show-all"
-          class="lang-option-btn w-full text-sm px-4 py-2.5 rounded-xl font-medium opacity-60">
+          class="lang-option-btn w-full rounded-xl border border-[var(--rt-border)] bg-[var(--rt-surface-muted)] px-4 py-2.5 text-sm font-medium text-[var(--rt-text)] transition-colors hover:border-[var(--rt-accent)] hover:bg-[var(--rt-accent-soft)] hover:text-[var(--rt-accent)] hover:ring-1 hover:ring-inset hover:ring-[var(--rt-accent)]">
           Show all languages
         </button>
         <button id="lang-advanced-toggle"
-          class="w-full text-xs py-1 opacity-50 hover:opacity-90 inline-flex items-center justify-center gap-1">
+          class="inline-flex w-full items-center justify-center gap-1 rounded-lg py-1 text-xs text-[var(--rt-muted)] transition-colors hover:bg-[var(--rt-surface-muted)] hover:text-[var(--rt-text)]">
           <iconify-icon id="lang-advanced-caret" icon="ph:caret-down" width="12" height="12"></iconify-icon>
           <span id="lang-advanced-label">Advanced</span>
         </button>
@@ -239,7 +254,7 @@
 {% endblock %} {% block head %}
 <style>
   /* ------------------------------------------------------------------ */
-  /* CSS custom properties — theme tokens                                */
+  /* CSS custom properties - theme tokens                                */
   /* ------------------------------------------------------------------ */
   :root {
     --rt-font-size: 1.25rem;
@@ -585,18 +600,19 @@
     }
   }
 
-  /* Persistent opacity for the live partial region — kept on the span itself
+  /* Persistent opacity for the live partial region - kept on the span itself
      so it survives the remove/add of .new-text used to replay the animation. */
   .partial-text {
     opacity: 0.85;
   }
 
   .new-text {
+    --hl-color: color-mix(in srgb, var(--rt-accent) 16%, transparent);
     animation: new-text-highlight 2s ease-out forwards;
   }
 
   .new-text-commit {
-    --hl-color: rgba(139, 92, 246, 0.3);
+    --hl-color: color-mix(in srgb, var(--rt-accent) 22%, transparent);
     animation: new-text-highlight 2s ease-out forwards;
   }
 
@@ -605,10 +621,97 @@
     animation: none;
   }
 
-  .language-card {
-    overflow-x: hidden;
-    overflow-y: auto;
-    scrollbar-gutter: stable both-edges;
+  /* Viewer redesign: semantic tokens keep every surface coherent across modes. */
+  #app-root {
+    --rt-canvas: #f5f7fa;
+    --rt-surface: #ffffff;
+    --rt-surface-muted: #edf1f6;
+    --rt-border: #d9e0e9;
+    --rt-border-strong: #c3ceda;
+    --rt-text: #18212d;
+    --rt-muted: #627084;
+    --rt-accent: #2c65ad;
+    --rt-accent-soft: #e2edf9;
+    --rt-radius: 12px;
+  }
+
+  #app-root.theme-dark {
+    --rt-canvas: #0d141e;
+    --rt-surface: #141e2a;
+    --rt-surface-muted: #1a2634;
+    --rt-border: #293748;
+    --rt-border-strong: #3a4b60;
+    --rt-text: #edf3fa;
+    --rt-muted: #93a1b4;
+    --rt-accent: #78a9ed;
+    --rt-accent-soft: #203b5d;
+    color-scheme: dark;
+  }
+
+  #app-root.theme-high-contrast {
+    --rt-canvas: #000000;
+    --rt-surface: #000000;
+    --rt-surface-muted: #111111;
+    --rt-border: #555555;
+    --rt-border-strong: #ffff00;
+    --rt-text: #ffffff;
+    --rt-muted: #ffffff;
+    --rt-accent: #ffff00;
+    --rt-accent-soft: #252500;
+  }
+
+  #app-root :is(button, a, [role="button"]):focus-visible {
+    outline: 2px solid var(--rt-accent);
+    outline-offset: 2px;
+  }
+
+  #app-root button:active {
+    transform: translateY(1px);
+  }
+
+  /* Stateful theme colors stay in CSS; geometry and spacing live in Tailwind. */
+  #app-root :is(.param-code, .param-example-btn, .lang-advanced-row) {
+    color: var(--rt-text) !important;
+    background: var(--rt-surface-muted) !important;
+    border-color: var(--rt-border) !important;
+  }
+
+  #app-root .param-code {
+    color: var(--rt-accent) !important;
+  }
+
+  #app-root :is(.param-example-btn.active-param, .lang-option-btn.selected) {
+    color: var(--rt-accent) !important;
+    background: var(--rt-accent-soft) !important;
+    border-color: var(--rt-accent) !important;
+  }
+
+  #app-root.theme-high-contrast .viewer-brand-mark {
+    color: #000000;
+    background: #ffff00;
+  }
+
+  #app-root.theme-high-contrast #single-content {
+    border: 2px solid var(--rt-accent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #app-root *,
+    #app-root *::before,
+    #app-root *::after {
+      scroll-behavior: auto !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    #info-modal > .absolute,
+    #lang-modal > .absolute {
+      background: var(--rt-canvas);
+      backdrop-filter: none;
+    }
   }
 
 </style>
@@ -653,6 +756,7 @@
   })();
   const statusIndicator = document.getElementById('status-indicator');
   const statusText = document.getElementById('status-text');
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   let initialized = false;
 
   // ------------------------------------------------------------------ //
@@ -718,11 +822,11 @@
       if (!translated || !(lang in translated)) continue;
       const raw = translated[lang];
       const text = raw ? applyLangDict(lang, raw) : TRANSLATION_GAP;
-      if (i === cropped.length - 1) lastText = text + '\n';
+      if (i === cropped.length - 1) lastText = text + ' ';
       else historyItems.push(text);
     }
     const partial = transcriptionsData?.partial?.result?.translated;
-    const partialText = partial ? applyLangDict(lang, partial[lang] || '') + '\n' : '';
+    const partialText = partial ? applyLangDict(lang, partial[lang] || '') + ' ' : '';
     return { historyItems, lastText, partialText };
   }
 
@@ -746,10 +850,16 @@
     if (theme === 'high-contrast') appRoot.classList.add('theme-high-contrast');
     currentTheme = theme;
     // Update active state on theme buttons
-    document.querySelectorAll('.theme-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.theme-btn').forEach(btn => {
+      btn.classList.remove('active');
+      btn.setAttribute('aria-pressed', 'false');
+    });
     const map = { light: 'theme-light', dark: 'theme-dark', 'high-contrast': 'theme-hc' };
     const activeBtn = document.getElementById(map[theme]);
-    if (activeBtn) activeBtn.classList.add('active');
+    if (activeBtn) {
+      activeBtn.classList.add('active');
+      activeBtn.setAttribute('aria-pressed', 'true');
+    }
     updateUrlParam('theme', theme === 'light' ? null : theme);
   }
 
@@ -762,7 +872,9 @@
   // ------------------------------------------------------------------ //
   function applyFade(enabled) {
     document.getElementById('app-root').classList.toggle('fade-off', !enabled);
-    document.getElementById('fade-toggle').classList.toggle('active', enabled);
+    const fadeButton = document.getElementById('fade-toggle');
+    fadeButton.classList.toggle('active', enabled);
+    fadeButton.setAttribute('aria-pressed', enabled ? 'true' : 'false');
     updateUrlParam('fade', enabled ? null : '0');
   }
 
@@ -807,8 +919,10 @@
         document.getElementById('qr-img').src = `https://quickchart.io/qr?text=${encodeURIComponent(window.location.href)}`;
       }
       qrPopup.classList.remove('hidden');
+      qrBtn.setAttribute('aria-expanded', 'true');
     } else {
       qrPopup.classList.add('hidden');
+      qrBtn.setAttribute('aria-expanded', 'false');
     }
   });
 
@@ -842,6 +956,7 @@
   document.addEventListener('click', (e) => {
     if (!document.getElementById('qr-area').contains(e.target)) {
       qrPopup.classList.add('hidden');
+      qrBtn.setAttribute('aria-expanded', 'false');
     }
   });
 
@@ -849,13 +964,18 @@
   // Info modal                                                          //
   // ------------------------------------------------------------------ //
   const infoModal = document.getElementById('info-modal');
+  const infoButton = document.getElementById('info-btn');
 
-  document.getElementById('info-btn').addEventListener('click', () => {
+  function closeInfoModal() {
+    infoModal.classList.add('hidden');
+  }
+
+  infoButton.addEventListener('click', () => {
     infoModal.classList.remove('hidden');
     updateCurrentUrlDisplay();
   });
-  document.getElementById('info-close').addEventListener('click', () => infoModal.classList.add('hidden'));
-  document.getElementById('info-backdrop').addEventListener('click', () => infoModal.classList.add('hidden'));
+  document.getElementById('info-close').addEventListener('click', closeInfoModal);
+  document.getElementById('info-backdrop').addEventListener('click', closeInfoModal);
 
   // Copy URL button
   document.getElementById('copy-url-btn').addEventListener('click', () => {
@@ -1029,12 +1149,12 @@
     }
     list.innerHTML = '';
     if (!langAdvanced) {
-      // Simple mode: one language at a time — the only choice most viewers need.
+      // Simple mode: one language at a time - the only choice most viewers need.
       const visible = getVisibleOrderedLanguages();
       const soleVisible = visible.length === 1 ? visible[0] : null;
       languageOrder.forEach(lang => {
         const btn = document.createElement('button');
-        btn.className = 'lang-option-btn w-full text-sm px-4 py-2.5 rounded-xl font-medium'
+        btn.className = 'lang-option-btn w-full rounded-xl border border-[var(--rt-border)] bg-[var(--rt-surface-muted)] px-4 py-2.5 text-sm font-medium text-[var(--rt-text)] transition-colors hover:border-[var(--rt-accent)] hover:bg-[var(--rt-accent-soft)] hover:text-[var(--rt-accent)] hover:ring-1 hover:ring-inset hover:ring-[var(--rt-accent)]'
           + (lang === soleVisible ? ' selected' : '');
         btn.textContent = lang;
         btn.addEventListener('click', () => {
@@ -1094,11 +1214,13 @@
 
   function openLangModal() {
     langModal.classList.remove('hidden');
+    document.getElementById('lang-btn').setAttribute('aria-expanded', 'true');
     renderLangModal();
   }
 
   function closeLangModal() {
     langModal.classList.add('hidden');
+    document.getElementById('lang-btn').setAttribute('aria-expanded', 'false');
   }
 
   // Shown once per session when several languages exist, so a first-time viewer
@@ -1116,6 +1238,14 @@
   });
   document.getElementById('lang-close').addEventListener('click', closeLangModal);
   document.getElementById('lang-backdrop').addEventListener('click', closeLangModal);
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    qrPopup.classList.add('hidden');
+    qrBtn.setAttribute('aria-expanded', 'false');
+    closeInfoModal();
+    closeLangModal();
+  });
 
   document.getElementById('lang-show-all').addEventListener('click', () => {
     // The URL may already carry a show= filter; "show all" has to lift it,
@@ -1151,6 +1281,10 @@
   }
 
   function refreshView() {
+    document.getElementById('viewer-empty').classList.toggle(
+      'hidden',
+      getVisibleOrderedLanguages().length > 0
+    );
     if (currentLayout === 'single') refreshSingleView();
     else refreshGridView();
   }
@@ -1230,7 +1364,7 @@
     let appended = 0;
     for (let i = retained; i < newItems.length; i++) {
       const seg = document.createElement('span');
-      seg.textContent = newItems[i] + '\n';
+      seg.textContent = newItems[i] + ' ';
       historyEl.appendChild(seg);
       appended++;
     }
@@ -1282,7 +1416,7 @@
 
     if (changed) {
       if (!initialized) {
-        // First render after a layout switch — jump to bottom.
+        // First render after a layout switch - jump to bottom.
         scroller.scrollTop = scroller.scrollHeight;
         scroller.scrollLeft = prevScrollLeft;
       } else {
@@ -1298,7 +1432,11 @@
           // Called synchronously (no setTimeout) so the browser paints
           // the anchored frame and animates forward from there, never
           // an intermediate mid-update frame.
-          scroller.scrollTo({ top: scroller.scrollHeight, left: prevScrollLeft, behavior: 'smooth' });
+          scroller.scrollTo({
+            top: scroller.scrollHeight,
+            left: prevScrollLeft,
+            behavior: reduceMotion.matches ? 'auto' : 'smooth'
+          });
         } else {
           scroller.scrollLeft = prevScrollLeft;
         }
@@ -1325,10 +1463,13 @@
     return wrapper;
   }
 
-  function makeLanguageCard() {
+  function makeLanguageCard(language) {
     const card = document.createElement('div');
-    card.className = 'language-card flex-1 px-2 py-1 leading-relaxed wrap-break-word';
-    // Disable browser scroll anchoring — when textContent replaces the
+    card.className = 'language-card flex-1 overflow-x-hidden overflow-y-auto whitespace-normal p-2 leading-[1.62] text-[var(--rt-text)] [scrollbar-color:var(--rt-border-strong)_transparent] [scrollbar-gutter:stable_both-edges] focus-visible:outline-2 focus-visible:-outline-offset-3 focus-visible:outline-[var(--rt-accent)] max-md:p-1.5';
+    card.tabIndex = 0;
+    card.setAttribute('role', 'region');
+    card.setAttribute('aria-label', language + ' transcript');
+    // Disable browser scroll anchoring - when textContent replaces the
     // history/last/partial spans, the anchor can become invalid and the
     // browser may snap scrollTop to the bottom on its own.
     card.style.overflowAnchor = 'none';
@@ -1338,6 +1479,7 @@
     const btn = document.createElement('button');
     btn.className = 'icon-btn-sm icon-btn active absolute bottom-2 left-[50%] translate-x-[-50%] opacity-0';
     btn.setAttribute('aria-label', 'Go to bottom');
+    btn.tabIndex = -1;
     btn.innerHTML = '<iconify-icon icon="ph:arrow-down" width="14" height="14"></iconify-icon>';
 
     // Only user-initiated scrolls should flip the follow flag; programmatic
@@ -1354,14 +1496,23 @@
       if (Date.now() - lastUserScrollAt < 1000) {
         card.dataset.followingBottom = nearBottom ? '1' : '0';
       }
-      if (card.dataset.followingBottom === '1') btn.classList.add('opacity-0');
-      else btn.classList.remove('opacity-0');
+      if (card.dataset.followingBottom === '1') {
+        btn.classList.add('opacity-0');
+        btn.tabIndex = -1;
+      } else {
+        btn.classList.remove('opacity-0');
+        btn.tabIndex = 0;
+      }
     });
 
     btn.addEventListener('click', () => {
       card.dataset.followingBottom = '1';
       btn.classList.add('opacity-0');
-      card.scrollTo({ top: card.scrollHeight, behavior: 'smooth' });
+      btn.tabIndex = -1;
+      card.scrollTo({
+        top: card.scrollHeight,
+        behavior: reduceMotion.matches ? 'auto' : 'smooth'
+      });
     });
 
     return { card, btn };
@@ -1375,7 +1526,7 @@
     if (dataContent.dataset.language !== selectedLanguage) {
       dataContent.innerHTML = '';
       dataContent.dataset.language = selectedLanguage;
-      const { card, btn } = makeLanguageCard();
+      const { card, btn } = makeLanguageCard(selectedLanguage);
       dataContent.appendChild(card);
       dataContent.appendChild(btn);
     }
@@ -1427,8 +1578,8 @@
     gridView.style.overflowY = pinRowHeight ? 'auto' : '';
     gridContent.style.height = pinRowHeight ? 'auto' : '';
     if (pinRowHeight) {
-      const GAP = 8;          // gap-2
-      const PADDING = 16;     // p-2, top + bottom
+      const GAP = 4;          // gap-1
+      const PADDING = 4;      // p-0.5, top + bottom
       const VISIBLE_ROWS = 3;
       const avail = gridView.clientHeight - PADDING - GAP * (VISIBLE_ROWS - 1);
       gridContent.style.setProperty('--grid-row-h', Math.max(80, avail / VISIBLE_ROWS) + 'px');
@@ -1443,14 +1594,14 @@
       languages.forEach(lang => renderedText.delete('grid:' + lang));
       languages.forEach(language => {
         const languageBox = document.createElement('div');
-        languageBox.className = 'grid-lang-box overflow-hidden flex flex-col min-h-0 relative';
+        languageBox.className = 'grid-lang-box relative flex min-h-0 flex-col overflow-hidden !rounded-xl border bg-[var(--rt-surface)] shadow-[0_14px_36px_color-mix(in_srgb,var(--rt-canvas)_72%,transparent)]';
         languageBox.setAttribute('data-language', language);
 
         const label = document.createElement('div');
-        label.className = 'grid-lang-label text-xs font-semibold px-2 py-0.5 shrink-0 uppercase tracking-widest';
+        label.className = 'grid-lang-label flex min-h-5 shrink-0 items-center border-b px-2 text-[0.6rem] font-semibold leading-none tracking-[0.05em]';
         label.textContent = language;
 
-        const { card, btn } = makeLanguageCard();
+        const { card, btn } = makeLanguageCard(language);
 
         languageBox.appendChild(label);
         languageBox.appendChild(card);
@@ -1459,7 +1610,7 @@
       });
     }
     // A last row holding a single leftover box (e.g. 3 languages in 2 columns)
-    // would leave a hole beside it — stretch that box across the full width.
+    // would leave a hole beside it - stretch that box across the full width.
     const spanLast = actualCols > 1 && languageCount % actualCols === 1;
     languages.forEach((language, idx) => {
       const languageBox = gridContent.querySelector(`[data-language="${language}"]`);
@@ -1527,7 +1678,7 @@
       } else {
         upsertSegment(data, false);
         // Clear the partial slot only when this commit closes the segment sitting
-        // in it — by now the slot usually holds the next segment's live line.
+        // in it - by now the slot usually holds the next segment's live line.
         const current = transcriptionsData["partial"];
         if (!current || current.start_time <= data.start_time) transcriptionsData["partial"] = null;
       }
