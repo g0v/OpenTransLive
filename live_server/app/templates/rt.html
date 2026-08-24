@@ -1465,7 +1465,7 @@
 
   function makeLanguageCard(language) {
     const card = document.createElement('div');
-    card.className = 'language-card flex-1 overflow-x-hidden overflow-y-auto whitespace-normal p-2 leading-[1.62] text-[var(--rt-text)] [scrollbar-color:var(--rt-border-strong)_transparent] [scrollbar-gutter:stable_both-edges] focus-visible:outline-2 focus-visible:-outline-offset-3 focus-visible:outline-[var(--rt-accent)] max-md:p-1.5';
+    card.className = 'language-card flex-1 overflow-x-hidden overflow-y-auto whitespace-normal p-2 leading-[1.62] text-[var(--rt-text)] [scrollbar-color:var(--rt-border-strong)_transparent] [scrollbar-gutter:stable] focus-visible:outline-2 focus-visible:-outline-offset-3 focus-visible:outline-[var(--rt-accent)] max-md:py-1.5 max-md:pr-1.5 max-md:pl-0.5';
     card.tabIndex = 0;
     card.setAttribute('role', 'region');
     card.setAttribute('aria-label', language + ' transcript');
