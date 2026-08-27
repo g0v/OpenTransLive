@@ -15,7 +15,7 @@ For full roles, flows, APIs, and FAQ, see [../docs/USAGE.en.md](../docs/USAGE.en
 - Redis
 - At least one AI provider API key
 - (Optional) Docker and Docker Compose
-- (Optional) ElevenLabs API key (realtime microphone)
+- (Optional) an ElevenLabs API key or a Gemini API key (realtime microphone; either one)
 - (Optional) YouTube API key (YouTube live-stream sync)
 
 ### Steps
@@ -61,6 +61,7 @@ below (`app/config.py` is just the loader that reads this TOML; you rarely touch
 | `[email_settings].SMTP_*` | OTP delivery; leave empty to log the OTP (dev) |
 | `[mongodb_settings]` | MongoDB connection |
 | `redis_url` | Redis connection |
+| `[realtime_settings].STT_PROVIDER` | Default transcription engine (`elevenlabs` / `gemini`); each room can override it from the panel |
 | `[realtime_settings].ELEVENLABS_API_KEY` | ElevenLabs Scribe |
 | `[realtime_settings].AI_PROVIDER` | Default correction / translation provider (`openai` / `gemini` / `groq` / `cerebras`) |
 | `[realtime_settings].CORRECT_PROVIDER` | (Optional) provider used for correction only |
@@ -110,7 +111,7 @@ app/
 ├── email_auth.py            # Email OTP login
 ├── http_client.py           # Shared httpx client
 ├── logger_config.py         # Logging setup
-├── scribe_manager.py        # ElevenLabs Scribe session manager
+├── scribe_manager.py        # Shared transcription session logic + ElevenLabs / Gemini
 ├── socket_schema.py         # Socket.IO event schema validation
 ├── translation_service.py   # Correction + translation pipeline & queue
 ├── translators/             # Per-provider implementations

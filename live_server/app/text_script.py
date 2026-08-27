@@ -157,6 +157,13 @@ def approx_word_count(text: str) -> float:
                for _, pattern, chars_per_word in _CHARS_PER_WORD)
 
 
+# The primary subtag each provider uses for Mandarin: "zho" (ElevenLabs, ISO 639),
+# "cmn" (Gemini, BCP-47), and the plain "zh". Cantonese ("yue") is deliberately
+# absent: yue-Hant-HK is already Traditional, and s2tw would rewrite its Hong Kong
+# variants into Taiwanese ones.
+_MANDARIN_SUBTAGS = frozenset({"zh", "zho", "cmn"})
+
+
 def should_force_traditional(language_code: str | None) -> bool:
     """Whether this session's transcripts get normalised to Traditional Chinese.
 
@@ -165,8 +172,12 @@ def should_force_traditional(language_code: str | None) -> bool:
     detect the setting says nothing about what was spoken, so the deployment-wide
     FORCE_OPENCC decides — and to_taiwan_traditional still spares any line that
     turns out to be Japanese.
+
+    It stays on for a code that already transcribes as Traditional (cmn-Hant-TW):
+    exempting it would make the output script depend on which Mandarin locale was
+    picked, and s2tw still catches the stray Simplified character.
     """
-    if language_code and language_code.startswith("zh"):
+    if language_code and language_code.lower().split("-")[0] in _MANDARIN_SUBTAGS:
         return True
     return not language_code and bool(REALTIME_SETTINGS.get("FORCE_OPENCC", False))
 

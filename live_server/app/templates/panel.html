@@ -74,6 +74,16 @@
             <option value="">Select Microphone</option>
           </select>
         </div>
+        <!-- Transcription engine (only for realtime transcription) -->
+        <div class="toolbar-group">
+          <span class="toolbar-label">Engine</span>
+          <select id="stt-provider-select"
+            class="w-full max-w-40 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none">
+            <option value="">Server Default</option>
+            <option value="elevenlabs">ElevenLabs Scribe</option>
+            <option value="gemini">Gemini Transcribe</option>
+          </select>
+        </div>
         <!-- Detect Language select (only for realtime transcription) -->
         <div class="toolbar-group">
           <span class="toolbar-label">Detect Lang</span>
@@ -530,8 +540,11 @@
   // bfcache eligibility, so a back-navigation would pay a full panel reload.
 
   // ── Scribe detect language select ────────────────────────────────────────
-  // Scribe v2 requires ISO 639-1 (2-char) or ISO 639-3 (3-char) codes.
-  const SCRIBE_LANGUAGES = [
+  // The two engines name the same language differently, so the option list follows
+  // whichever one the session is using. Switching engine clears the saved code
+  // server-side, so nothing carries a tag the new engine would reject.
+  // ElevenLabs Scribe v2: ISO 639-1 (2-char) or ISO 639-3 (3-char).
+  const ELEVENLABS_LANGUAGES = [
     { code: 'zho', label: 'Mandarin Chinese' },
     { code: 'yue', label: 'Cantonese' },
     { code: 'eng', label: 'English' },
@@ -579,6 +592,91 @@
     { code: 'cat', label: 'Catalan' },
   ]
 
+  // Gemini Live Transcribe: BCP-47 tags, region included. Tamil and Urdu are absent
+  // from Gemini's supported list, so they have no entry here. cmn-Hant-TW is missing
+  // from Google's published table too but the API accepts it, and it is what a
+  // Taiwanese session wants — if it ever starts being rejected, cmn-Hans-CN is the
+  // documented fallback and should_force_traditional covers both.
+  const GEMINI_LANGUAGES = [
+    { code: 'cmn-Hant-TW', label: 'Mandarin Chinese (Taiwan)' },
+    { code: 'cmn-Hans-CN', label: 'Mandarin Chinese (China)' },
+    { code: 'yue-Hant-HK', label: 'Cantonese' },
+    { code: 'en-US', label: 'English (US)' },
+    { code: 'en-GB', label: 'English (UK)' },
+    { code: 'ja-JP', label: 'Japanese' },
+    { code: 'ko-KR', label: 'Korean' },
+    { code: 'es-419', label: 'Spanish (Latin America)' },
+    { code: 'es-US', label: 'Spanish (US)' },
+    { code: 'fr-FR', label: 'French' },
+    { code: 'de-DE', label: 'German' },
+    { code: 'pt-BR', label: 'Portuguese (Brazil)' },
+    { code: 'pt-PT', label: 'Portuguese (Portugal)' },
+    { code: 'ar-EG', label: 'Arabic' },
+    { code: 'th-TH', label: 'Thai' },
+    { code: 'vi-VN', label: 'Vietnamese' },
+    { code: 'id-ID', label: 'Indonesian' },
+    { code: 'ru-RU', label: 'Russian' },
+    { code: 'it-IT', label: 'Italian' },
+    { code: 'tr-TR', label: 'Turkish' },
+    { code: 'pl-PL', label: 'Polish' },
+    { code: 'nl-NL', label: 'Dutch' },
+    { code: 'hi-IN', label: 'Hindi' },
+    { code: 'bn-IN', label: 'Bengali' },
+    { code: 'uk-UA', label: 'Ukrainian' },
+    { code: 'sv-SE', label: 'Swedish' },
+    { code: 'nb-NO', label: 'Norwegian' },
+    { code: 'da-DK', label: 'Danish' },
+    { code: 'fi-FI', label: 'Finnish' },
+    { code: 'cs-CZ', label: 'Czech' },
+    { code: 'ro-RO', label: 'Romanian' },
+    { code: 'ms-MY', label: 'Malay' },
+    { code: 'fil-PH', label: 'Filipino' },
+    { code: 'el-GR', label: 'Greek' },
+    { code: 'he-IL', label: 'Hebrew' },
+    { code: 'fa-IR', label: 'Persian' },
+    { code: 'te-IN', label: 'Telugu' },
+    { code: 'kn-IN', label: 'Kannada' },
+    { code: 'ml-IN', label: 'Malayalam' },
+    { code: 'gu-IN', label: 'Gujarati' },
+    { code: 'mr-IN', label: 'Marathi' },
+    { code: 'sr-RS', label: 'Serbian' },
+    { code: 'hr-HR', label: 'Croatian' },
+    { code: 'bg-BG', label: 'Bulgarian' },
+    { code: 'sk-SK', label: 'Slovak' },
+    { code: 'hu-HU', label: 'Hungarian' },
+    { code: 'ca-ES', label: 'Catalan' },
+  ]
+
+  const SCRIBE_LANGUAGES = { elevenlabs: ELEVENLABS_LANGUAGES, gemini: GEMINI_LANGUAGES }
+
+  // Which engine the Detect Lang options currently describe. Set by loadSttProvider
+  // before the language value is applied, so the option for a saved code always exists
+  // by the time the select is assigned.
+  let activeSttProvider = ''
+
+  function renderScribeLanguageOptions(provider) {
+    const sel = document.getElementById('scribe-lang-select')
+    if (!sel || provider === activeSttProvider) return
+    activeSttProvider = provider
+    sel.replaceChildren(new Option('Auto Detect', ''))
+    for (const { code, label } of SCRIBE_LANGUAGES[provider] || []) {
+      sel.appendChild(new Option(label + ' (' + code + ')', code))
+    }
+  }
+
+  async function loadSttProvider() {
+    try {
+      const res = await fetch(`/api/session/${sid}/stt-provider`, { credentials: 'same-origin' })
+      if (!res.ok) return
+      const data = await res.json()
+      const sel = document.getElementById('stt-provider-select')
+      if (sel) sel.value = data.provider || ''
+      renderScribeLanguageOptions(data.provider || data.default)
+    } catch (e) {
+      console.error('Failed to load STT provider:', e)
+    }
+  }
+
   async function loadScribeLanguage() {
     try {
       const res = await fetch(`/api/session/${sid}/scribe-language`, { credentials: 'same-origin' })
@@ -614,6 +712,19 @@
 
   function saveScribeLanguage(language) {
     return saveSessionField('scribe-language', { language }, 'settings-status')
+  }
+
+  // Always paired: the engine decides which Detect Lang options exist, so the language
+  // has to be re-applied after the options are rebuilt.
+  function loadEngineAndLanguage() {
+    return loadSttProvider().then(loadScribeLanguage)
+  }
+
+  async function saveSttProvider(provider) {
+    await saveSessionField('stt-provider', { provider }, 'settings-status')
+    // The server drops the forced detect language on an engine change, so re-read both
+    // rather than leaving the select showing a code the new engine never had.
+    await loadEngineAndLanguage()
   }
 
   function saveTranslateTone(tone) {
@@ -1454,6 +1565,8 @@
     'keywords':        { load: loadKeywords,       isInteracting: () => keywordSavePending,                  polled: false },
     'text-dictionary': { load: loadTextDictionary, isInteracting: () => !!textDictSaveTimer,                 polled: true },
     'glossary':        { load: loadGlossary,       isInteracting: () => !!glossarySaveTimer,                 polled: true },
+    'stt-provider':    { load: loadEngineAndLanguage,
+                                                   isInteracting: () => focused('stt-provider-select'),      polled: true },
     'scribe-language': { load: loadScribeLanguage, isInteracting: () => focused('scribe-lang-select'),       polled: true },
     'translate-tone':  { load: loadTranslateTone,  isInteracting: () => focused('tone-custom-input'),        polled: true },
     'co-owners':       { load: loadCoOwners,       isInteracting: () => false,                               polled: false },
@@ -1544,19 +1657,21 @@
   })
 
   document.addEventListener('DOMContentLoaded', function () {
-    // Populate and wire up scribe detect language select
+    // Wire up the engine and detect language selects. The language options depend on
+    // the engine, so loadSttProvider populates them and only then is the saved code
+    // applied — hence the sequencing here rather than two independent loads.
+    const sttProviderSelect = document.getElementById('stt-provider-select')
+    if (sttProviderSelect) {
+      sttProviderSelect.addEventListener('change', function () {
+        saveSttProvider(this.value)
+      })
+    }
     const scribeLangSelect = document.getElementById('scribe-lang-select')
     if (scribeLangSelect) {
-      SCRIBE_LANGUAGES.forEach(function ({ code, label }) {
-        const opt = document.createElement('option')
-        opt.value = code
-        opt.textContent = label + ' (' + code + ')'
-        scribeLangSelect.appendChild(opt)
-      })
-      loadScribeLanguage()
       scribeLangSelect.addEventListener('change', function () {
         saveScribeLanguage(this.value)
       })
+      loadEngineAndLanguage()
     }
 
     loadTranslateTone()

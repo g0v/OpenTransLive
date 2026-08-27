@@ -33,7 +33,7 @@
 
 1. Session 擁有者或 co-owner 進入 `/panel/{session_id}`。
 2. 確認該帳號已被系統管理員允許使用 realtime transcription。
-3. 在 panel 中設定翻譯目標語言、Scribe 偵測語言、翻譯語氣、關鍵字、文字字典。
+3. 在 panel 中設定翻譯目標語言、轉錄引擎與偵測語言、翻譯語氣、關鍵字、文字字典。
 4. 開啟麥克風。
 5. 系統將音訊送往即時轉錄服務，取得文字後進行修正與翻譯。
 6. 完成的字幕片段會寫入 Redis 與 MongoDB。
@@ -98,7 +98,8 @@ Session 擁有者或 co-owner 可開啟 `/edit/{session_id}`：
 | 項目 | 說明 |
 |---|---|
 | Translation languages | 設定字幕要翻譯成哪些語言 |
-| Scribe language | 指定語音辨識語言；留空代表自動偵測 |
+| Engine | 選擇轉錄引擎：ElevenLabs Scribe 或 Gemini Transcribe；留空代表沿用伺服器的 `STT_PROVIDER` |
+| Detect language | 指定語音辨識語言；留空代表自動偵測。語言代碼隨引擎而異（ElevenLabs 用 `zho`，Gemini 用 `cmn-Hant-TW`），切換引擎會把這項重設為自動偵測 |
 | Translate tone | 指定翻譯語氣，例如正式、口語或其他短字串 |
 | Keywords | 提供人名、專有名詞或活動術語給修正與翻譯流程使用 |
 | Pinned keywords | 鎖定特定 keyword，避免被自動排序或淘汰 |
@@ -166,8 +167,10 @@ Server to client：
 | `GET` | `/api/session/{sid}/glossary` | 讀取多語詞條表 |
 | `POST` | `/api/session/{sid}/glossary` | 更新多語詞條表 |
 | `POST` | `/api/session/{sid}/glossary/generate` | 以 AI 搜尋網路產生單一詞條（需 Gemini 或 OpenAI key） |
-| `GET` | `/api/session/{sid}/scribe-language` | 讀取 Scribe 語言設定 |
-| `POST` | `/api/session/{sid}/scribe-language` | 更新 Scribe 語言設定 |
+| `GET` | `/api/session/{sid}/stt-provider` | 讀取轉錄引擎設定 |
+| `POST` | `/api/session/{sid}/stt-provider` | 更新轉錄引擎（`elevenlabs` / `gemini`；空字串代表伺服器預設）|
+| `GET` | `/api/session/{sid}/scribe-language` | 讀取偵測語言設定 |
+| `POST` | `/api/session/{sid}/scribe-language` | 更新偵測語言設定 |
 | `GET` | `/api/session/{sid}/translate-tone` | 讀取翻譯語氣 |
 | `POST` | `/api/session/{sid}/translate-tone` | 更新翻譯語氣 |
 | `GET` | `/api/session/{sid}/co-owners` | 讀取 session 協作者 |
@@ -225,7 +228,7 @@ Key 管理 API：
 - MongoDB 可連線。
 - Redis 可連線。
 - 至少一組 AI provider API key 已設定。
-- 若使用即時麥克風，`ELEVENLABS_API_KEY` 已設定。
+- 若使用即時麥克風，該 room 所用引擎的 key 已設定（`elevenlabs` → `ELEVENLABS_API_KEY`，`gemini` → `GEMINI_API_KEY`）。
 - 伺服器可開啟 `/`。
 - `/login` 可完成 OTP 登入。
 

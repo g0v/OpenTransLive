@@ -33,7 +33,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 dotenv.load_dotenv(override=True)
 
-from .config import SETTINGS, REDIS_URL, IS_PRODUCTION, SOURCE_CODE_URL, PROFESSIONAL_SERVICES_URL
+from .config import SETTINGS, REALTIME_SETTINGS, REDIS_URL, IS_PRODUCTION, SOURCE_CODE_URL, PROFESSIONAL_SERVICES_URL
 try:
     from .config import EMAIL_SETTINGS
 except ImportError:
@@ -47,7 +47,8 @@ if not SETTINGS.get("SECRET_KEY"):
     )
 from .database import rooms_collection, transcription_store_collection, transcription_segments_collection, users_collection, init_indexes
 from .logger_config import setup_logger, log_exception
-from .scribe_manager import ScribeSessionManager
+from .scribe_manager import (SCRIBE_MANAGERS, ScribeSessionManager, create_scribe_manager,
+                             normalize_language_code)
 from .socket_schema import (
     validate_sync_payload,
     validate_audio_buffer_append_payload,
@@ -306,9 +307,10 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
             return existing
 
         if existing is not None and not existing.api_key and not force_new:
-            # Misconfigured server (no ELEVENLABS_API_KEY): a replacement would refuse to
-            # start the same way, so keep the dead manager instead of churning one — and
-            # one error log — per audio chunk. It already reported "stopped" to the panel.
+            # Misconfigured server (no API key for the chosen provider): a replacement
+            # would refuse to start the same way, so keep the dead manager instead of
+            # churning one — and one error log — per audio chunk. It already reported
+            # "stopped" to the panel.
             return existing
 
         if existing is not None:
@@ -318,10 +320,12 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
             existing.mark_superseded()
             asyncio.create_task(existing.stop())
 
-        from .translation_service import get_session_scribe_language, get_session_partial_interval
+        from .translation_service import (get_session_scribe_language, get_session_partial_interval,
+                                          get_session_stt_provider)
         language_code = await get_session_scribe_language(redis_client, session_id)
         partial_interval = await get_session_partial_interval(session_id)
-        manager = ScribeSessionManager(session_id, on_scribe_transcription, language_code=language_code, partial_interval=partial_interval, status_callback=_emit_scribe_status)
+        provider = await get_session_stt_provider(redis_client, session_id)
+        manager = create_scribe_manager(provider, session_id, on_scribe_transcription, language_code=language_code, partial_interval=partial_interval, status_callback=_emit_scribe_status)
         manager.yt_start_time = await get_youtube_start_time(session_id)
         active_scribe_managers[session_id] = manager
         asyncio.create_task(manager.start())
@@ -390,6 +394,7 @@ _PUBLIC_API_ENDPOINTS = {
     "get_session_keywords_endpoint", "update_session_keywords_endpoint",
     "get_session_text_dictionary_endpoint", "update_session_text_dictionary_endpoint",
     "get_session_scribe_language_endpoint", "update_session_scribe_language_endpoint",
+    "get_session_stt_provider_endpoint", "update_session_stt_provider_endpoint",
     "get_session_translate_tone_endpoint", "update_session_translate_tone_endpoint",
     "get_session_co_owners_endpoint", "add_session_co_owner_endpoint",
     "remove_session_co_owner_endpoint",
@@ -438,8 +443,18 @@ _PUBLIC_API_REQUEST_BODIES: dict[str, dict] = {
         "required": True,
         "schema": {"type": "object", "properties": {
             "language": {"type": "string",
-                         "description": "ISO 639-1/639-3 code to force detection; empty string clears (auto-detect)."}}},
+                         "description": "Code to force detection; empty string clears (auto-detect). "
+                                        "Spell it the way the session's provider does: ISO 639-1/639-3 "
+                                        "for elevenlabs ('zho'), BCP-47 for gemini ('cmn-Hant-TW')."}}},
         "example": {"language": "en"},
+    },
+    "update_session_stt_provider_endpoint": {
+        "required": True,
+        "schema": {"type": "object", "properties": {
+            "provider": {"type": "string", "enum": ["elevenlabs", "gemini", ""],
+                         "description": "Transcription engine; empty string restores the server default. "
+                                        "Changing it clears the forced detect language."}}},
+        "example": {"provider": "gemini"},
     },
     "update_session_translate_tone_endpoint": {
         "required": True,
@@ -1881,9 +1896,16 @@ async def update_session_scribe_language_endpoint(request: Request, sid: str):
     language = body.get("language", "")
     if not isinstance(language, str):
         raise HTTPException(status_code=400, detail="language must be a string")
-    language = language.strip().lower()
-    if language and not re.fullmatch(r'[a-z]{2,3}', language):
-        raise HTTPException(status_code=400, detail="language must be an ISO 639-1 (2-char) or ISO 639-3 (3-char) code")
+    language = language.strip()
+    if language:
+        # Shape only, not a lookup against a per-provider list: the two providers name
+        # the same language differently ("zho" vs "cmn-Hans-CN") and the panel already
+        # offers the codes the active one accepts.
+        language = normalize_language_code(language)
+        if not language:
+            raise HTTPException(status_code=400, detail=(
+                "language must be an ISO 639 code (e.g. 'zho') or a BCP-47 tag "
+                "(e.g. 'cmn-Hant-TW'), matching the session's transcription provider"))
 
     from .translation_service import save_session_scribe_language
     await save_session_scribe_language(redis_client, sid, language)
@@ -1894,6 +1916,52 @@ async def update_session_scribe_language_endpoint(request: Request, sid: str):
 
     await _emit_session_settings_update(sid, "scribe-language")
     return {"language": language}
+
+
+@app.get("/api/session/{sid}/stt-provider", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def get_session_stt_provider_endpoint(request: Request, sid: str):
+    """Get the transcription provider for a session (empty means the server default)."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _require_session_owner(request, sid)
+
+    from .translation_service import get_session_stt_provider
+    provider = await get_session_stt_provider(redis_client, sid)
+    return {"provider": provider,
+            "default": REALTIME_SETTINGS.get("STT_PROVIDER") or "elevenlabs"}
+
+
+@app.post("/api/session/{sid}/stt-provider", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def update_session_stt_provider_endpoint(request: Request, sid: str):
+    """Set or clear the transcription provider for a session."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _require_session_owner(request, sid)
+
+    body = await request.json()
+    provider = body.get("provider", "")
+    if not isinstance(provider, str):
+        raise HTTPException(status_code=400, detail="provider must be a string")
+    provider = provider.strip().lower()
+    if provider and provider not in SCRIBE_MANAGERS:
+        raise HTTPException(status_code=400,
+                            detail=f"provider must be one of: {', '.join(SCRIBE_MANAGERS)}")
+
+    from .translation_service import (get_session_stt_provider, save_session_stt_provider,
+                                      save_session_scribe_language)
+    if provider == await get_session_stt_provider(redis_client, sid):
+        return {"provider": provider}
+
+    await save_session_stt_provider(redis_client, sid, provider)
+    # The forced detect language belongs to the provider that was selected when it was
+    # set — "zho" means nothing to Gemini and "cmn-Hans-CN" nothing to ElevenLabs — so
+    # switching provider drops it back to auto-detect rather than carrying a code the
+    # new engine would reject.
+    await save_session_scribe_language(redis_client, sid, "")
+
+    if active_scribe_managers.get(sid):
+        await _get_or_create_scribe_manager(sid, force_new=True)
+
+    await _emit_session_settings_update(sid, "stt-provider")
+    return {"provider": provider}
 
 
 @app.get("/api/session/{sid}/translate-tone", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])

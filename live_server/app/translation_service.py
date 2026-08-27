@@ -205,6 +205,19 @@ async def save_session_scribe_language(redis_client, session_id, language: str):
 
 
 # ---------------------------------------------------------------------------
+# Session: speech-to-text provider
+# ---------------------------------------------------------------------------
+
+async def get_session_stt_provider(redis_client, session_id) -> str:
+    """Which engine transcribes this session ('' = the deployment's STT_PROVIDER)."""
+    return await _get_session_string_field(redis_client, session_id, "stt_provider")
+
+
+async def save_session_stt_provider(redis_client, session_id, provider: str):
+    await _save_session_string_field(redis_client, session_id, "stt_provider", provider)
+
+
+# ---------------------------------------------------------------------------
 # Session: per-account overrides (ai_provider, partial_interval)
 # ---------------------------------------------------------------------------
 

@@ -13,10 +13,10 @@ OpenTransLive 是一套**為活動舉辦方（event organizers）打造的廣播
 
 ## 功能特色
 
-- **即時語音轉錄**：支援多種轉錄引擎 (WhisperX、OpenAI、Groq、ElevenLabs Scribe、Google Speech-to-Text)
+- **即時語音轉錄**：支援多種轉錄引擎 (WhisperX、OpenAI、Groq、ElevenLabs Scribe、Gemini Live Transcribe、Google Speech-to-Text)
 - **多語言翻譯**：使用 LLM 自動翻譯成多種語言，支援上下文感知翻譯
 - **使用者帳號系統**：Email OTP 登入、管理員後台、即時轉錄權限管理、session co-owner
-- **Session 控制台**：`/panel/{session_id}` 提供語言、Scribe 語言、語氣、關鍵字與文字字典設定
+- **Session 控制台**：`/panel/{session_id}` 提供語言、轉錄引擎與辨識語言、語氣、關鍵字與文字字典設定
 - **歷史字幕編輯**：`/edit/{session_id}` 可修改 / 刪除已儲存片段並更新所有翻譯
 - **觀眾廣播**：觀眾頁 (`/rt`、`/yt`) 透過 SSE 接收字幕，免登入、無人數上限
 - **YouTube 整合**：`/yt/{session_id}` 可與 YouTube 直播或影片時間軸同步
@@ -34,7 +34,7 @@ opentranslive/
 │   │   ├── secret/         # config.toml（機密）、models.toml（override）、*.example.toml
 │   │   ├── database.py     # MongoDB 整合
 │   │   ├── email_auth.py   # Email OTP 登入
-│   │   ├── scribe_manager.py      # ElevenLabs Scribe session 管理
+│   │   ├── scribe_manager.py      # 轉錄 session 共用邏輯 + ElevenLabs / Gemini 實作
 │   │   ├── translation_service.py # 翻譯流程與佇列
 │   │   ├── translators/    # 各 AI provider 實作
 │   │   ├── socket_schema.py # Socket.IO 事件 schema
@@ -58,7 +58,7 @@ opentranslive/
 - MongoDB
 - Redis
 - 至少一組 AI provider API key（OpenAI、Gemini、Groq 或 Cerebras 任一）
-- 使用即時麥克風轉錄時需要 ElevenLabs API key
+- 使用即時麥克風轉錄時需要 ElevenLabs API key 或 Gemini API key（`STT_PROVIDER` 決定用哪一個）
 
 ### 啟動伺服器
 
@@ -91,7 +91,7 @@ uv run uvicorn app:socket_app --host 0.0.0.0 --port 5000
 
 ### 啟動外部客戶端（選用）
 
-`live_server` 的 panel 本身就能透過瀏覽器麥克風走 ElevenLabs Scribe 做即時轉錄，無需安裝任何客戶端。下列 client 用於需要本地推論或特定 STT provider 的場景。
+`live_server` 的 panel 本身就能透過瀏覽器麥克風走 ElevenLabs Scribe 或 Gemini Live Transcribe 做即時轉錄，無需安裝任何客戶端。下列 client 用於需要本地推論或特定 STT provider 的場景。
 
 **批次客戶端**（[transcribe_client/README.md](transcribe_client/README.md)）：
 
@@ -114,7 +114,7 @@ uv run python run.py -t your_session_id
 ### 轉錄流程
 
 ```
-麥克風 → Panel (瀏覽器) → ElevenLabs Scribe → 修正/翻譯 → 伺服器 → SSE → 觀眾頁
+麥克風 → Panel (瀏覽器) → ElevenLabs Scribe / Gemini Live Transcribe → 修正/翻譯 → 伺服器 → SSE → 觀眾頁
                                                             ↓
                                                        MongoDB
                                                        (持久化)
