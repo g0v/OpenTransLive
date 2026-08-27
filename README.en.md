@@ -13,10 +13,10 @@ Language: English ([繁體中文](README.md))
 
 ## Features
 
-- **Realtime transcription**: WhisperX, OpenAI, Groq, ElevenLabs Scribe, Google Speech-to-Text
+- **Realtime transcription**: WhisperX, OpenAI, Groq, ElevenLabs Scribe, Gemini Live Transcribe, Google Speech-to-Text
 - **Multilingual translation**: LLM-based, context-aware
 - **User accounts**: Email OTP login, admin console, realtime permission, session co-owners
-- **Session panel**: `/panel/{session_id}` for translation languages, Scribe language, tone, keywords, text dictionary
+- **Session panel**: `/panel/{session_id}` for translation languages, transcription engine and detect language, tone, keywords, text dictionary
 - **Edit history**: `/edit/{session_id}` to revise or delete committed segments and all translations
 - **Viewer broadcast**: Viewer pages (`/rt`, `/yt`) receive subtitles over SSE — no login, no audience cap
 - **YouTube sync**: `/yt/{session_id}` aligns subtitles with a YouTube live stream or VOD
@@ -34,7 +34,7 @@ opentranslive/
 │   │   ├── secret/         # config.toml (secret), models.toml (override), *.example.toml
 │   │   ├── database.py     # MongoDB integration
 │   │   ├── email_auth.py   # Email OTP login
-│   │   ├── scribe_manager.py      # ElevenLabs Scribe session manager
+│   │   ├── scribe_manager.py      # Shared transcription session logic + ElevenLabs / Gemini
 │   │   ├── translation_service.py # Translation pipeline & queue
 │   │   ├── translators/    # Per-provider implementations
 │   │   ├── socket_schema.py # Socket.IO event schema
@@ -58,7 +58,7 @@ opentranslive/
 - MongoDB
 - Redis
 - At least one AI provider API key (any of OpenAI, Gemini, Groq, Cerebras)
-- ElevenLabs API key for realtime microphone transcription
+- An ElevenLabs API key or a Gemini API key for realtime microphone transcription (`STT_PROVIDER` picks which)
 
 ### Start the server
 
@@ -91,7 +91,7 @@ Full usage flow (creating sessions, panel, editing, exporting): [docs/USAGE.en.m
 
 ### External clients (optional)
 
-The `live_server` panel can run realtime transcription directly from a browser microphone via ElevenLabs Scribe — no client needed. The clients below exist for local inference or alternative STT providers.
+The `live_server` panel can run realtime transcription directly from a browser microphone via ElevenLabs Scribe or Gemini Live Transcribe — no client needed. The clients below exist for local inference or alternative STT providers.
 
 **Batch client** ([transcribe_client/README.en.md](transcribe_client/README.en.md)):
 
@@ -114,7 +114,7 @@ uv run python run.py -t your_session_id
 ### Transcription flow
 
 ```
-Mic → Panel (browser) → ElevenLabs Scribe → Correct/Translate → Server → SSE → Viewer pages
+Mic → Panel (browser) → ElevenLabs Scribe / Gemini Live Transcribe → Correct/Translate → Server → SSE → Viewer pages
                                                                      ↓
                                                                 MongoDB
                                                               (persistent)

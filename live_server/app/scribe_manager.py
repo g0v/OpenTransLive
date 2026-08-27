@@ -2,9 +2,24 @@
 # Copyright (c) 2025 Sean Gau <rrtw0627@gmail.com>
 # Licensed under the GNU AGPL v3.0
 # See LICENSE for details.
+"""Streaming speech-to-text sessions.
+
+`ScribeSessionManager` holds everything that is the same whatever transcribes the
+audio — the reconnect loop, the segment/partial/commit state machine, the idle and
+stall watchdogs, usage counting and the panel status — and leaves four hooks for the
+provider: how to open the socket, what to hand it after it opens, how to frame an
+audio chunk, and how to read a server message. `ElevenLabsScribeManager` and
+`GeminiScribeManager` below fill those in.
+
+"Scribe" is ElevenLabs' product name but it is also what this project has called the
+transcription session since before there was a second provider — in Redis keys, the
+`scribe_status` socket event and the /scribe-language endpoint. Renaming it would
+break those wire contracts for nothing, so it stays the generic term here.
+"""
 import asyncio
 import json
 import random
+import re
 import time
 import tiktoken
 from urllib.parse import urlencode
@@ -38,23 +53,18 @@ _WS_PING_INTERVAL = 15        # keepalive ping cadence; primary dead-socket dete
 _WS_PING_TIMEOUT = 10         # drop the connection if a pong is missing this long
 _RECV_POLL_INTERVAL = 2.0     # seconds; recv() timeout granularity for stall checks
 # Application-level backstop for a socket that stays ping-alive but stops producing
-# transcripts. Two thresholds, because how long a silence is normal depends on whether a
-# segment is open:
-#   - mid-segment: partials should keep coming, and a short commit closes the segment
-#     within _COMMIT_TIMEOUT_SECS, so a tight timeout is both safe and fast.
-#   - between segments: while audio flows but nobody speaks, Scribe's only output is a
-#     periodic empty committed_transcript, measured at ~36s intervals against the live
-#     API. The threshold has to clear that heartbeat with margin, otherwise every quiet
-#     stretch would force a reconnect.
-# Both must stay comfortably above _WS_PING_TIMEOUT so keepalive detects real dead
-# sockets first and the two layers don't race into false reconnects.
-_OUTPUT_STALL_TIMEOUT = 25       # mid-segment: no server message for this long -> reconnect
-_IDLE_OUTPUT_STALL_TIMEOUT = 60  # no open segment: same, but past the ~36s empty-commit heartbeat
+# transcripts, mid-segment: partials should keep coming, and a short commit closes the
+# segment within _COMMIT_TIMEOUT_SECS, so a tight timeout is both safe and fast. It must
+# stay comfortably above _WS_PING_TIMEOUT so keepalive detects real dead sockets first
+# and the two layers don't race into false reconnects. Its between-segments counterpart
+# varies by provider — see IDLE_OUTPUT_STALL_TIMEOUT.
+_OUTPUT_STALL_TIMEOUT = 25
 _SEGMENT_START_OFFSET = 0.3   # seconds subtracted from seg_start_time to account for ASR processing latency
 _IDLE_TIMEOUT_SECS = 60       # stop session after 1 minute with no audio
 _IDLE_CHECK_INTERVAL = 30     # how often the watchdog checks (seconds)
-_MAX_SESSION_SECS = 300       # while audio keeps flowing, proactively restart a connection older than this
-                              # to bound ElevenLabs session length (avoids long-run buildup / queue_overflow)
+_MAX_SESSION_SECS = 300       # while audio keeps flowing, proactively restart a connection older than this.
+                              # It bounds ElevenLabs session length (avoids long-run buildup / queue_overflow)
+                              # and stays well inside Gemini Live's hard 10-minute session cap.
 _MAX_PARTIAL_TOKENS = 150     # maximum length of partial transcript; token-based on purpose,
                               # since what it protects is prompt size and LLM cost
 # Whether a commit is long enough to stand on its own is measured on the text itself,
@@ -70,9 +80,36 @@ _MIN_COMMIT_WORDS = 6       # ~6 Han characters, ~7 English words, ~2 Korean eoj
 _COMMIT_TIMEOUT_SECS = 10     # force-flush buffered short commits after this delay if no follow-up arrives
 
 class ScribeSessionManager:
+    """Provider-agnostic transcription session. Subclass and fill in the hooks."""
+
     _BYTES_PER_SEC = 16000 * 2          # 16kHz 16-bit mono PCM
     _LOG_INTERVAL_BYTES = 30 * 16000 * 2  # log every 30s of audio
     _AUDIO_QUEUE_MAXSIZE = 1000         # ~30s of audio; drop oldest when full
+
+    # ── Provider surface ──────────────────────────────────────────────────────
+    PROVIDER = ""            # short id, matching the STT_PROVIDER setting
+    API_KEY_SETTING = ""     # key in REALTIME_SETTINGS holding this provider's API key
+    # Same as _OUTPUT_STALL_TIMEOUT but for the gaps between segments, where whether
+    # anything arrives at all while nobody speaks is provider-specific. None means
+    # "silence here is normal, don't watch for it".
+    IDLE_OUTPUT_STALL_TIMEOUT: float | None = None
+
+    def _connect_target(self) -> tuple[str, dict]:
+        """Return the (url, extra headers) this provider's socket is opened with."""
+        raise NotImplementedError
+
+    async def _handshake(self, ws) -> None:
+        """Send whatever the provider needs before audio flows. Default: nothing."""
+
+    async def _send_audio(self, ws, base64_audio: str, commit: bool) -> None:
+        """Push one base64 PCM chunk. `commit` asks the server to close the current
+        segment now (the partial has outgrown _MAX_PARTIAL_TOKENS)."""
+        raise NotImplementedError
+
+    def _parse_message(self, data: dict) -> tuple[str, bool] | None:
+        """Turn one decoded server message into (text, is_partial), or None when it
+        carries no transcript. Providers log their own errors here."""
+        raise NotImplementedError
 
     def __init__(self, session_id, callback, language_code: str = "", partial_interval: float | None = None,
                  status_callback=None):
@@ -91,13 +128,12 @@ class ScribeSessionManager:
         self.is_running = False
         self.audio_queue = asyncio.Queue(maxsize=self._AUDIO_QUEUE_MAXSIZE)
         self._stop_event = asyncio.Event()
-        self.api_key = REALTIME_SETTINGS.get("ELEVENLABS_API_KEY", '')
+        self.api_key = REALTIME_SETTINGS.get(self.API_KEY_SETTING, '')
         if not self.api_key:
-            logger.error(f"Missing ELEVENLABS_API_KEY for {session_id}")
+            logger.error(f"Missing {self.API_KEY_SETTING} for {session_id}")
             return
         self.callback = callback
         self.language_code = language_code
-        self.ws_url = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
         self.seg_start_time = None
         self.yt_start_time: float | None = None
         now = datetime.now(timezone.utc)
@@ -280,11 +316,7 @@ class ScribeSessionManager:
                     break
 
                 if self.ws:
-                    await self.ws.send(
-                        '{"message_type":"input_audio_chunk","audio_base_64":"'
-                        + base64_audio
-                        + '","sample_rate":16000,"commit":' + str(self.should_commit).lower() + '}'
-                    )
+                    await self._send_audio(self.ws, base64_audio, self.should_commit)
                     self.should_commit = False
                 self.audio_queue.task_done()
         except (asyncio.CancelledError, ConnectionClosed, ConnectionClosedOK):
@@ -312,8 +344,9 @@ class ScribeSessionManager:
                     # be invisible here until the _MAX_SESSION_SECS restart 5 minutes later.
                     now_mono = time.monotonic()
                     stall_timeout = (_OUTPUT_STALL_TIMEOUT if self.seg_start_time is not None
-                                     else _IDLE_OUTPUT_STALL_TIMEOUT)
-                    if (now_mono - self.last_recv_mono >= stall_timeout
+                                     else self.IDLE_OUTPUT_STALL_TIMEOUT)
+                    if (stall_timeout is not None
+                            and now_mono - self.last_recv_mono >= stall_timeout
                             and now_mono - self._last_audio_mono < _RECV_POLL_INTERVAL * 2):
                         logger.warning(
                             f"Scribe output stalled ({now_mono - self.last_recv_mono:.0f}s) "
@@ -324,21 +357,9 @@ class ScribeSessionManager:
                     continue
 
                 self.last_recv_mono = time.monotonic()
-                data = json.loads(message)
-
-                msg_type = data.get("message_type")
-                if msg_type == "session_started":
-                    logger.info(f"Scribe session started for {self.session_id}")
-                elif msg_type in ["partial_transcript", "committed_transcript"]:
-                    await self.handle_transcript(data)
-                elif msg_type in ["error", "auth_error", "quota_exceeded_error"]:
-                    logger.error(f"Scribe Error: {data.get('error')}")
-                elif msg_type == "queue_overflow":
-                    # Server-side audio buffer overflowed; it will close the socket next.
-                    # Log and let the reconnect path recover instead of misreporting Unknown.
-                    logger.warning(f"Scribe queue_overflow for {self.session_id}; server dropping audio")
-                else:
-                    logger.error(f"Scribe Unknown message type: {msg_type}")
+                parsed = self._parse_message(json.loads(message))
+                if parsed is not None:
+                    await self.handle_transcript(*parsed)
         except (asyncio.CancelledError, ConnectionClosed, ConnectionClosedOK):
             pass
         except Exception as e:
@@ -387,9 +408,9 @@ class ScribeSessionManager:
 
         return False
 
-    async def handle_transcript(self, data):
+    async def handle_transcript(self, transcript: str, partial: bool):
         try:
-            transcript = data.get("text", "").strip()
+            transcript = transcript.strip()
             # Strip trailing punctuation before deciding whether anything is left; a
             # lone "。" carries no content.
             transcript = transcript.rstrip(",.。，").strip()
@@ -404,8 +425,6 @@ class ScribeSessionManager:
             if len(transcript) <= 2 and dominant_script(transcript) not in ("han", "kana", "hangul"):
                 return
 
-            msg_type = data.get("message_type")
-            partial = (msg_type == "partial_transcript")
             now = datetime.now(timezone.utc)
 
             if self._is_hallucination(transcript):
@@ -542,10 +561,10 @@ class ScribeSessionManager:
 
     async def start(self):
         if not self.api_key:
-            # __init__ returned early, so language_code / ws_url don't even exist. Without
-            # this guard the connect path raises AttributeError, which the broad handler
+            # __init__ returned early, so language_code doesn't even exist. Without this
+            # guard the connect path raises AttributeError, which the broad handler
             # below catches and retries — forever, now that there is no retry ceiling.
-            logger.error(f"Scribe not starting for {self.session_id}: missing ELEVENLABS_API_KEY")
+            logger.error(f"Scribe not starting for {self.session_id}: missing {self.API_KEY_SETTING}")
             await self._emit_status("stopped", reason="misconfigured")
             return
 
@@ -593,30 +612,15 @@ class ScribeSessionManager:
                     # Cleared per attempt so a failed ws_connect can't be mistaken for the
                     # previous (possibly long-lived) connection when scoring health below.
                     self._connection_start_mono = None
-                    params_dict = {
-                        "model_id": "scribe_v2_realtime",
-                        "audio_format": "pcm_16000",
-                        "commit_strategy": "vad",
-                        "vad_silence_threshold_secs": 1,
-                        "vad_threshold": 0.3,
-                        "min_speech_duration_ms": 100,
-                        "min_silence_duration_ms": 100,
-                        "include_timestamps": "false",
-                        "enable_logging": "false",
-                        "disable_logging": "true"
-                    }
-                    if self.language_code:
-                        params_dict["language_code"] = self.language_code
-                        logger.info(f"Scribe forced language: {self.language_code} for {self.session_id}")
-                    params = urlencode(params_dict)
-                    url = f"{self.ws_url}?{params}"
+                    url, headers = self._connect_target()
 
                     async with ws_connect(
                         url,
-                        additional_headers={"xi-api-key": self.api_key},
+                        additional_headers=headers,
                         ping_interval=_WS_PING_INTERVAL,
                         ping_timeout=_WS_PING_TIMEOUT,
                     ) as ws:
+                        await self._handshake(ws)
                         self.ws = ws
                         now_mono = time.monotonic()
                         self.last_recv_mono = now_mono          # fresh baseline for stall detection
@@ -697,3 +701,173 @@ class ScribeSessionManager:
                 await callback(self.session_id, transcription)
             except Exception as e:
                 log_exception(logger, e, "Error committing last partial on stop")
+
+
+class ElevenLabsScribeManager(ScribeSessionManager):
+    """ElevenLabs Scribe v2 realtime (wss://api.elevenlabs.io/v1/speech-to-text/realtime)."""
+
+    PROVIDER = "elevenlabs"
+    API_KEY_SETTING = "ELEVENLABS_API_KEY"
+    # While audio flows but nobody speaks, Scribe's only output is a periodic empty
+    # committed_transcript, measured at ~36s intervals against the live API. The
+    # threshold has to clear that heartbeat with margin, otherwise every quiet stretch
+    # would force a reconnect.
+    IDLE_OUTPUT_STALL_TIMEOUT = 60
+
+    def _connect_target(self):
+        params_dict = {
+            "model_id": "scribe_v2_realtime",
+            "audio_format": "pcm_16000",
+            "commit_strategy": "vad",
+            "vad_silence_threshold_secs": 1,
+            "vad_threshold": 0.3,
+            "min_speech_duration_ms": 100,
+            "min_silence_duration_ms": 100,
+            "include_timestamps": "false",
+            "enable_logging": "false",
+            "disable_logging": "true"
+        }
+        if self.language_code:
+            params_dict["language_code"] = self.language_code
+            logger.info(f"Scribe forced language: {self.language_code} for {self.session_id}")
+        return ("wss://api.elevenlabs.io/v1/speech-to-text/realtime?"
+                f"{urlencode(params_dict)}"), {"xi-api-key": self.api_key}
+
+    async def _send_audio(self, ws, base64_audio: str, commit: bool):
+        await ws.send(
+            '{"message_type":"input_audio_chunk","audio_base_64":"'
+            + base64_audio
+            + '","sample_rate":16000,"commit":' + str(commit).lower() + '}'
+        )
+
+    def _parse_message(self, data: dict):
+        msg_type = data.get("message_type")
+        if msg_type in ("partial_transcript", "committed_transcript"):
+            return data.get("text", ""), msg_type == "partial_transcript"
+        if msg_type == "session_started":
+            logger.info(f"Scribe session started for {self.session_id}")
+        elif msg_type in ("error", "auth_error", "quota_exceeded_error"):
+            logger.error(f"Scribe Error: {data.get('error')}")
+        elif msg_type == "queue_overflow":
+            # Server-side audio buffer overflowed; it will close the socket next.
+            # Log and let the reconnect path recover instead of misreporting Unknown.
+            logger.warning(f"Scribe queue_overflow for {self.session_id}; server dropping audio")
+        else:
+            logger.error(f"Scribe Unknown message type: {msg_type}")
+        return None
+
+
+class GeminiScribeManager(ScribeSessionManager):
+    """Gemini Live Transcribe, over the raw BidiGenerateContent WebSocket.
+
+    Not google-genai: the socket is four message shapes wide and this class already
+    inherits the reconnect loop, watchdogs and segment state the SDK would duplicate.
+    Docs: https://ai.google.dev/gemini-api/docs/live-api/live-transcribe
+    """
+
+    PROVIDER = "gemini"
+    API_KEY_SETTING = "GEMINI_API_KEY"
+    # Live Transcribe says nothing at all between segments — no equivalent of Scribe's
+    # empty-commit heartbeat — so silence there is normal and there is nothing to watch
+    # for. Keepalive pings and the _MAX_SESSION_SECS restart still catch a dead socket.
+    IDLE_OUTPUT_STALL_TIMEOUT = None
+
+    _SETUP_TIMEOUT_SECS = 15
+
+    def _connect_target(self):
+        # The key goes in the query string: that is the documented auth for this socket.
+        return ("wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage"
+                f".v1beta.GenerativeService.BidiGenerateContent?key={self.api_key}", {})
+
+    async def _handshake(self, ws):
+        """Send the setup frame and wait for setupComplete; nothing may be sent before it."""
+        codes = [self.language_code] if self.language_code else []  # empty = auto-detect
+        await ws.send(json.dumps({"setup": {
+            "model": "models/gemini-3.5-transcribe-live",
+            "generationConfig": {"responseModalities": ["TEXT"]},
+            "inputAudioTranscription": {"languageCodes": codes},
+        }}))
+        if self.language_code:
+            logger.info(f"Gemini forced language: {self.language_code} for {self.session_id}")
+
+        # Setup is answered by exactly one message. Anything other than setupComplete is
+        # the reason the session will not work (bad key, unknown model, malformed
+        # config); raise instead of streaming audio into a socket that is about to close.
+        raw = await asyncio.wait_for(ws.recv(), timeout=self._SETUP_TIMEOUT_SECS)
+        if "setupComplete" not in json.loads(raw):
+            raise RuntimeError(f"Gemini setup rejected for {self.session_id}: {raw}")
+        logger.info(f"Gemini transcribe session started for {self.session_id}")
+
+    async def _send_audio(self, ws, base64_audio: str, commit: bool):
+        await ws.send(json.dumps({"realtimeInput": {
+            "audio": {"data": base64_audio, "mimeType": "audio/pcm;rate=16000"},
+        }}))
+        if commit:
+            # audioStreamEnd is Live Transcribe's "finalize this turn now" — the same
+            # signal hybrid VAD sends on client-detected silence, so it is meant to
+            # recur within a session and the stream continues with the next chunk.
+            await ws.send(json.dumps({"realtimeInput": {"audioStreamEnd": True}}))
+
+    def _parse_message(self, data: dict):
+        if "serverContent" in data:
+            content = data["serverContent"] or {}
+            # Both fields can arrive on one message. The final is authoritative for the
+            # segment the interim was guessing at, so it wins. Presence decides, not
+            # text: an empty final is a turn that carried no speech, not a reason to
+            # fall back to the interim (handle_transcript drops the empty string).
+            for field, partial in (("inputTranscription", False),
+                                   ("interimInputTranscription", True)):
+                if field in content:
+                    return (content[field] or {}).get("text", ""), partial
+            return None  # turnComplete / generationComplete and friends
+
+        if "goAway" in data:
+            # The server is about to close this session (it does so before the hard
+            # 10-minute cap). Drop the socket ourselves so the reconnect is immediate
+            # and logged as intentional.
+            logger.info(f"Gemini goAway for {self.session_id}, reconnecting")
+            self._intentional_restart = True
+            if self.ws:
+                asyncio.create_task(self.ws.close())
+        elif "error" in data:
+            logger.error(f"Gemini Error for {self.session_id}: {data['error']}")
+        elif "usageMetadata" not in data and "setupComplete" not in data:
+            logger.warning(f"Gemini unknown message for {self.session_id}: {list(data)}")
+        return None
+
+
+SCRIBE_MANAGERS = {c.PROVIDER: c for c in (ElevenLabsScribeManager, GeminiScribeManager)}
+_DEFAULT_PROVIDER = ElevenLabsScribeManager.PROVIDER
+
+
+def create_scribe_manager(provider: str, *args, **kwargs) -> ScribeSessionManager:
+    """Build the session manager for `provider`, falling back to the deployment's
+    STT_PROVIDER (and then to ElevenLabs) for an empty or unknown value."""
+    name = (provider or REALTIME_SETTINGS.get("STT_PROVIDER", "") or "").strip().lower()
+    cls = SCRIBE_MANAGERS.get(name)
+    if cls is None:
+        if name:
+            logger.warning(f"Unknown STT provider {name!r}, falling back to {_DEFAULT_PROVIDER}")
+        cls = SCRIBE_MANAGERS[_DEFAULT_PROVIDER]
+    return cls(*args, **kwargs)
+
+
+# Both an ISO 639-1/639-3 code (ElevenLabs: "en", "zho") and a BCP-47 tag with an
+# optional script and region (Gemini: "cmn-Hant-TW", "es-419", "pa-Guru-IN"). Matched
+# case-insensitively and re-cased canonically, so an operator or API caller can send
+# "CMN-hant-tw" without it reaching the provider that way.
+_LANGUAGE_CODE_RE = re.compile(r'([A-Za-z]{2,3})(?:-([A-Za-z]{4}))?(?:-([A-Za-z]{2}|[0-9]{3}))?$')
+
+
+def normalize_language_code(raw: str) -> str | None:
+    """Canonicalise a forced detect-language code, or None if it is not one."""
+    m = _LANGUAGE_CODE_RE.fullmatch(raw.strip())
+    if not m:
+        return None
+    language, script, region = m.groups()
+    parts = [language.lower()]
+    if script:
+        parts.append(script.title())
+    if region:
+        parts.append(region.upper())
+    return "-".join(parts)

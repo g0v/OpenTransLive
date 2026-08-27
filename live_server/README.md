@@ -15,7 +15,7 @@
 - Redis
 - 至少一組 AI provider API key
 - （選用）Docker 與 Docker Compose
-- （選用）ElevenLabs API key（即時麥克風轉錄）
+- （選用）ElevenLabs API key 或 Gemini API key（即時麥克風轉錄，二選一）
 - （選用）YouTube API key（YouTube 同步直播時間）
 
 ### 步驟
@@ -60,6 +60,7 @@ Compose 會啟動 FastAPI server、MongoDB、Redis。
 | `[email_settings].SMTP_*` | OTP 信件寄送；留空則 OTP 寫進 log（適合開發）|
 | `[mongodb_settings]` | MongoDB 連線 |
 | `redis_url` | Redis 連線 |
+| `[realtime_settings].STT_PROVIDER` | 預設轉錄引擎 (`elevenlabs` / `gemini`)，每個 room 可在 panel 覆寫 |
 | `[realtime_settings].ELEVENLABS_API_KEY` | ElevenLabs Scribe |
 | `[realtime_settings].AI_PROVIDER` | 預設修正／翻譯 provider (`openai` / `gemini` / `groq` / `cerebras`) |
 | `[realtime_settings].CORRECT_PROVIDER` | （可選）修正流程專用 provider |
@@ -107,7 +108,7 @@ app/
 ├── email_auth.py            # Email OTP 登入
 ├── http_client.py           # 共用 httpx client
 ├── logger_config.py         # logging 設定
-├── scribe_manager.py        # ElevenLabs Scribe session 管理
+├── scribe_manager.py        # 轉錄 session 共用邏輯 + ElevenLabs / Gemini 實作
 ├── socket_schema.py         # Socket.IO 事件 schema 驗證
 ├── translation_service.py   # 修正 + 翻譯流程與佇列管理
 ├── translators/             # 各 AI provider 實作
