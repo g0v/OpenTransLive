@@ -212,6 +212,8 @@
           auto-removed, or use <iconify-icon icon="ph:translate" width="11" height="11" class="align-middle"></iconify-icon>
           to look its translations up on the web and add them to the glossary.
         </p>
+        <div id="kw-lookup-status" class="hidden rounded-lg border border-[#34465c] bg-[#111a27] px-3 py-2 text-[11px] leading-snug text-[#aebed2]"
+          role="status" aria-live="polite"></div>
         <div id="kw-list" class="modal-list flex min-h-14 flex-1 basis-auto flex-col gap-1 overflow-y-auto pr-1 [scrollbar-color:#4d5d72_transparent] [scrollbar-width:thin] [&>div]:rounded-lg [&>label]:rounded-lg"></div>
         <div class="modal-add-row flex shrink-0 gap-1 border-t border-[#2a3646] pt-3">
           <input id="kw-custom-input" type="text" placeholder="Add keyword" class="panel-input flex-1">
@@ -807,11 +809,11 @@
       const isLocked = lockedKeywords.has(kw)
       const row = document.createElement('div')
       row.className = 'flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300 group'
-      const busy = glossaryGenerating.has(kw)
+      const busy = glossaryGenerating === kw
       const look = glossaryButtonLook(kw, knownSpellings)
       row.innerHTML = `
         <span class="flex-1 font-mono text-xs truncate ${isLocked ? 'text-yellow-300' : 'text-gray-300'}">${escapeHtml(kw)}</span>
-        <button class="kw-glossary-btn flex-shrink-0 transition-colors ${look.cls}" title="${look.title}" ${busy || !selectedLanguages.length ? 'disabled' : ''}>
+        <button class="kw-glossary-btn inline-flex flex-shrink-0 items-center transition-colors ${look.cls}" title="${look.title}" ${glossaryGenerating || !selectedLanguages.length ? 'disabled' : ''}>
           <iconify-icon icon="${busy ? 'ph:spinner-gap' : 'ph:translate'}" width="14" height="14" class="${busy ? 'animate-spin' : ''}"></iconify-icon>
         </button>
         <button class="kw-lock-btn flex-shrink-0 transition-colors ${isLocked ? 'text-yellow-400 hover:text-yellow-200' : 'text-gray-600 hover:text-yellow-400'}" title="${isLocked ? 'Unpin keyword' : 'Pin keyword (preserve from auto-removal)'}" data-kw="${escapeHtml(kw)}">
@@ -845,15 +847,22 @@
     })
   }
 
-  // Keywords being looked up right now. Held outside the DOM because
+  // Keyword being looked up right now. Held outside the DOM because
   // syncKeywords repaints the whole list every 5s, which would wipe a spinner.
-  const glossaryGenerating = new Set()
+  let glossaryGenerating = ''
+
+  function showGlossaryStatus(message) {
+    const status = document.getElementById('kw-lookup-status')
+    status.classList.remove('hidden')
+    status.textContent = message
+  }
 
   // Look of a keyword row's "look this term up" button. `known` is the set of
   // every spelling in the glossary, built once per repaint by the caller rather
   // than rescanned per row.
   function glossaryButtonLook(kw, known) {
-    if (glossaryGenerating.has(kw)) return { cls: 'text-blue-400', title: 'Looking the term up…' }
+    if (glossaryGenerating === kw) return { cls: 'text-blue-400', title: 'Looking the term up…' }
+    if (glossaryGenerating) return { cls: 'text-gray-700', title: 'Wait for the current lookup to finish' }
     if (!selectedLanguages.length) return { cls: 'text-gray-700', title: 'Set target languages first' }
     if (known.has(kw)) return { cls: 'text-blue-400 hover:text-blue-200', title: 'Already in the glossary - look it up again' }
     return { cls: 'text-gray-600 hover:text-blue-400', title: 'Look this term up and add it to the glossary' }
@@ -862,15 +871,19 @@
   // Ask the server to find this term's spelling in each target language, then
   // merge it in the same way an imported file would be.
   async function generateGlossaryEntry(kw) {
-    if (glossaryGenerating.has(kw) || !selectedLanguages.length) return
+    if (glossaryGenerating || !selectedLanguages.length) return
     const statusEl = document.getElementById('settings-status')
     if (glossary.length >= GLOSSARY_MAX) {
-      statusEl.textContent = `Glossary is full (max ${GLOSSARY_MAX} terms)`
+      const message = `Glossary is full (max ${GLOSSARY_MAX} terms)`
+      statusEl.textContent = message
+      showGlossaryStatus(message)
       return
     }
-    glossaryGenerating.add(kw)
+    glossaryGenerating = kw
+    showGlossaryStatus(`Searching the web for \u201c${kw}\u201d\u2026 You can close this window while it runs.`)
     renderKeywordList()
-    statusEl.textContent = `Looking up "${kw}"`
+    statusEl.textContent = `Searching for "${kw}"`
+    let resultMessage = ''
     try {
       const res = await fetch(`/api/session/${sid}/glossary/generate`, {
         method: 'POST',
@@ -880,7 +893,8 @@
       })
       const data = await res.json()
       if (!res.ok) {
-        statusEl.textContent = data.detail || 'Error'
+        resultMessage = data.detail || 'Glossary lookup failed'
+        statusEl.textContent = resultMessage
         return
       }
       const count = Object.keys(data.entry).length
@@ -889,12 +903,15 @@
       renderGlossaryList()
       // After the save, so its own 'Saved' doesn't overwrite the summary.
       await saveGlossary()
-      statusEl.textContent = `Added "${kw}" in ${count} language${count === 1 ? '' : 's'}`
+      resultMessage = `Added "${kw}" in ${count} language${count === 1 ? '' : 's'}`
+      statusEl.textContent = resultMessage
     } catch (e) {
-      statusEl.textContent = 'Error'
+      resultMessage = 'Glossary lookup failed. Check the connection and try again.'
+      statusEl.textContent = resultMessage
       console.error('Failed to generate glossary entry:', e)
     } finally {
-      glossaryGenerating.delete(kw)
+      glossaryGenerating = ''
+      showGlossaryStatus(resultMessage)
       renderKeywordList()
     }
   }
