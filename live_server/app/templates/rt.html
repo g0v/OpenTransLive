@@ -1628,7 +1628,13 @@
     let stream = null;
     let reconnectTimer = null;
     let reconnectAttempts = 0;
-    let lastEventId = '';
+    const initialSegments = transcriptionsData.transcriptions || [];
+    const initialLastStart = initialSegments.length
+      ? Number(initialSegments[initialSegments.length - 1].start_time)
+      : 0;
+    // Always send a cursor, including zero for an empty initial snapshot. The
+    // server subscribes before replaying, closing the HTML-render -> SSE gap.
+    let lastEventId = String(Number.isFinite(initialLastStart) ? initialLastStart : 0);
     let pageUnloading = false;
     let reconnected = false;
 
@@ -1646,7 +1652,6 @@
     function provisionalCopy(partialPayload) {
       const seg = Object.assign({}, partialPayload, { provisional: true });
       delete seg.partial;
-      delete seg.last_committed;
       return seg;
     }
 
@@ -1665,7 +1670,6 @@
     function handleTranscriptionUpdate(event) {
       if (event.lastEventId) lastEventId = event.lastEventId;
       const data = JSON.parse(event.data);
-      if (data.last_committed) upsertSegment(data.last_committed, false);
       if (data.partial) {
         // A segment's commit is translated while the *next* segment's partials are
         // already flowing, so the single partial slot gets overwritten seconds

@@ -710,7 +710,13 @@
     let stream = null;
     let reconnectTimer = null;
     let reconnectAttempts = 0;
-    let lastEventId = '';
+    const initialSegments = transcriptionsData.transcriptions || [];
+    const initialLastStart = initialSegments.length
+      ? Number(initialSegments[initialSegments.length - 1].start_time)
+      : 0;
+    // Always send a cursor, including zero for an empty initial snapshot. The
+    // server subscribes before replaying, closing the HTML-render -> SSE gap.
+    let lastEventId = String(Number.isFinite(initialLastStart) ? initialLastStart : 0);
     let pageUnloading = false;
 
     function streamUrl() {
@@ -722,14 +728,6 @@
     function handleTranscriptionUpdate(event) {
       if (event.lastEventId) lastEventId = event.lastEventId;
       const data = JSON.parse(event.data);
-      if (data.last_committed) {
-        const last_committed = data.last_committed;
-        const exists = transcriptionsData.transcriptions.some(t => t.start_time === last_committed.start_time);
-        if (!exists) {
-          transcriptionsData.transcriptions.push(last_committed);
-          transcriptionsData.transcriptions.sort((a, b) => a.start_time - b.start_time);
-        }
-      }
       if (data.partial) {
         transcriptionsData.partial = data;
       } else {

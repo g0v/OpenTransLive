@@ -546,7 +546,6 @@ static_dir = Path("app/static")
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-mgr = socketio.AsyncRedisManager(REDIS_URL)
 
 
 def _parse_socket_cors_origins() -> list[str] | str:
@@ -588,10 +587,12 @@ def _parse_socket_cors_origins() -> list[str] | str:
 
 _SOCKET_CORS_ORIGINS = _parse_socket_cors_origins()
 
-# Initialize Socket.IO with ASGI support
+# Socket.IO fan-out is intentionally process-local. The transcription managers,
+# debounce state, rate limiter, and partial RMW locks already require one uvicorn
+# worker; adding a Redis client manager here would only add a Redis publish to
+# every Socket.IO emit. SSE viewers keep their separate Redis pub/sub channel.
 sio = socketio.AsyncServer(
     async_mode='asgi',
-    client_manager=mgr,
     cors_allowed_origins=_SOCKET_CORS_ORIGINS,
     logger=False
 )
@@ -728,6 +729,36 @@ async def _publish_transcription_update(sid: str, payload: dict) -> None:
         )
     except Exception as e:
         log_exception(logger, e, f"Redis publish error for {_hash_token(sid)}")
+
+async def _get_latest_committed_segment(sid: str) -> dict | None:
+    """Load the newest committed segment for a newly joined Socket.IO client."""
+    try:
+        raw_segments = await redis_client.zrange(f"transcription:{sid}:list", -1, -1)
+    except Exception as e:
+        log_exception(logger, e, f"Redis latest segment error for {_hash_token(sid)}")
+        return None
+
+    if not raw_segments:
+        return None
+    try:
+        segment = json.loads(raw_segments[0])
+    except (TypeError, ValueError):
+        logger.warning("Skipping malformed latest segment sid_hash=%s", _hash_token(sid))
+        return None
+    return segment if isinstance(segment, dict) else None
+
+
+async def _emit_joined_session(socket_id: str, session_id: str, viewer_count: int) -> None:
+    """Confirm a room join and backfill the latest commit exactly once per join."""
+    payload = {
+        'session_id': session_id,
+        'authorized': True,
+        'viewer_count': viewer_count,
+    }
+    last_committed = await _get_latest_committed_segment(session_id)
+    if last_committed:
+        payload['last_committed'] = last_committed
+    await sio.emit('joined_session', payload, to=socket_id)
 
 
 async def _publish_display_dictionary_update(sid: str, language_maps: dict) -> None:
@@ -2938,18 +2969,11 @@ async def _process_transcription_update(session_id, sync_data):
             # it and deleting here is race-free — this lock exists for exactly that.
             if _should_delete_partial(partial_json, sync_data["start_time"]):
                 pipe.delete(partial_key)
-            pipe.zrange(list_key, -1, -1)
             try:
-                results = await pipe.execute()
+                await pipe.execute()
                 redis_rtts += 1
-                new_last_json = results[-1]
-                if new_last_json:
-                    last_committed = json.loads(new_last_json[0])
             except Exception as e:
                 log_exception(logger, e, "Redis pipeline error in _process_transcription_update (write)")
-                # sync_data shares the ZSET member shape — safe to use as last_committed.
-                if not last_committed or sync_data["start_time"] >= last_committed["start_time"]:
-                    last_committed = sync_data
 
             accepted = segment_write_queue.enqueue(session_id, sync_data, stream_start_time)
             if not accepted:
@@ -2960,8 +2984,6 @@ async def _process_transcription_update(session_id, sync_data):
                 )
 
     payload = sync_data.copy()
-    if last_committed:
-        payload["last_committed"] = last_committed
 
     proc_elapsed_ms = (time.perf_counter() - proc_start) * 1000
 
@@ -3073,11 +3095,7 @@ async def join_session(socket_id, data):
             return
         await sio.enter_room(socket_id, session_id)
         viewer_count = await _viewer_presence_op(session_id, label="viewer count")
-        await sio.emit(
-            'joined_session',
-            {'session_id': session_id, 'authorized': True, 'viewer_count': viewer_count},
-            to=socket_id,
-        )
+        await _emit_joined_session(socket_id, session_id, viewer_count)
         await _emit_viewer_count(session_id, viewer_count)
         # After joined_session, which repaints the client's indicator from scratch.
         await _replay_scribe_status(socket_id, session_id)
@@ -3114,11 +3132,7 @@ async def join_session(socket_id, data):
         _hash_token(socket_id),
     )
     viewer_count = await _viewer_presence_op(session_id, label="viewer count")
-    await sio.emit(
-        'joined_session',
-        {'session_id': session_id, 'authorized': True, 'viewer_count': viewer_count},
-        to=socket_id,
-    )
+    await _emit_joined_session(socket_id, session_id, viewer_count)
     await _emit_viewer_count(session_id, viewer_count)
     # After joined_session, which repaints the client's indicator from scratch.
     await _replay_scribe_status(socket_id, session_id)

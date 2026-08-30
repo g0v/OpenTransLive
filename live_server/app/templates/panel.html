@@ -1926,6 +1926,7 @@
       const flowContent = document.getElementById('flow-content')
       const flowCountEl = document.getElementById('flow-count')
       const renderedStartTimes = new Set()
+      let latestCommittedStartTime = -Infinity
       let partialEl = null
       // Children of partialEl, kept as refs so an update writes textContent only.
       // Rebuilding the row with innerHTML on every partial (several times a
@@ -1975,15 +1976,20 @@
         })
       }
 
-      // `fresh` marks a segment that just arrived as the event's own payload, so
-      // now - end_time is a real latency. A segment backfilled from
-      // `last_committed` was read out of Redis and may be minutes old - timing it
-      // would print a made-up number, so it renders without one.
+      // `fresh` marks a segment that arrived as its own live event. A segment
+      // backfilled when the panel joins may be minutes old, so rendering latency
+      // for that snapshot would produce a meaningless number.
       function appendCommitted(segment, fresh) {
         const src = segment.result?.corrected || segment.text || ''
         if (!src) return
-        if (partialEl) { partialEl.remove(); partialEl = null; partialTextEl = null; partialLatencyEl = null }
-        partialEndTime = 0
+        // A join snapshot can arrive after a newer live partial. Keep that partial
+        // and insert the older committed row immediately before it.
+        const partialStartsAfter = partialEl && !fresh
+          && Number(partialEl.dataset.startTime) > Number(segment.start_time)
+        if (partialEl && !partialStartsAfter) {
+          partialEl.remove(); partialEl = null; partialTextEl = null; partialLatencyEl = null
+          partialEndTime = 0
+        }
         const p = document.createElement('p')
         p.className = 'flow-item group flex items-start justify-between rounded-md px-[0.45rem] py-[0.32rem] text-[#cbd6e4]'
         p.dataset.src = src
@@ -1993,7 +1999,8 @@
           : ''
         p.innerHTML = `<span class="flex-1">${escapeHtml(applyFlowDict(src))}</span>${latencyHtml}`
 
-        flowContent.appendChild(p)
+        if (partialStartsAfter) flowContent.insertBefore(p, partialEl)
+        else flowContent.appendChild(p)
         segmentCount++
         // Remove oldest items to keep DOM size bounded
         while (flowContent.children.length > MAX_FLOW_ITEMS) {
@@ -2037,29 +2044,37 @@
           flowContent.appendChild(partialEl)
         }
         partialEl.dataset.src = src
+        partialEl.dataset.startTime = segment.start_time
         const latency = segmentLatency(segment)
         partialTextEl.textContent = applyFlowDict(src)
         partialLatencyEl.textContent = latency.toFixed(2) + 's'
         scrollToBottom()
       }
 
-      socket.on('transcription_update', function (data) {
-        if (data.last_committed) {
-          const lc = data.last_committed
-          if (!renderedStartTimes.has(lc.start_time)) {
-            renderedStartTimes.add(lc.start_time)
-            appendCommitted(lc, !data.partial && lc.start_time === data.start_time)
-          }
+      function renderCommitted(segment, fresh) {
+        if (!segment || renderedStartTimes.has(segment.start_time)) return
+        const startTime = Number(segment.start_time)
+        if (!fresh && Number.isFinite(startTime) && startTime < latestCommittedStartTime) return
+        renderedStartTimes.add(segment.start_time)
+        if (Number.isFinite(startTime)) {
+          latestCommittedStartTime = Math.max(latestCommittedStartTime, startTime)
         }
+        appendCommitted(segment, fresh)
+      }
+
+      socket.on('transcription_update', function (data) {
         if (data.partial) {
           updatePartial(data)
         } else {
           updatePartial(null)
-          if (!renderedStartTimes.has(data.start_time)) {
-            renderedStartTimes.add(data.start_time)
-            appendCommitted(data, true)
-          }
+          renderCommitted(data, true)
         }
+      })
+
+      // Fresh joins and reconnects receive one latest committed snapshot instead
+      // of making every partial carry the same full segment.
+      socket.on('joined_session', function (data) {
+        if (data.authorized) renderCommitted(data.last_committed, false)
       })
 
       socket.on('session_settings_updated', function (data) {
