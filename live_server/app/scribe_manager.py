@@ -115,35 +115,30 @@ class ScribeSessionManager:
                  status_callback=None):
         self.session_id = session_id
         # Optional async (session_id, status_dict) hook used to surface transcription
-        # health to the panel. Set before the API key guard so _emit_status is always safe.
+        # health to the panel. Always set so a missing-key start can report its failure.
         self.status_callback = status_callback
         self._status = None
         # The keys reported alongside that state (reason, attempt). Kept whole so the
         # replay path can forward exactly what the live broadcast sent, instead of
         # re-listing fields one at a time and silently dropping the rest.
         self._status_extra = {}
-        # Initialize essential state before the API key guard so that stop(),
-        # push_audio(), and is_running checks always find these attributes.
+        # Initialize lifecycle state unconditionally so stop(), push_audio(), and usage
+        # restoration stay safe even when start() rejects a missing provider API key.
         self.ws = None
         self.is_running = False
         self.audio_queue = asyncio.Queue(maxsize=self._AUDIO_QUEUE_MAXSIZE)
         self._stop_event = asyncio.Event()
         self.api_key = REALTIME_SETTINGS.get(self.API_KEY_SETTING, '')
-        if not self.api_key:
-            logger.error(f"Missing {self.API_KEY_SETTING} for {session_id}")
-            return
         self.callback = callback
         self.language_code = language_code
         self.seg_start_time = None
         self.yt_start_time: float | None = None
         now = datetime.now(timezone.utc)
-        self.init_time = now
         self.last_partial_time = now
         self.last_partial_text = ""
         self.last_recv_mono = time.monotonic()  # last time any message arrived from Scribe
         self._connection_start_mono: float | None = None  # set on each successful ws connect
         self._intentional_restart = False  # set when we deliberately drop the ws to reconnect
-        self.task_group = None
         self.partial_interval = partial_interval if partial_interval else REALTIME_SETTINGS.get('PARTIAL_INTERVAL', 2)
         self.should_commit = False
         # Prefix holding committed text from segments too short to stand alone.
@@ -437,8 +432,6 @@ class ScribeSessionManager:
             # still carries new source text: emit it as flow-only so the panel's flow
             # shows every partial while translation stays on the interval.
             flow_only = partial and delta_t < self.partial_interval
-            kind = "flow-only partial" if flow_only else "partial" if partial else "committed"
-            print(f"accept transcript {kind}: {transcript}, {delta_t}", flush=True)
 
             # A short commit parked in pending_commit_text belongs to whatever language
             # was being spoken then. When the writing system flips, merging the two would
@@ -474,7 +467,6 @@ class ScribeSessionManager:
                     self.last_partial_text = transcript
                 else:
                     # Short commit: keep segment open and accumulate as prefix.
-                    print(f"Short commit, appending to pending: {repr(combined_text)}", flush=True)
                     self.pending_commit_text = combined_text + " "
                     if self._commit_timeout_task is None or self._commit_timeout_task.done():
                         self._commit_timeout_task = asyncio.create_task(self._commit_timeout_handler())
@@ -561,15 +553,17 @@ class ScribeSessionManager:
 
     async def start(self):
         if not self.api_key:
-            # __init__ returned early, so language_code doesn't even exist. Without this
-            # guard the connect path raises AttributeError, which the broad handler
-            # below catches and retries — forever, now that there is no retry ceiling.
+            # A manager may still be created so the status callback can report the
+            # deployment error to the panel, but it must never enter the retry loop.
             logger.error(f"Scribe not starting for {self.session_id}: missing {self.API_KEY_SETTING}")
             await self._emit_status("stopped", reason="misconfigured")
             return
 
+        # stop() may win the scheduling race against the create_task(start()) call.
+        # A stopped manager is never reused, so do not clear and resurrect it.
+        if self._stop_event.is_set():
+            return
         self.is_running = True
-        self._stop_event.clear()
         self._last_audio_mono = time.monotonic()
         logger.info(f"Starting Scribe session for {self.session_id}")
 
@@ -637,7 +631,6 @@ class ScribeSessionManager:
                         # and _maybe_confirm_connected.
 
                         async with asyncio.TaskGroup() as tg:
-                            self.task_group = tg
                             tg.create_task(self.send_audio_loop())
                             tg.create_task(self.receive_messages_loop())
 
@@ -686,9 +679,8 @@ class ScribeSessionManager:
 
         # Commit any pending partial / buffered short commit so they are not
         # lost on stop/mic-off.
-        callback = getattr(self, "callback", None)
         final_text = (self.pending_commit_text + self.last_partial_text).strip()
-        if callback and final_text and self.seg_start_time is not None:
+        if final_text and self.seg_start_time is not None:
             try:
                 now = datetime.now(timezone.utc)
                 transcription = self._build_transcription(final_text, False, now)
@@ -698,7 +690,7 @@ class ScribeSessionManager:
                     f"Committing last partial on stop for {self.session_id}: "
                     f"{repr(final_text)}"
                 )
-                await callback(self.session_id, transcription)
+                await self.callback(self.session_id, transcription)
             except Exception as e:
                 log_exception(logger, e, "Error committing last partial on stop")
 
