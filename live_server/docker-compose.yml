@@ -47,7 +47,9 @@ services:
       nofile:
         soft: 65535
         hard: 65535
-    command: ["./.venv/bin/uvicorn", "app:socket_app", "--host", "0.0.0.0", "--port", "5000", "--workers", "${SERVER_WORKERS:-1}", "--ws", "websockets", "--reload"]
+    # Socket.IO fan-out and transcription session state are process-local.
+    # Keep one worker; supporting more requires moving that state to Redis.
+    command: ["./.venv/bin/uvicorn", "app:socket_app", "--host", "0.0.0.0", "--port", "5000", "--workers", "1", "--ws", "websockets"]
     depends_on:
       - redis
       - mongodb
