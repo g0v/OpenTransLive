@@ -200,6 +200,7 @@ Copyright (c) 2025 Sean Gau <rrtw0627@gmail.com>
 
 ## 相關文件
 
+- [圖解操作手冊 docs/MANUAL.md](docs/MANUAL.md) — 英文版 session、panel、viewer 與匯出操作流程
 - [使用手冊 docs/USAGE.md](docs/USAGE.md) — 角色、流程、URL、API、資料儲存、FAQ
 - [階段成果 milestone.md](milestone.md)
 - [Live Server 設定 live_server/README.md](live_server/README.md)

@@ -8,12 +8,14 @@
 
 ## 1. 使用角色
 
-| 角色 | 需要登入 | 主要用途 |
-|---|---:|---|
-| 系統管理員 | 是 | 管理使用者是否可使用即時轉錄功能 |
-| Session 擁有者 | 是 | 建立與管理 session、開啟 panel、設定語言、字詞與協作者 |
-| Session 協作者 | 是 | 進入已授權 session 的 panel，協助操作與調整設定 |
-| 觀眾 | 否 | 透過 `/rt/{session_id}` 或 `/yt/{session_id}` 觀看字幕 |
+
+| 角色          | 需要登入 | 主要用途                                            |
+| ----------- | ----: | ----------------------------------------------- |
+| 系統管理員       | 是    | 管理使用者是否可使用即時轉錄功能                                |
+| Session 擁有者 | 是    | 建立與管理 session、開啟 panel、設定語言、字詞與協作者              |
+| Session 協作者 | 是    | 進入已授權 session 的 panel，協助操作與調整設定                 |
+| 觀眾          | 否    | 透過 `/rt/{session_id}` 或 `/yt/{session_id}` 觀看字幕 |
+
 
 ## 2. 核心流程
 
@@ -79,34 +81,38 @@ Session 擁有者或 co-owner 可開啟 `/edit/{session_id}`：
 
 ## 3. 主要網址
 
-| 路徑 | 用途 | 權限 |
-|---|---|---|
-| `/` | 首頁與入口 | 公開 |
-| `/login` | Email OTP 登入 | 公開 |
-| `/logout` | 登出 | 已登入 |
-| `/dashboard` | 系統管理員後台 | 系統管理員 |
-| `/user-dashboard` | 使用者 session 清單 | 已登入 |
-| `/panel/{session_id}` | Session 控制台 | 擁有者或 co-owner |
-| `/rt/{session_id}` | 即時字幕觀看頁 | 公開 |
-| `/yt/{session_id}` | YouTube 字幕觀看頁 | 公開 |
-| `/edit/{session_id}` | 歷史字幕編輯頁 | 擁有者或 co-owner |
-| `/download/{session_id}` | 匯出 JSON | 視 session 權限而定 |
-| `/download/{session_id}/srt/{lang}` | 匯出單語言 SRT | 視 session 權限而定 |
+
+| 路徑                                  | 用途             | 權限             |
+| ----------------------------------- | -------------- | -------------- |
+| `/`                                 | 首頁與入口          | 公開             |
+| `/login`                            | Email OTP 登入   | 公開             |
+| `/logout`                           | 登出             | 已登入            |
+| `/dashboard`                        | 系統管理員後台        | 系統管理員          |
+| `/user-dashboard`                   | 使用者 session 清單 | 已登入            |
+| `/panel/{session_id}`               | Session 控制台    | 擁有者或 co-owner  |
+| `/rt/{session_id}`                  | 即時字幕觀看頁        | 公開             |
+| `/yt/{session_id}`                  | YouTube 字幕觀看頁  | 公開             |
+| `/edit/{session_id}`                | 歷史字幕編輯頁        | 擁有者或 co-owner  |
+| `/download/{session_id}`            | 匯出 JSON        | 視 session 權限而定 |
+| `/download/{session_id}/srt/{lang}` | 匯出單語言 SRT      | 視 session 權限而定 |
+
 
 ## 4. Panel 可調整項目
 
-| 項目 | 說明 |
-|---|---|
-| Translation languages | 設定字幕要翻譯成哪些語言 |
-| Engine | 選擇轉錄引擎：ElevenLabs Scribe 或 Gemini Transcribe；留空代表沿用伺服器的 `STT_PROVIDER` |
-| Detect language | 指定語音辨識語言；留空代表自動偵測。語言代碼隨引擎而異（ElevenLabs 用 `zho`，Gemini 用 `cmn-Hant-TW`），切換引擎會把這項重設為自動偵測 |
-| Translate tone | 指定翻譯語氣，例如正式、口語或其他短字串 |
-| Keywords | 提供人名、專有名詞或活動術語給修正與翻譯流程使用 |
-| Pinned keywords | 鎖定特定 keyword，避免被自動排序或淘汰 |
-| Text dictionary | 在修正與翻譯前做直接文字替換 |
-| Glossary | 多語詞條表；同一個詞在各語言的寫法，翻譯前會換成目標語言的寫法 |
-| Co-owners | 主要擁有者可新增協作者 |
-| Microphone | 開啟或關閉即時音訊輸入 |
+
+| 項目                    | 說明                                                                                     |
+| --------------------- | -------------------------------------------------------------------------------------- |
+| Translation languages | 設定字幕要翻譯成哪些語言                                                                           |
+| Engine                | 選擇轉錄引擎：ElevenLabs Scribe 或 Gemini Transcribe；留空代表沿用伺服器的 `STT_PROVIDER`                 |
+| Detect language       | 指定語音辨識語言；留空代表自動偵測。語言代碼隨引擎而異（ElevenLabs 用 `zho`，Gemini 用 `cmn-Hant-TW`），切換引擎會把這項重設為自動偵測 |
+| Translate tone        | 指定翻譯語氣，例如正式、口語或其他短字串                                                                   |
+| Keywords              | 提供人名、專有名詞或活動術語給修正與翻譯流程使用                                                               |
+| Pinned keywords       | 鎖定特定 keyword，避免被自動排序或淘汰                                                                |
+| Text dictionary       | 在修正與翻譯前做直接文字替換                                                                         |
+| Glossary              | 多語詞條表；同一個詞在各語言的寫法，翻譯前會換成目標語言的寫法                                                        |
+| Co-owners             | 主要擁有者可新增協作者                                                                            |
+| Microphone            | 開啟或關閉即時音訊輸入                                                                            |
+
 
 ## 5. API 與即時通訊
 
@@ -132,58 +138,66 @@ Panel 使用 Socket.IO 做雙向控制。
 
 Client to server：
 
-| Event | 用途 |
-|---|---|
-| `join_session` | 使用 `session_id` 加入 session（`secret_key` 或 `api_key` 擇一） |
-| `sync` | 送出外部轉錄資料 |
-| `realtime_connect` | 初始化即時轉錄管理器 |
-| `mic_on` | 啟動即時轉錄 |
-| `mic_off` | 停止即時轉錄 |
-| `audio_buffer_append` | 傳送 base64 音訊片段 |
-| `leave_session` | 離開 session room |
+
+| Event                 | 用途                                                      |
+| --------------------- | ------------------------------------------------------- |
+| `join_session`        | 使用 `session_id` 加入 session（`secret_key` 或 `api_key` 擇一） |
+| `sync`                | 送出外部轉錄資料                                                |
+| `realtime_connect`    | 初始化即時轉錄管理器                                              |
+| `mic_on`              | 啟動即時轉錄                                                  |
+| `mic_off`             | 停止即時轉錄                                                  |
+| `audio_buffer_append` | 傳送 base64 音訊片段                                          |
+| `leave_session`       | 離開 session room                                         |
+
 
 Server to client：
 
-| Event | 用途 |
-|---|---|
-| `connected` | Socket.IO 連線完成 |
-| `joined_session` | 已加入 session，回傳 viewer count |
-| `transcription_update` | Panel 端收到字幕更新 |
-| `viewer_count_update` | 觀眾數更新 |
-| `error` | 驗證、限流或資料格式錯誤 |
+
+| Event                  | 用途                          |
+| ---------------------- | --------------------------- |
+| `connected`            | Socket.IO 連線完成              |
+| `joined_session`       | 已加入 session，回傳 viewer count |
+| `transcription_update` | Panel 端收到字幕更新               |
+| `viewer_count_update`  | 觀眾數更新                       |
+| `error`                | 驗證、限流或資料格式錯誤                |
+
 
 ### 5.3 Session 設定 API
 
 以下 API 需要 session 管理權限：
 
-| Method | Path | 用途 |
-|---|---|---|
-| `GET` | `/api/session/{sid}/languages` | 讀取翻譯語言 |
-| `POST` | `/api/session/{sid}/languages` | 更新翻譯語言 |
-| `GET` | `/api/session/{sid}/keywords` | 讀取 keywords 與 locked keywords |
-| `POST` | `/api/session/{sid}/keywords` | 更新 keywords 與 locked keywords |
-| `GET` | `/api/session/{sid}/text-dictionary` | 讀取文字字典 |
-| `POST` | `/api/session/{sid}/text-dictionary` | 更新文字字典 |
-| `GET` | `/api/session/{sid}/glossary` | 讀取多語詞條表 |
-| `POST` | `/api/session/{sid}/glossary` | 更新多語詞條表 |
-| `POST` | `/api/session/{sid}/glossary/generate` | 以 AI 搜尋網路產生單一詞條（需 Gemini 或 OpenAI key） |
-| `GET` | `/api/session/{sid}/stt-provider` | 讀取轉錄引擎設定 |
-| `POST` | `/api/session/{sid}/stt-provider` | 更新轉錄引擎（`elevenlabs` / `gemini`；空字串代表伺服器預設）|
-| `GET` | `/api/session/{sid}/scribe-language` | 讀取偵測語言設定 |
-| `POST` | `/api/session/{sid}/scribe-language` | 更新偵測語言設定 |
-| `GET` | `/api/session/{sid}/translate-tone` | 讀取翻譯語氣 |
-| `POST` | `/api/session/{sid}/translate-tone` | 更新翻譯語氣 |
-| `GET` | `/api/session/{sid}/co-owners` | 讀取 session 協作者 |
-| `POST` | `/api/session/{sid}/co-owners` | 新增 co-owner |
-| `DELETE` | `/api/session/{sid}/co-owners/{email}` | 移除 co-owner |
-| `PUT` | `/api/session/{sid}/segments` | 更新已儲存字幕片段 |
-| `DELETE` | `/api/session/{sid}/segments` | 刪除已儲存字幕片段 |
+
+| Method   | Path                                   | 用途                                         |
+| -------- | -------------------------------------- | ------------------------------------------ |
+| `GET`    | `/api/session/{sid}/languages`         | 讀取翻譯語言                                     |
+| `POST`   | `/api/session/{sid}/languages`         | 更新翻譯語言                                     |
+| `GET`    | `/api/session/{sid}/keywords`          | 讀取 keywords 與 locked keywords              |
+| `POST`   | `/api/session/{sid}/keywords`          | 更新 keywords 與 locked keywords              |
+| `GET`    | `/api/session/{sid}/text-dictionary`   | 讀取文字字典                                     |
+| `POST`   | `/api/session/{sid}/text-dictionary`   | 更新文字字典                                     |
+| `GET`    | `/api/session/{sid}/glossary`          | 讀取多語詞條表                                    |
+| `POST`   | `/api/session/{sid}/glossary`          | 更新多語詞條表                                    |
+| `POST`   | `/api/session/{sid}/glossary/generate` | 以 AI 搜尋網路產生單一詞條（需 Gemini 或 OpenAI key）     |
+| `GET`    | `/api/session/{sid}/stt-provider`      | 讀取轉錄引擎設定                                   |
+| `POST`   | `/api/session/{sid}/stt-provider`      | 更新轉錄引擎（`elevenlabs` / `gemini`；空字串代表伺服器預設） |
+| `GET`    | `/api/session/{sid}/scribe-language`   | 讀取偵測語言設定                                   |
+| `POST`   | `/api/session/{sid}/scribe-language`   | 更新偵測語言設定                                   |
+| `GET`    | `/api/session/{sid}/translate-tone`    | 讀取翻譯語氣                                     |
+| `POST`   | `/api/session/{sid}/translate-tone`    | 更新翻譯語氣                                     |
+| `GET`    | `/api/session/{sid}/co-owners`         | 讀取 session 協作者                             |
+| `POST`   | `/api/session/{sid}/co-owners`         | 新增 co-owner                                |
+| `DELETE` | `/api/session/{sid}/co-owners/{email}` | 移除 co-owner                                |
+| `PUT`    | `/api/session/{sid}/segments`          | 更新已儲存字幕片段                                  |
+| `DELETE` | `/api/session/{sid}/segments`          | 刪除已儲存字幕片段                                  |
+
 
 ### 5.4 管理員 API
 
-| Method | Path | 用途 |
-|---|---|---|
+
+| Method | Path                          | 用途                |
+| ------ | ----------------------------- | ----------------- |
 | `POST` | `/api/users/{email}/realtime` | 開啟或關閉指定使用者的即時轉錄權限 |
+
 
 > 管理員 API 僅接受 cookie session 登入的 admin;**API key 認證一律被拒絕**,即使 key 的擁有者是 admin。
 
@@ -199,26 +213,30 @@ transcribe／realtime 等非瀏覽器 client 以個人 API key 認證,不需要 
 
 Key 管理 API：
 
-| Method | Path | 用途 |
-|---|---|---|
-| `POST` | `/api/apikey` | 產生或 rotate 自己的 key（回傳明文一次） |
-| `DELETE` | `/api/apikey` | 撤銷自己的 key |
-| `GET` | `/api/me` | 讀取自己的身分、權限清單與 key 識別碼 |
+
+| Method   | Path          | 用途                         |
+| -------- | ------------- | -------------------------- |
+| `POST`   | `/api/apikey` | 產生或 rotate 自己的 key（回傳明文一次） |
+| `DELETE` | `/api/apikey` | 撤銷自己的 key                  |
+| `GET`    | `/api/me`     | 讀取自己的身分、權限清單與 key 識別碼      |
+
 
 ## 6. 資料儲存
 
-| 儲存位置 | 用途 |
-|---|---|
-| MongoDB `rooms` | session 擁有者、secret key、co-owner、設定與使用量 |
-| MongoDB `transcription_segments` | 已完成的字幕片段 |
-| MongoDB `transcription_store` | session metadata 與舊資料相容 |
-| Redis `transcription:{sid}:list` | 近期已完成字幕片段快取 |
-| Redis `transcription:{sid}:partial` | 尚未完成的 partial 字幕 |
-| Redis `transcription:{sid}:meta` | 串流開始時間等 metadata |
-| Redis `keywords:{sid}` | session keywords 快取 |
-| Redis `locked_keywords:{sid}` | pinned keywords 快取 |
-| Redis `text_dictionary:{sid}` | 文字字典快取 |
-| Redis `glossary:{sid}` | 多語詞條表快取 |
+
+| 儲存位置                                | 用途                                     |
+| ----------------------------------- | -------------------------------------- |
+| MongoDB `rooms`                     | session 擁有者、secret key、co-owner、設定與使用量 |
+| MongoDB `transcription_segments`    | 已完成的字幕片段                               |
+| MongoDB `transcription_store`       | session metadata 與舊資料相容                |
+| Redis `transcription:{sid}:list`    | 近期已完成字幕片段快取                            |
+| Redis `transcription:{sid}:partial` | 尚未完成的 partial 字幕                       |
+| Redis `transcription:{sid}:meta`    | 串流開始時間等 metadata                       |
+| Redis `keywords:{sid}`              | session keywords 快取                    |
+| Redis `locked_keywords:{sid}`       | pinned keywords 快取                     |
+| Redis `text_dictionary:{sid}`       | 文字字典快取                                 |
+| Redis `glossary:{sid}`              | 多語詞條表快取                                |
+
 
 ## 7. 成果確認清單
 
@@ -313,3 +331,4 @@ Key 管理 API：
 - Text dictionary 是直接替換，設定時應避免過短或容易誤傷的字串。
 - Glossary 的 AI 產生功能不受 `AI_PROVIDER` 影響：優先使用 Gemini（Google Search grounding），沒有 `GEMINI_API_KEY` 時退回 OpenAI Responses API 的 `web_search` 工具，兩把 key 都沒有時該按鈕回報功能未設定。翻譯本身仍使用帳號選定的 provider。
 - AI 產生的譯名是查詢結果而非保證正確，正式活動前建議在 Dictionary modal 內逐條確認或修改。
+

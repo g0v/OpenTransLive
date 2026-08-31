@@ -200,6 +200,7 @@ Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR: this project
 
 ## Related Docs
 
+- [Visual operator manual docs/MANUAL.md](docs/MANUAL.md) — illustrated session, panel, viewer, and export workflow
 - [Usage guide docs/USAGE.en.md](docs/USAGE.en.md) — roles, flows, URLs, APIs, storage, FAQ
 - [Milestones milestone.en.md](milestone.en.md)
 - [Live Server config live_server/README.en.md](live_server/README.en.md)
