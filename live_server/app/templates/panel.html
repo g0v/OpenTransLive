@@ -222,6 +222,21 @@
           auto-removed, or use <iconify-icon icon="ph:translate" width="11" height="11" class="align-middle"></iconify-icon>
           to look its translations up on the web and add them to the glossary.
         </p>
+        <div class="flex shrink-0 flex-col gap-2 rounded-lg border border-[#2a3646] bg-[#111a27] p-3">
+          <label for="kw-generate-text" class="text-xs font-semibold text-[#d7e1ed]">Generate from reference text</label>
+          <textarea id="kw-generate-text" rows="4" maxlength="20000"
+            placeholder="Paste an agenda, script, article, or notes. Multiple lines are supported."
+            class="panel-input min-h-24 w-full flex-none resize-y leading-relaxed"></textarea>
+          <div class="flex items-center gap-2">
+            <button id="kw-generate-btn" type="button"
+              class="panel-add-btn inline-flex items-center gap-1.5 disabled:cursor-wait disabled:opacity-60">
+              <iconify-icon id="kw-generate-icon" icon="ph:sparkle" width="14" height="14"></iconify-icon>
+              Generate keywords
+            </button>
+            <span id="kw-generate-status" class="hidden min-w-0 flex-1 text-[11px] leading-snug text-[#aebed2]"
+              role="status" aria-live="polite"></span>
+          </div>
+        </div>
         <div id="kw-lookup-status" class="hidden rounded-lg border border-[#34465c] bg-[#111a27] px-3 py-2 text-[11px] leading-snug text-[#aebed2]"
           role="status" aria-live="polite"></div>
         <div id="kw-list" class="modal-list flex min-h-14 flex-1 basis-auto flex-col gap-1 overflow-y-auto pr-1 [scrollbar-color:#4d5d72_transparent] [scrollbar-width:thin] [&>div]:rounded-lg [&>label]:rounded-lg"></div>
@@ -887,6 +902,7 @@
   let lockedKeywords = new Set()  // keywords that survive auto-rerank/removal
   let keywordSavePending = false  // true while debouncing or saving; blocks sync
   let keywordSaveTimer = null     // debounce timer for saveKeywords
+  let keywordGenerating = false
 
   function updateKeywordLabel() {
     const label = document.getElementById('kw-dropdown-label')
@@ -1049,7 +1065,7 @@
   // Skipped while a save is in flight to avoid a race where the server still
   // holds a pre-deletion snapshot and re-adds a keyword the user just removed.
   async function syncKeywords() {
-    if (keywordSavePending) return
+    if (keywordSavePending || keywordGenerating) return
     try {
       const res = await fetch(`/api/session/${sid}/keywords`, { credentials: 'same-origin' })
       if (!res.ok) return
@@ -1090,6 +1106,7 @@
     const statusEl = document.getElementById('settings-status')
     statusEl.textContent = 'Saving'
     keywordSavePending = true
+    let saved = false
     try {
       const res = await fetch(`/api/session/${sid}/keywords`, {
         method: 'POST',
@@ -1098,6 +1115,7 @@
         body: JSON.stringify({ keywords: currentKeywords, locked_keywords: Array.from(lockedKeywords) })
       })
       if (res.ok) {
+        saved = true
         statusEl.textContent = 'Saved'
       } else {
         const err = await res.json()
@@ -1109,6 +1127,99 @@
     } finally {
       keywordSavePending = false
       keywordSaveQueued = false
+    }
+    return saved
+  }
+
+  async function generateKeywordsFromText() {
+    if (keywordGenerating) return
+
+    const input = document.getElementById('kw-generate-text')
+    const button = document.getElementById('kw-generate-btn')
+    const icon = document.getElementById('kw-generate-icon')
+    const status = document.getElementById('kw-generate-status')
+    const statusEl = document.getElementById('settings-status')
+    const text = input.value.trim()
+    if (!text) {
+      status.classList.remove('hidden')
+      status.textContent = 'Paste some reference text first.'
+      input.focus()
+      return
+    }
+
+    keywordGenerating = true
+    input.disabled = true
+    button.disabled = true
+    icon.setAttribute('icon', 'ph:spinner-gap')
+    icon.classList.add('animate-spin')
+    status.classList.remove('hidden')
+    status.textContent = 'Finding names, jargon, and key phrases…'
+    statusEl.textContent = 'Generating keywords'
+
+    try {
+      const res = await fetch(`/api/session/${sid}/keywords/generate`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        status.textContent = data.detail || 'Keyword generation failed'
+        statusEl.textContent = data.detail || 'Error'
+        return
+      }
+
+      const generated = Array.isArray(data.keywords) ? data.keywords : []
+      if (!generated.length) {
+        status.textContent = 'No keywords found in this text.'
+        statusEl.textContent = 'No keywords found'
+        return
+      }
+      let added = 0
+      let pinned = 0
+      for (const kw of generated) {
+        if (!currentKeywords.includes(kw)) {
+          currentKeywords.push(kw)
+          added++
+        }
+        if (!lockedKeywords.has(kw)) {
+          lockedKeywords.add(kw)
+          pinned++
+        }
+      }
+
+      updateKeywordLabel()
+      renderKeywordList()
+      if (added || pinned) {
+        const saved = await saveKeywords()
+        if (!saved) {
+          status.textContent = 'Keywords were generated but could not be saved.'
+          return
+        }
+      }
+
+      input.value = ''
+      if (added) {
+        status.textContent = `Added and pinned ${added} keyword${added === 1 ? '' : 's'}.`
+        statusEl.textContent = 'Keywords added'
+      } else if (pinned) {
+        status.textContent = `Pinned ${pinned} existing keyword${pinned === 1 ? '' : 's'}.`
+        statusEl.textContent = 'Keywords pinned'
+      } else {
+        status.textContent = 'These keywords are already in the list.'
+        statusEl.textContent = 'No new keywords'
+      }
+    } catch (e) {
+      status.textContent = 'Keyword generation failed. Check the connection and try again.'
+      statusEl.textContent = 'Error'
+      console.error('Failed to generate keywords:', e)
+    } finally {
+      keywordGenerating = false
+      input.disabled = false
+      button.disabled = false
+      icon.setAttribute('icon', 'ph:sparkle')
+      icon.classList.remove('animate-spin')
     }
   }
 
@@ -1579,7 +1690,7 @@
 
   const SETTINGS_KINDS = {
     'languages':       { load: loadLanguages,      isInteracting: () => langSaveInFlight || !!langSaveTimer, polled: true },
-    'keywords':        { load: loadKeywords,       isInteracting: () => keywordSavePending,                  polled: false },
+    'keywords':        { load: loadKeywords,       isInteracting: () => keywordSavePending || keywordGenerating,     polled: false },
     'text-dictionary': { load: loadTextDictionary, isInteracting: () => !!textDictSaveTimer,                 polled: true },
     'glossary':        { load: loadGlossary,       isInteracting: () => !!glossarySaveTimer,                 polled: true },
     'stt-provider':    { load: loadEngineAndLanguage,
@@ -1833,6 +1944,7 @@
     document.getElementById('kw-custom-input').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') document.getElementById('kw-custom-add-btn').click()
     })
+    document.getElementById('kw-generate-btn').addEventListener('click', generateKeywordsFromText)
 
     // Languages modal
     setupModal(document.getElementById('lang-dropdown-panel'), document.getElementById('lang-dropdown-btn'))

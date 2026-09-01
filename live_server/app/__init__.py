@@ -1698,6 +1698,15 @@ async def update_session_languages_endpoint(request: Request, sid: str):
     return {"languages": languages}
 
 
+_KEYWORD_MAX_LEN = 128
+_KEYWORD_GENERATION_MAX_TEXT_LEN = 20_000
+_KEYWORD_GENERATION_MAX_RESULTS = 30
+
+
+def _keyword_meets_storage_limits(keyword: str) -> bool:
+    return len(keyword) <= _KEYWORD_MAX_LEN and "$" not in keyword
+
+
 @app.get("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def get_session_keywords_endpoint(request: Request, sid: str):
     """Get the current keywords and locked keywords for a session."""
@@ -1723,7 +1732,7 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
     for kw in keywords:
         if not isinstance(kw, str) or not kw.strip():
             raise HTTPException(status_code=400, detail="Each keyword must be a non-empty string")
-        if '$' in kw or len(kw) > 128:
+        if not _keyword_meets_storage_limits(kw):
             raise HTTPException(status_code=400, detail=f"Invalid keyword value: {kw}")
     keywords = [kw.strip() for kw in keywords]
 
@@ -1734,7 +1743,7 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
         for kw in locked_keywords:
             if not isinstance(kw, str) or not kw.strip():
                 raise HTTPException(status_code=400, detail="Each locked keyword must be a non-empty string")
-            if '$' in kw or len(kw) > 128:
+            if not _keyword_meets_storage_limits(kw):
                 raise HTTPException(status_code=400, detail=f"Invalid locked keyword value: {kw}")
         locked_keywords = [kw.strip() for kw in locked_keywords]
     else:
@@ -1754,6 +1763,59 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
         result["locked_keywords"] = locked_keywords
     await _emit_session_settings_update(sid, "keywords")
     return result
+
+
+# User-triggered AI work is intentionally rate-limited more tightly than the
+# regular settings writes.
+@app.post("/api/session/{sid}/keywords/generate", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_identifier))])
+async def generate_session_keywords_endpoint(request: Request, sid: str):
+    """Extract names, jargon, and phrases from pasted reference text.
+
+    Generation only: the caller merges the candidates and persists them through
+    the regular keywords endpoint, avoiding a second keyword write path.
+    """
+    sid = sanitize_query_param(sid, "session ID")
+    await _require_session_owner(request, sid)
+
+    body = await request.json()
+    text = body.get("text")
+    if not isinstance(text, str):
+        raise HTTPException(status_code=400, detail="text must be a non-empty string")
+    text = text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text must be a non-empty string")
+    if len(text) > _KEYWORD_GENERATION_MAX_TEXT_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"text too long (max {_KEYWORD_GENERATION_MAX_TEXT_LEN} chars)",
+        )
+
+    from .translation_service import get_keywords_and_locked, get_session_ai_provider
+    from .translators import get_translator
+
+    keywords_result, provider = await asyncio.gather(
+        get_keywords_and_locked(redis_client, sid),
+        get_session_ai_provider(redis_client, sid),
+    )
+    existing_keywords, _ = keywords_result
+    candidates = await get_translator(provider or None).extract_keywords(text, existing_keywords)
+    if not isinstance(candidates, list):
+        candidates = []
+
+    keywords = []
+    seen = set()
+    for candidate in candidates:
+        if not isinstance(candidate, str):
+            continue
+        keyword = candidate.strip()
+        if not keyword or keyword in seen or not _keyword_meets_storage_limits(keyword):
+            continue
+        seen.add(keyword)
+        keywords.append(keyword)
+        if len(keywords) == _KEYWORD_GENERATION_MAX_RESULTS:
+            break
+
+    return {"keywords": keywords}
 
 
 @app.get("/api/session/{sid}/text-dictionary", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
