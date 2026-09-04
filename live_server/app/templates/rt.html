@@ -1029,6 +1029,21 @@
         changed = true;
       }
     });
+    if (changed && urlShowList) {
+      // `show=` defines both visibility and display order. Keep languages not
+      // listed there after the requested ones, in their discovery order.
+      const urlPositions = new Map();
+      urlShowList.forEach((lang, index) => {
+        if (!urlPositions.has(lang)) urlPositions.set(lang, index);
+      });
+      languageOrder.sort((a, b) => {
+        const aPosition = urlPositions.get(a);
+        const bPosition = urlPositions.get(b);
+        if (aPosition === undefined) return bPosition === undefined ? 0 : 1;
+        if (bPosition === undefined) return -1;
+        return aPosition - bPosition;
+      });
+    }
     return changed;
   }
 
