@@ -46,7 +46,7 @@ def is_finite_number(value: Any) -> bool:
     return True
 
 
-def _check_timestamp(value: Any, name: str) -> tuple[bool, str]:
+def check_timestamp(value: Any, name: str) -> tuple[bool, str]:
     if not is_finite_number(value):
         return False, f"{name} must be a finite number"
     if value < 0 or value > _MAX_TIMESTAMP:
@@ -175,7 +175,7 @@ def validate_sync_payload(data: Any) -> tuple[bool, str]:
     if not isinstance(sid, str) or not sid.strip():
         return False, "id must be a non-empty string"
 
-    ok, err = _check_timestamp(data.get("start_time"), "start_time")
+    ok, err = check_timestamp(data.get("start_time"), "start_time")
     if not ok:
         return False, err
 
@@ -198,7 +198,7 @@ def validate_sync_payload(data: Any) -> tuple[bool, str]:
 
     for ts_field in ("end_time", "init_time"):
         if ts_field in data and data[ts_field] is not None:
-            ok, err = _check_timestamp(data[ts_field], ts_field)
+            ok, err = check_timestamp(data[ts_field], ts_field)
             if not ok:
                 return False, err
 

@@ -1641,9 +1641,12 @@
     function streamUrl() {
       const url = new URL('/api/session/{{ id }}/stream', window.location.origin);
       if (lastEventId) url.searchParams.set('last_event_id', lastEventId);
-      // The page render already carried the current maps, so only a reconnect
-      // can have missed an edit and needs the server to resend them.
-      if (reconnected) url.searchParams.set('dict', '1');
+      // The page render already carried current state. A reconnect can have
+      // missed dictionary edits or older-segment revisions, so ask for both.
+      if (reconnected) {
+        url.searchParams.set('dict', '1');
+        url.searchParams.set('snapshot', '1');
+      }
       return url.toString();
     }
 
@@ -1655,14 +1658,27 @@
       return seg;
     }
 
+    // One definition of segment identity, shared by the replace-only revision path
+    // and the insert-or-replace live path.
+    function findLoadedSegmentIndex(startTime) {
+      return transcriptionsData["transcriptions"].findIndex(t => t.start_time === startTime);
+    }
+
+    function replaceLoadedSegment(seg) {
+      const i = findLoadedSegmentIndex(seg.start_time);
+      if (i === -1) return false;
+      transcriptionsData["transcriptions"][i] = seg;
+      return true;
+    }
+
     function upsertSegment(seg, provisional) {
       const list = transcriptionsData["transcriptions"];
-      const i = list.findIndex(t => t.start_time === seg.start_time);
+      const i = findLoadedSegmentIndex(seg.start_time);
       if (i === -1) {
         list.push(provisional ? provisionalCopy(seg) : seg);
         list.sort((a, b) => a.start_time - b.start_time);
-      } else if (!provisional && list[i].provisional) {
-        // The real commit lands: replace the placeholder in place.
+      } else if (!provisional) {
+        // Real commits and revisions always replace the same segment identity.
         list[i] = seg;
       }
     }
@@ -1720,6 +1736,19 @@
         if (JSON.stringify(next) === JSON.stringify(languageMaps)) return;
         languageMaps = next;
         dictCache.clear();
+        refreshView();
+      });
+      stream.addEventListener('segment_updated', function (event) {
+        const data = JSON.parse(event.data);
+        if (!data?.segment || !replaceLoadedSegment(data.segment)) return;
+        syncLanguagesFromData();
+        refreshView();
+      });
+      stream.addEventListener('segment_snapshot', function (event) {
+        const data = JSON.parse(event.data);
+        if (!Array.isArray(data?.segments)) return;
+        transcriptionsData["transcriptions"] = data.segments;
+        syncLanguagesFromData();
         refreshView();
       });
 

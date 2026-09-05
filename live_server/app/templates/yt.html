@@ -446,6 +446,7 @@
   var player;
   let transcriptionsData = {{ data | tojson(indent = 2) }};
   let lastSubtitle = null;
+  const displayedSubtitleSpans = new Map();
   let currentTheme = 'light';
   let currentFontSizeRem = 1.25;
   const statusIndicator = document.getElementById('status-indicator');
@@ -460,6 +461,11 @@
   // Gap marker for a committed segment whose translation failed (key present
   // but empty); keeps the line in place instead of dropping it.
   const TRANSLATION_GAP = '⋯';
+
+  function segmentKey(startTime) {
+    const numeric = Number(startTime);
+    return Number.isFinite(numeric) ? String(numeric) : String(startTime);
+  }
 
   function applyFontSize(rem) {
     currentFontSizeRem = Math.min(FONT_MAX, Math.max(FONT_MIN, rem));
@@ -611,6 +617,7 @@
     document.getElementById('partial-content').textContent = '';
     document.getElementById('partial-content').classList.add('hidden');
     lastSubtitle = null;
+    displayedSubtitleSpans.clear();
   });
 
   // ------------------------------------------------------------------ //
@@ -634,13 +641,21 @@
   // ------------------------------------------------------------------ //
   // Subtitle display                                                    //
   // ------------------------------------------------------------------ //
-  function appendSubtitle(text) {
+  function appendSubtitle(text, startTime) {
+    const key = segmentKey(startTime);
+    const existing = displayedSubtitleSpans.get(key);
+    if (existing) {
+      existing.textContent = text;
+      return;
+    }
     const dataContent = document.getElementById('data-content');
     const span = document.createElement('span');
     span.className = 'new-text block';
+    span.dataset.startTime = String(startTime);
     span.textContent = text;
     span.addEventListener('animationend', () => span.classList.remove('new-text'));
     dataContent.appendChild(span);
+    displayedSubtitleSpans.set(key, span);
     const subtitleArea = document.getElementById('subtitle-area');
     subtitleArea.scrollTop = subtitleArea.scrollHeight;
   }
@@ -673,7 +688,7 @@
             // segments predating the language (key absent) are skipped.
             const translated = transcription.result?.translated;
             if (translated && selectedLanguage in translated) {
-              appendSubtitle(translated[selectedLanguage] || TRANSLATION_GAP);
+              appendSubtitle(translated[selectedLanguage] || TRANSLATION_GAP, transcription.start_time);
             }
           }
           break;
@@ -718,11 +733,36 @@
     // server subscribes before replaying, closing the HTML-render -> SSE gap.
     let lastEventId = String(Number.isFinite(initialLastStart) ? initialLastStart : 0);
     let pageUnloading = false;
+    let reconnected = false;
 
     function streamUrl() {
       const url = new URL('/api/session/{{ id }}/stream', window.location.origin);
       if (lastEventId) url.searchParams.set('last_event_id', lastEventId);
+      if (reconnected) url.searchParams.set('snapshot', '1');
       return url.toString();
+    }
+
+    function appendCommittedSegment(segment) {
+      const list = transcriptionsData.transcriptions;
+      if (list.some(item => item.start_time === segment.start_time)) return false;
+      list.push(segment);
+      list.sort((a, b) => a.start_time - b.start_time);
+      return true;
+    }
+
+    function replaceCommittedSegment(segment) {
+      const list = transcriptionsData.transcriptions;
+      const index = list.findIndex(item => item.start_time === segment.start_time);
+      if (index === -1) return false;
+      list[index] = segment;
+
+      const span = displayedSubtitleSpans.get(segmentKey(segment.start_time));
+      if (span) {
+        const language = document.getElementById('language-select').value;
+        const translated = segment.result?.translated;
+        span.textContent = translated?.[language] || TRANSLATION_GAP;
+      }
+      return true;
     }
 
     function handleTranscriptionUpdate(event) {
@@ -732,17 +772,14 @@
         transcriptionsData.partial = data;
       } else {
         transcriptionsData.partial = null;
-        const exists = transcriptionsData.transcriptions.some(t => t.start_time === data.start_time);
-        if (!exists) {
-          transcriptionsData.transcriptions.push(data);
-          transcriptionsData.transcriptions.sort((a, b) => a.start_time - b.start_time);
-        }
+        appendCommittedSegment(data);
       }
       populateLanguageSelect();
     }
 
     function scheduleReconnect() {
       if (pageUnloading || reconnectTimer) return;
+      reconnected = true;
       reconnectAttempts += 1;
       const delay = Math.min(1000 * reconnectAttempts, 10000);
       statusIndicator.className = 'status-dot-sm bg-yellow-500';
@@ -764,6 +801,19 @@
       };
 
       stream.addEventListener('transcription_update', handleTranscriptionUpdate);
+      stream.addEventListener('segment_updated', function (event) {
+        const data = JSON.parse(event.data);
+        if (!data?.segment || !replaceCommittedSegment(data.segment)) return;
+        populateLanguageSelect();
+      });
+      stream.addEventListener('segment_snapshot', function (event) {
+        const data = JSON.parse(event.data);
+        if (!Array.isArray(data?.segments)) return;
+        for (const segment of data.segments) {
+          if (!replaceCommittedSegment(segment)) appendCommittedSegment(segment);
+        }
+        populateLanguageSelect();
+      });
 
       stream.onerror = function () {
         scheduleReconnect();

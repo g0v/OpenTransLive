@@ -52,6 +52,7 @@ from .scribe_manager import (SCRIBE_MANAGERS, ScribeSessionManager, create_scrib
 from .socket_schema import (
     validate_sync_payload,
     validate_audio_buffer_append_payload,
+    check_timestamp,
 )
 from .email_auth import (
     validate_email_format,
@@ -167,6 +168,8 @@ _partial_last_emit_started: TTLCache = TTLCache(
 # (single uvicorn process / event loop); with multiple workers this must move to Redis-level CAS.
 # WeakValueDictionary so locks vanish once no coroutine holds or waits on them.
 _partial_rmw_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
+# Per-segment locks serialize the queued initial write and every later revision.
+_segment_write_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 # Per-session locks to prevent concurrent _get_or_create_scribe_manager calls from racing.
 # WeakValueDictionary so entries vanish once no caller is holding / waiting on the lock;
 # otherwise every session_id ever seen would leak an asyncio.Lock for the life of the process.
@@ -181,6 +184,11 @@ def _get_or_create_lock(registry: "weakref.WeakValueDictionary[str, asyncio.Lock
         lock = asyncio.Lock()
         registry[key] = lock
     return lock
+
+
+def _segment_lock_key(sid: str, start_time: float) -> str:
+    """Return one canonical lock key for numerically identical segment times."""
+    return f"{sid}:{float(start_time)!r}"
 
 
 class SegmentWriteQueue:
@@ -730,6 +738,54 @@ async def _publish_transcription_update(sid: str, payload: dict) -> None:
     except Exception as e:
         log_exception(logger, e, f"Redis publish error for {_hash_token(sid)}")
 
+
+async def _publish_segment_updated(sid: str, segment: dict) -> None:
+    """Broadcast one authoritative committed-segment replacement."""
+    await sio.emit(
+        "segment_updated",
+        {"session_id": sid, "segment": segment},
+        room=sid,
+    )
+    await _publish_transcription_update(
+        sid,
+        {"__sse_event": "segment_updated", "segment": segment},
+    )
+
+
+def _parse_cached_segment(raw, sid: str, label: str) -> dict | None:
+    """Decode one cached segment, dropping a malformed entry instead of failing the read."""
+    try:
+        segment = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.warning("Skipping malformed %s segment sid_hash=%s", label, _hash_token(sid))
+        return None
+    return segment if isinstance(segment, dict) else None
+
+
+async def _get_recent_committed_segments(sid: str, limit: int = 50) -> list[dict]:
+    """Load the newest committed segments in ascending start-time order."""
+    zset_key = f"transcription:{sid}:list"
+    try:
+        pipe = redis_client.pipeline()
+        pipe.zrange(zset_key, -limit, -1)
+        # Refresh the TTL like every other reader of this key, so a session that
+        # only sees reconnects (no new commits) can't expire out of the cache and
+        # push each of those reconnects onto the Mongo fallback.
+        pipe.expire(zset_key, TRANSCRIPTION_TTL)
+        raw_segments, *_ = await pipe.execute()
+        if raw_segments:
+            segments = []
+            for raw in raw_segments:
+                segment = _parse_cached_segment(raw, sid, "snapshot")
+                if segment is not None:
+                    segments.append(segment)
+            return segments
+    except Exception as e:
+        log_exception(logger, e, f"Redis segment snapshot failed for {_hash_token(sid)}")
+
+    return await _query_committed_segments(sid, limit)
+
+
 async def _get_latest_committed_segment(sid: str) -> dict | None:
     """Load the newest committed segment for a newly joined Socket.IO client."""
     try:
@@ -740,12 +796,7 @@ async def _get_latest_committed_segment(sid: str) -> dict | None:
 
     if not raw_segments:
         return None
-    try:
-        segment = json.loads(raw_segments[0])
-    except (TypeError, ValueError):
-        logger.warning("Skipping malformed latest segment sid_hash=%s", _hash_token(sid))
-        return None
-    return segment if isinstance(segment, dict) else None
+    return _parse_cached_segment(raw_segments[0], sid, "latest")
 
 
 async def _emit_joined_session(socket_id: str, session_id: str, viewer_count: int) -> None:
@@ -793,6 +844,7 @@ async def _session_sse_stream(
     sid: str,
     last_event_id: float | None,
     send_display_dictionary: bool = False,
+    send_segment_snapshot: bool = False,
 ) -> AsyncIterator[str]:
     channel = _transcription_room_channel(sid)
     pubsub = redis_client.pubsub()
@@ -817,6 +869,12 @@ async def _session_sse_stream(
             yield _format_sse(
                 {"language_maps": await get_language_maps(redis_client, sid)},
                 event="display_dictionary_update",
+            )
+
+        if send_segment_snapshot:
+            yield _format_sse(
+                {"segments": await _get_recent_committed_segments(sid)},
+                event="segment_snapshot",
             )
 
         if last_event_id is not None:
@@ -857,6 +915,13 @@ async def _session_sse_stream(
                 yield _format_sse(
                     {"language_maps": payload.get("language_maps") or {}},
                     event="display_dictionary_update",
+                )
+                continue
+
+            if payload.get("__sse_event") == "segment_updated":
+                yield _format_sse(
+                    {"segment": payload.get("segment") or {}},
+                    event="segment_updated",
                 )
                 continue
 
@@ -1199,7 +1264,8 @@ async def _verify_socket_credentials(socket_id, session, secret_key, session_id,
 
 async def _verify_session_lock_holder(request: Request, sid: str):
     """Verify the request holds the room's active lock (secret_key). Used by
-    /heartbeat, where mere ownership is not enough. Returns the room doc."""
+    /heartbeat and segment retranslation, where mere ownership is not enough —
+    both belong to the browser currently driving the panel. Returns the room doc."""
     user_secret_key = request.session.get("secret_key")
     if not user_secret_key:
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -2278,45 +2344,78 @@ async def update_session_segment_endpoint(request: Request, sid: str):
     if corrected is None and translated is None:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    seg = await transcription_segments_collection.find_one(
-        {"sid": sid, "start_time": start_time, "partial": {"$ne": True}}
-    )
-    if not seg:
-        raise HTTPException(status_code=404, detail="Segment not found")
+    async with _get_or_create_lock(_segment_write_locks, _segment_lock_key(sid, start_time)):
+        seg = await transcription_segments_collection.find_one(
+            {"sid": sid, "start_time": start_time, "partial": {"$ne": True}}
+        )
+        if not seg:
+            raise HTTPException(status_code=404, detail="Segment not found")
 
-    set_fields: dict = {}
-    if corrected is not None:
-        set_fields["result.corrected"] = corrected
-    merged_translated = None
-    if translated is not None:
-        existing = (seg.get("result") or {}).get("translated") or {}
-        merged_translated = {**existing, **translated}
-        set_fields["result.translated"] = merged_translated
+        set_fields: dict = {}
+        if corrected is not None:
+            set_fields["result.corrected"] = corrected
+        merged_translated = None
+        if translated is not None:
+            existing = (seg.get("result") or {}).get("translated") or {}
+            merged_translated = {**existing, **translated}
+            set_fields["result.translated"] = merged_translated
 
-    await transcription_segments_collection.update_one(
-        {"_id": seg["_id"]},
-        {"$set": set_fields}
-    )
+        await transcription_segments_collection.update_one(
+            {"_id": seg["_id"]},
+            {"$set": set_fields}
+        )
 
-    # Build the segment shape that mirrors what's stored in Redis (no _id/sid/created_at).
-    new_seg = {k: v for k, v in seg.items() if k not in {"_id", "sid", "created_at"}}
-    new_seg.setdefault("result", {})
-    if corrected is not None:
-        new_seg["result"]["corrected"] = corrected
-    if merged_translated is not None:
-        new_seg["result"]["translated"] = merged_translated
+        # Mirror the edit into the shape the cache and viewers use.
+        new_seg = _segment_wire_shape(seg)
+        new_seg.setdefault("result", {})
+        if corrected is not None:
+            new_seg["result"]["corrected"] = corrected
+        if merged_translated is not None:
+            new_seg["result"]["translated"] = merged_translated
 
-    # Only refresh the cache if it already exists; otherwise we'd seed a partial cache
-    # that's missing every other segment.
-    zset_key = f"transcription:{sid}:list"
-    if await redis_client.exists(zset_key):
-        pipe = redis_client.pipeline()
-        pipe.zremrangebyscore(zset_key, start_time, start_time)
-        pipe.zadd(zset_key, {json.dumps(new_seg): start_time})
-        pipe.expire(zset_key, 3600)
-        await pipe.execute()
+        await _replace_cached_segment(sid, start_time, new_seg)
 
     return {"status": "ok", "segment": new_seg}
+
+
+@app.post("/api/session/{sid}/segments/retranslate", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def retranslate_session_segment_endpoint(request: Request, sid: str):
+    """Retranslate one committed segment and fan the revision out to live viewers.
+
+    Panel-lock-holder only, deliberately not owner-only like the sibling segment
+    endpoints: this fires from the live panel session, not the async editor.
+    """
+    sid = sanitize_query_param(sid, "session ID")
+    await _verify_session_lock_holder(request, sid)
+
+    try:
+        body = await request.json()
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be an object")
+    if "translated" in body:
+        raise HTTPException(status_code=400, detail="translated is not accepted")
+
+    start_time = body.get("start_time")
+    ok, start_time_error = check_timestamp(start_time, "start_time")
+    if not ok:
+        raise HTTPException(status_code=400, detail=start_time_error)
+
+    corrected = body.get("corrected")
+    if not isinstance(corrected, str):
+        raise HTTPException(status_code=400, detail="Invalid corrected text")
+    corrected = corrected.strip()
+    if not corrected or len(corrected) > 5000:
+        raise HTTPException(status_code=400, detail="Invalid corrected text")
+
+    segment = await _retranslate_committed_segment(
+        sid,
+        float(start_time),
+        corrected,
+    )
+    await _publish_segment_updated(sid, segment)
+    return {"status": "ok", "segment": segment}
 
 
 @app.delete("/api/session/{sid}/segments", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
@@ -2479,7 +2578,7 @@ async def _load_segments_from_db(sid: str, limit: int | None = None) -> tuple[li
     """
     query = transcription_segments_collection.find(
         {"sid": sid, "partial": {"$ne": True}},
-        {"_id": 0, "sid": 0, "created_at": 0}
+        _SEGMENT_WIRE_PROJECTION,
     ).sort("start_time", 1)
     if limit:
         query = query.limit(limit)
@@ -2490,6 +2589,195 @@ async def _load_segments_from_db(sid: str, limit: int | None = None) -> tuple[li
     if not segments and store and store.get("transcriptions"):
         segments = store.get("transcriptions", [])
     return segments, store
+
+
+_MONGO_ONLY_SEGMENT_FIELDS = frozenset({"_id", "sid", "created_at"})
+# The same field set expressed as a Mongo projection, so "what a segment looks
+# like on the wire" has exactly one definition.
+_SEGMENT_WIRE_PROJECTION = {field: 0 for field in _MONGO_ONLY_SEGMENT_FIELDS}
+
+
+def _segment_wire_shape(segment: dict) -> dict:
+    """Strip the Mongo-only fields so a segment matches the cached/broadcast shape."""
+    return {
+        key: value
+        for key, value in segment.items()
+        if key not in _MONGO_ONLY_SEGMENT_FIELDS
+    }
+
+
+async def _query_committed_segments(
+    sid: str,
+    limit: int,
+    *,
+    before: float | None = None,
+) -> list[dict]:
+    """Load the newest committed segments, optionally only those older than `before`.
+
+    Queried newest-first so `limit` keeps the most recent ones, then reversed to the
+    ascending order every caller renders in.
+    """
+    query: dict = {"sid": sid, "partial": {"$ne": True}}
+    if before is not None:
+        query["start_time"] = {"$lt": before}
+    cursor = (
+        transcription_segments_collection.find(query, _SEGMENT_WIRE_PROJECTION)
+        .sort("start_time", -1)
+        .limit(limit)
+    )
+    return list(reversed(await cursor.to_list(length=limit)))
+
+
+async def _replace_cached_segment(sid: str, start_time: float, segment: dict) -> None:
+    """Swap one segment in the Redis committed cache, keyed by its start_time score.
+
+    Only refreshes a cache that already exists; seeding one here would leave a
+    history holding this single segment and missing every other one.
+    """
+    zset_key = f"transcription:{sid}:list"
+    if not await redis_client.exists(zset_key):
+        return
+    pipe = redis_client.pipeline()
+    pipe.zremrangebyscore(zset_key, start_time, start_time)
+    pipe.zadd(zset_key, {json.dumps(segment): start_time})
+    pipe.expire(zset_key, TRANSCRIPTION_TTL)
+    await pipe.execute()
+
+
+async def _load_committed_segment_with_context(
+    sid: str,
+    start_time: float,
+    context_size: int = 5,
+) -> tuple[dict | None, list[dict]]:
+    """Load one committed segment and the preceding committed translation context."""
+    zset_key = f"transcription:{sid}:list"
+    try:
+        pipe = redis_client.pipeline()
+        pipe.zrangebyscore(zset_key, start_time, start_time)
+        pipe.zrevrangebyscore(
+            zset_key,
+            f"({start_time}",
+            "-inf",
+            start=0,
+            num=context_size,
+        )
+        target_json, context_json = await pipe.execute()
+        if target_json:
+            target = json.loads(target_json[0])
+            context = [json.loads(raw) for raw in reversed(context_json)]
+            return target, context
+    except Exception as e:
+        log_exception(logger, e, f"Redis segment revision load failed for {_hash_token(sid)}")
+
+    # Deliberately unprojected: _persist_segment_revision reuses the target's `_id`
+    # to update that exact document instead of re-matching on (sid, start_time).
+    target = await transcription_segments_collection.find_one(
+        {"sid": sid, "start_time": start_time, "partial": {"$ne": True}}
+    )
+    if target is None:
+        return None, []
+    return target, await _query_committed_segments(sid, context_size, before=start_time)
+
+
+async def _persist_segment_revision(sid: str, original: dict, revised: dict) -> None:
+    """Atomically replace one committed segment's corrected and translated result."""
+    start_time = float(original["start_time"])
+    # Sourced from the pre-revision document, which is what makes "only the result
+    # changes" structurally true rather than incidentally true.
+    preserved = {
+        field: original[field]
+        for field in ("text", "start_time", "end_time", "partial")
+        if field in original
+    }
+    result = revised["result"]
+    set_fields = {
+        **preserved,
+        "result.corrected": result["corrected"],
+        "result.translated": result["translated"],
+    }
+    if "_id" in original:
+        await transcription_segments_collection.update_one(
+            {"_id": original["_id"]},
+            {"$set": set_fields},
+        )
+    else:
+        # Loaded from Redis, so the queued initial write may not have landed yet;
+        # upsert claims the document either way and the initial writer no-ops.
+        await transcription_segments_collection.update_one(
+            {"sid": sid, "start_time": start_time, "partial": {"$ne": True}},
+            {
+                "$set": set_fields,
+                "$setOnInsert": {
+                    "sid": sid,
+                    "created_at": datetime.now(timezone.utc),
+                },
+            },
+            upsert=True,
+        )
+
+    await _replace_cached_segment(sid, start_time, revised)
+
+
+async def _retranslate_committed_segment(
+    sid: str,
+    start_time: float,
+    corrected: str,
+) -> dict:
+    """Retranslate and persist one committed segment as an all-language revision."""
+    from .translation_service import get_session_languages, translate_transcription
+
+    async def _translation_call(awaitable):
+        """Map a provider/cache failure onto one 502, leaving stored state untouched."""
+        try:
+            return await awaitable
+        except Exception as e:
+            log_exception(logger, e, f"Segment retranslation failed for {_hash_token(sid)}")
+            raise HTTPException(status_code=502, detail="Translation service failed") from e
+
+    async with _get_or_create_lock(_segment_write_locks, _segment_lock_key(sid, start_time)):
+        # Checked before the segment read so a session with no targets changes nothing.
+        languages = await _translation_call(get_session_languages(redis_client, sid))
+        if not languages:
+            raise HTTPException(
+                status_code=409,
+                detail="No translation languages configured",
+            )
+
+        original, context = await _load_committed_segment_with_context(sid, start_time)
+        if original is None:
+            raise HTTPException(status_code=404, detail="Segment not found")
+
+        # translate_transcription mutates and returns what it is handed, so it gets
+        # wire-shaped copies rather than the loaded documents.
+        translation_input = _segment_wire_shape(original)
+        clean_context = [_segment_wire_shape(segment) for segment in context]
+        revised = await _translation_call(
+            translate_transcription(
+                sid,
+                translation_input,
+                {"transcriptions": clean_context},
+                redis_client,
+                skip_correction=True,
+                corrected_override=corrected,
+            )
+        )
+
+        translated = ((revised or {}).get("result") or {}).get("translated") or {}
+        failed_languages = [
+            language
+            for language in languages
+            if not isinstance(translated.get(language), str)
+            or not translated[language].strip()
+        ]
+        if failed_languages:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Translation failed for: {', '.join(failed_languages)}",
+            )
+
+        canonical = _segment_wire_shape(revised)
+        await _persist_segment_revision(sid, original, canonical)
+        return canonical
 
 
 def _seconds_to_srt_timestamp(seconds: float) -> str:
@@ -2532,14 +2820,20 @@ def _build_srt_for_language(segments: list, lang: str) -> str:
 
 
 async def _save_segment_to_mongo(sid, segment, stream_start_time):
-    """Save one committed segment and refresh session metadata in MongoDB."""
-    now = datetime.now(timezone.utc)
-    await transcription_segments_collection.insert_one({**segment, "sid": sid, "created_at": now})
-    await transcription_store_collection.update_one(
-        {"sid": sid},
-        {"$set": {"stream_start_time": stream_start_time, "updated_at": now}},
-        upsert=True
-    )
+    """Insert one committed segment once and refresh session metadata."""
+    start_time = float(segment["start_time"])
+    async with _get_or_create_lock(_segment_write_locks, _segment_lock_key(sid, start_time)):
+        now = datetime.now(timezone.utc)
+        await transcription_segments_collection.update_one(
+            {"sid": sid, "start_time": start_time},
+            {"$setOnInsert": {**segment, "sid": sid, "created_at": now}},
+            upsert=True,
+        )
+        await transcription_store_collection.update_one(
+            {"sid": sid},
+            {"$set": {"stream_start_time": stream_start_time, "updated_at": now}},
+            upsert=True,
+        )
 
 
 # FastAPI Routes
@@ -2615,6 +2909,7 @@ async def session_stream(request: Request, sid: str):
             sid,
             last_event_id,
             send_display_dictionary=request.query_params.get("dict") == "1",
+            send_segment_snapshot=request.query_params.get("snapshot") == "1",
         ),
         media_type="text/event-stream",
         headers={

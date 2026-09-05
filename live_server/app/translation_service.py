@@ -655,7 +655,15 @@ async def rerank_keywords(redis_client, session_id, extraction_context: dict[str
 # Main translation entry point
 # ---------------------------------------------------------------------------
 
-async def translate_transcription(session_id, data: dict, cached_data: dict, redis_client, skip_correction):
+async def translate_transcription(
+    session_id,
+    data: dict,
+    cached_data: dict,
+    redis_client,
+    skip_correction,
+    *,
+    corrected_override: str | None = None,
+):
     """
     data: the new transcription segment, e.g. {"partial": True, "text": "..."}
     cached_data: the history `{"transcriptions": [...]}`
@@ -667,7 +675,8 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     if not languages:
         return data
 
-    partial = data.get("partial") is True
+    authoritative_correction = corrected_override is not None
+    partial = False if authoritative_correction else data.get("partial") is True
     text = data.get("text", None)
     if not text:
         return data
@@ -680,7 +689,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
         get_glossary(redis_client, session_id),
     )
     flow_map, lang_maps = split_text_dictionary(text_dict)
-    if flow_map:
+    if flow_map and not authoritative_correction:
         text = apply_text_dictionary(text, flow_map)
         data["text"] = text
     ranked = rank_keywords(current_keywords, locked_list, _KEYWORD_CAP)
@@ -706,25 +715,27 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
     partial_result = carried_partial_result(cached_data.get("partial"), data)
     prev_corrected = partial_result.get("corrected", "")
 
-    result = {"corrected": text}
+    result = {"corrected": corrected_override.strip() if authoritative_correction else text}
 
-    # 1. Correction
-    try:
-        if not skip_correction:
-            result["corrected"] = await translator.correct(
-                text=text,
-                prev_corrected=prev_corrected,
-                keywords=correct_keywords,
-            )
-        else:
-            result["corrected"] = text.strip()
-    except Exception as e:
-        log_exception(logger, e, "Correction error")
+    # 1. Correction — skipped entirely for an authoritative source edit, which is
+    # already the corrected line by definition.
+    if not authoritative_correction:
+        try:
+            if not skip_correction:
+                result["corrected"] = await translator.correct(
+                    text=text,
+                    prev_corrected=prev_corrected,
+                    keywords=correct_keywords,
+                )
+            else:
+                result["corrected"] = text.strip()
+        except Exception as e:
+            log_exception(logger, e, "Correction error")
 
     # The correction LLM can reintroduce Simplified characters even when scribe
     # already handed us Traditional; re-apply the same s2tw gate scribe uses so
     # the flow (source) panel stays consistent downstream (translate + rerank).
-    if should_force_traditional(scribe_language):
+    if not authoritative_correction and should_force_traditional(scribe_language):
         result["corrected"] = to_taiwan_traditional(result["corrected"])
 
     # 2. Parallel translations
@@ -777,7 +788,7 @@ async def translate_transcription(session_id, data: dict, cached_data: dict, red
 
     await asyncio.gather(*[_translation_worker(lang) for lang in languages])
 
-    if not partial and languages:
+    if not partial and languages and not authoritative_correction:
         asyncio.create_task(
             rerank_keywords(redis_client, session_id, current_keywords, result["corrected"], provider)
         )

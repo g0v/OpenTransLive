@@ -317,6 +317,35 @@
   </div>
   {% endif %}
 
+  <!-- Committed flow source editor -->
+  <div id="flow-edit-modal" class="modal-overlay hidden fixed flex inset-0 z-[100] items-center justify-center bg-[rgba(3,7,13,0.72)] p-4 backdrop-blur-sm" role="dialog" aria-modal="true"
+    aria-labelledby="flow-edit-title">
+    <form id="flow-edit-form" class="modal-panel flex w-full max-w-[34rem] flex-col overflow-hidden rounded-xl border border-[#3b4a5d] bg-[#182230] shadow-[0_24px_72px_rgba(3,8,15,0.48)]">
+      <div class="modal-header flex min-h-[52px] shrink-0 items-center gap-2 border-b border-[#2a3646] px-4 py-3">
+        <h2 id="flow-edit-title" class="modal-title m-0 flex-1 text-base font-bold text-[#edf3fa]">Edit source</h2>
+        <button id="flow-edit-close" type="button" class="modal-close-btn inline-flex size-8 items-center justify-center rounded-lg text-[#8d9aae] transition-colors hover:bg-[#273548] hover:text-[#edf3fa] disabled:cursor-wait disabled:opacity-50" aria-label="Close">
+          <iconify-icon icon="ph:x" width="20" height="20"></iconify-icon>
+        </button>
+      </div>
+      <div class="modal-body flex flex-col gap-3 p-4">
+        <p class="text-[11px] leading-snug text-[#9eacbf]">
+          Saving replaces the source and regenerates every configured translation.
+        </p>
+        <label for="flow-edit-text" class="text-xs font-semibold text-[#d7e1ed]">Source text</label>
+        <textarea id="flow-edit-text" rows="6" maxlength="5000" required
+          class="panel-input min-h-32 w-full resize-y leading-relaxed disabled:cursor-wait disabled:opacity-60"></textarea>
+        <div id="flow-edit-status" class="min-h-4 text-[11px] leading-snug text-[#aebed2]" role="status" aria-live="polite"></div>
+        <div class="flex justify-end gap-2 border-t border-[#2a3646] pt-3">
+          <button id="flow-edit-cancel" type="button" class="panel-add-btn disabled:cursor-wait disabled:opacity-50">Cancel</button>
+          <button id="flow-edit-submit" type="submit" class="panel-add-btn inline-flex min-w-36 items-center justify-center gap-1.5 disabled:cursor-wait disabled:opacity-60">
+            <iconify-icon id="flow-edit-spinner" icon="ph:spinner-gap" width="15" height="15" class="hidden animate-spin"></iconify-icon>
+            <span id="flow-edit-submit-label">Save &amp; retranslate</span>
+          </button>
+        </div>
+      </div>
+    </form>
+  </div>
+
   <div class="flex-1 flex min-h-0">
     <div id="viewer-wrap" class="relative m-1 min-w-0 flex-1 overflow-hidden rounded-xl border border-[#2a3646] bg-[#101826] shadow-[0_18px_44px_rgba(3,8,15,0.24)] max-md:mx-1.5 max-md:mt-1.5 max-md:mb-0 max-md:rounded-[10px] max-md:pb-10">
       <iframe src="/rt/{{ sid }}?theme=dark&show=all" class="w-full h-full border-0" allow="autoplay; fullscreen"></iframe>
@@ -1781,7 +1810,9 @@
 
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return
-    document.querySelectorAll('.modal-overlay:not(.hidden)').forEach(m => m.classList.add('hidden'))
+    document.querySelectorAll('.modal-overlay:not(.hidden)').forEach(function (modal) {
+      if (modal.dataset.modalPending !== 'true') modal.classList.add('hidden')
+    })
   })
 
   document.addEventListener('DOMContentLoaded', function () {
@@ -2037,7 +2068,16 @@
       const MAX_FLOW_ITEMS = 150
       const flowContent = document.getElementById('flow-content')
       const flowCountEl = document.getElementById('flow-count')
-      const renderedStartTimes = new Set()
+      const flowEditModal = document.getElementById('flow-edit-modal')
+      const flowEditForm = document.getElementById('flow-edit-form')
+      const flowEditText = document.getElementById('flow-edit-text')
+      const flowEditStatus = document.getElementById('flow-edit-status')
+      const flowEditSubmit = document.getElementById('flow-edit-submit')
+      const flowEditSubmitLabel = document.getElementById('flow-edit-submit-label')
+      const flowEditSpinner = document.getElementById('flow-edit-spinner')
+      const flowEditCancel = document.getElementById('flow-edit-cancel')
+      const flowEditClose = document.getElementById('flow-edit-close')
+      const committedRows = new Map()
       let latestCommittedStartTime = -Infinity
       let partialEl = null
       // Children of partialEl, kept as refs so an update writes textContent only.
@@ -2051,6 +2091,8 @@
       // end_time of the partial currently on screen, so a translated partial that
       // lands after newer flow-only ones can't drag the line back to older text.
       let partialEndTime = 0
+      let editingStartTime = null
+      let editPending = false
 
       function updateCount() {
         if (flowCountEl) flowCountEl.textContent = segmentCount + (segmentCount === 1 ? ' segment' : ' segments')
@@ -2088,6 +2130,22 @@
         })
       }
 
+      function segmentKey(startTime) {
+        const numeric = Number(startTime)
+        return Number.isFinite(numeric) ? String(numeric) : String(startTime)
+      }
+
+      function replaceCommitted(segment) {
+        if (!segment) return false
+        const row = committedRows.get(segmentKey(segment.start_time))
+        const src = segment.result?.corrected || segment.text || ''
+        if (!row || !src) return false
+        row.dataset.src = src
+        const textEl = row.querySelector('.flex-1')
+        if (textEl) textEl.textContent = applyFlowDict(src)
+        return true
+      }
+
       // `fresh` marks a segment that arrived as its own live event. A segment
       // backfilled when the panel joins may be minutes old, so rendering latency
       // for that snapshot would produce a meaningless number.
@@ -2102,25 +2160,27 @@
           partialEl.remove(); partialEl = null; partialTextEl = null; partialLatencyEl = null
           partialEndTime = 0
         }
-        const p = document.createElement('p')
-        p.className = 'flow-item group flex items-start justify-between rounded-md px-[0.45rem] py-[0.32rem] text-[#cbd6e4]'
-        p.dataset.src = src
+        const row = document.createElement('button')
+        row.type = 'button'
+        row.className = 'flow-item group flex w-full items-start justify-between rounded-md px-[0.45rem] py-[0.32rem] text-left text-[#cbd6e4] transition-colors hover:bg-[#1d2938] hover:text-[#edf3fa] focus-visible:bg-[#1d2938] active:bg-[#273548]'
+        row.dataset.startTime = String(segment.start_time)
+        row.dataset.src = src
 
         const latencyHtml = fresh
           ? `<span class="text-[10px] text-gray-600 ml-2 tabular-nums">${segmentLatency(segment).toFixed(2)}s</span>`
           : ''
-        p.innerHTML = `<span class="flex-1">${escapeHtml(applyFlowDict(src))}</span>${latencyHtml}`
+        row.innerHTML = `<span class="flex-1">${escapeHtml(applyFlowDict(src))}</span>${latencyHtml}`
 
-        if (partialStartsAfter) flowContent.insertBefore(p, partialEl)
-        else flowContent.appendChild(p)
+        if (partialStartsAfter) flowContent.insertBefore(row, partialEl)
+        else flowContent.appendChild(row)
+        committedRows.set(segmentKey(segment.start_time), row)
         segmentCount++
-        // Remove oldest items to keep DOM size bounded
+        // Remove oldest items to keep DOM size bounded. The partial is always the
+        // last row, so anything evicted here is a committed row the Map still holds.
         while (flowContent.children.length > MAX_FLOW_ITEMS) {
-          flowContent.removeChild(flowContent.firstChild)
-        }
-        // Prevent the dedup Set from growing unboundedly
-        if (renderedStartTimes.size > MAX_FLOW_ITEMS * 2) {
-          renderedStartTimes.clear()
+          const oldest = flowContent.firstElementChild
+          if (oldest?.dataset.startTime) committedRows.delete(segmentKey(oldest.dataset.startTime))
+          oldest?.remove()
         }
         updateCount()
         scrollToBottom()
@@ -2164,15 +2224,93 @@
       }
 
       function renderCommitted(segment, fresh) {
-        if (!segment || renderedStartTimes.has(segment.start_time)) return
+        if (!segment) return
+        const key = segmentKey(segment.start_time)
+        if (committedRows.has(key)) return
         const startTime = Number(segment.start_time)
         if (!fresh && Number.isFinite(startTime) && startTime < latestCommittedStartTime) return
-        renderedStartTimes.add(segment.start_time)
         if (Number.isFinite(startTime)) {
           latestCommittedStartTime = Math.max(latestCommittedStartTime, startTime)
         }
         appendCommitted(segment, fresh)
       }
+
+      function setEditPending(pending) {
+        editPending = pending
+        flowEditModal.dataset.modalPending = pending ? 'true' : 'false'
+        flowEditForm.setAttribute('aria-busy', pending ? 'true' : 'false')
+        for (const control of [flowEditText, flowEditSubmit, flowEditCancel, flowEditClose]) {
+          control.disabled = pending
+        }
+        flowEditSpinner.classList.toggle('hidden', !pending)
+        flowEditSubmitLabel.textContent = pending ? 'Retranslating…' : 'Save & retranslate'
+        if (pending) flowEditStatus.textContent = 'Retranslating…'
+      }
+
+      function openFlowEditor(row) {
+        if (editPending) return
+        editingStartTime = Number(row.dataset.startTime)
+        if (!Number.isFinite(editingStartTime)) return
+        flowEditText.value = row.dataset.src || ''
+        flowEditStatus.textContent = ''
+        flowEditModal.classList.remove('hidden')
+        setTimeout(() => {
+          flowEditText.focus()
+          flowEditText.select()
+        }, 0)
+      }
+
+      function closeFlowEditor() {
+        if (editPending) return
+        flowEditModal.classList.add('hidden')
+        flowEditStatus.textContent = ''
+        editingStartTime = null
+      }
+
+      flowContent.addEventListener('click', function (event) {
+        const row = event.target.closest('button.flow-item')
+        if (row && flowContent.contains(row)) openFlowEditor(row)
+      })
+      flowEditCancel.addEventListener('click', closeFlowEditor)
+      flowEditClose.addEventListener('click', closeFlowEditor)
+      flowEditModal.addEventListener('mousedown', function (event) {
+        if (event.target === flowEditModal && !editPending) closeFlowEditor()
+      })
+
+      flowEditForm.addEventListener('submit', async function (event) {
+        event.preventDefault()
+        if (editPending || editingStartTime === null) return
+        const corrected = flowEditText.value.trim()
+        if (!corrected) {
+          flowEditStatus.textContent = 'Source text is required.'
+          flowEditText.focus()
+          return
+        }
+
+        setEditPending(true)
+        try {
+          const response = await fetch(`/api/session/${encodeURIComponent(sessionId)}/segments/retranslate`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              start_time: editingStartTime,
+              corrected: corrected,
+            }),
+          })
+          const payload = await response.json().catch(() => ({}))
+          if (!response.ok) {
+            throw new Error(payload.detail || `Retranslation failed (${response.status})`)
+          }
+          if (!payload.segment) throw new Error('Retranslation returned no segment.')
+          replaceCommitted(payload.segment)
+          setEditPending(false)
+          closeFlowEditor()
+        } catch (error) {
+          setEditPending(false)
+          flowEditStatus.textContent = error.message || 'Retranslation failed.'
+        }
+      })
 
       socket.on('transcription_update', function (data) {
         if (data.partial) {
@@ -2181,6 +2319,11 @@
           updatePartial(null)
           renderCommitted(data, true)
         }
+      })
+
+      socket.on('segment_updated', function (data) {
+        if (!data || data.session_id !== sessionId) return
+        replaceCommitted(data.segment)
       })
 
       // Fresh joins and reconnects receive one latest committed snapshot instead
