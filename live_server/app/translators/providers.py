@@ -71,13 +71,11 @@ async def _post_with_retry(
     generateContent and OpenAI's Responses API, which need different URLs and
     auth headers but the same retry policy.
 
-    With no *client* the shared hot-path client is used, and a transport error
-    replaces it (a half-dead connection would otherwise fail every later call).
-    A caller that passes its own client owns it: a slow request of its own must
-    not tear down the connections the live translation path is using.
+    With no *client* the shared hot-path client is used. A caller that passes its
+    own client keeps the two apart: a slow request of its own must not fight the
+    hot path's read budget.
     """
-    owned = client is None
-    if owned:
+    if client is None:
         client = get_async_client()
     for attempt in range(max_retries + 1):
         if attempt:
@@ -98,10 +96,21 @@ async def _post_with_retry(
                 ", giving up" if attempt == max_retries else ", retrying",
             )
         except Exception as e:
-            log_exception(logger, e, f"HTTP request error in {label} (attempt {attempt + 1})")
-            if owned:
-                await close_async_client()
-                client = get_async_client()
+            # Don't reset the shared client here. httpcore already drops a
+            # connection that raised out of its pool, so there is no half-dead
+            # connection left to clear — but closing the client would abort every
+            # *other* request in flight on it, and languages are translated
+            # concurrently, so one stale keepalive would turn into a burst of
+            # failures that each close the client again. A retried attempt is
+            # self-healing and only worth one line; keep the traceback for the
+            # attempt that actually gives up.
+            if attempt == max_retries:
+                log_exception(logger, e, f"HTTP request error in {label}, giving up")
+            else:
+                logger.warning(
+                    "%s attempt %d/%d failed with %s, retrying",
+                    label, attempt + 1, max_retries + 1, type(e).__name__,
+                )
     return None
 
 
