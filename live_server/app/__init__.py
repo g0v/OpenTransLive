@@ -1269,11 +1269,12 @@ def _get_room_co_owner_emails(room: dict) -> list[str]:
 
 
 async def _require_room_owner(request: Request, room: dict) -> None:
-    """Raise 403 if the room is owned and the current user is not the owner, a co-owner, or a site admin."""
+    """Allow the owner, a co-owner, or a site admin authenticated by cookie or API key."""
     owner_email = await _get_room_owner_email(room)
     if not owner_email:
         return
-    if not await _owns_room(_get_session_email(request), room):
+    ident = await get_identity(request)
+    if not ident or not await _owns_room(ident.email, room):
         raise HTTPException(status_code=403, detail="This session is owned by another user.")
 
 
