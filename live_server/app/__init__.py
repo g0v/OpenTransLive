@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
 
+import anyio
 import dotenv
 import redis.asyncio as redis
 import socketio
@@ -616,6 +617,11 @@ TRANSCRIPTION_TTL = 3600
 TRANSCRIPTION_ZSET_MAX = 250
 SSE_RETRY_MS = 3000
 SSE_HEARTBEAT_SECONDS = 15
+# Ceiling on the shielded disconnect cleanup below. redis_client is built without
+# a socket timeout, so an unresponsive Redis would otherwise pin the cancelled
+# request task and its connection forever -- the shield makes those awaits
+# uninterruptible by design.
+SSE_CLEANUP_TIMEOUT_SECONDS = 5
 VIEWER_PRESENCE_TTL = 35
 VIEWER_PRESENCE_REFRESH = 10
 
@@ -938,14 +944,20 @@ async def _session_sse_stream(
 
             yield _format_sse(payload)
     finally:
-        count = await _viewer_presence_op(sid, remove=viewer_id, label="viewer presence leave")
-        if count != last_emitted_count:
-            await _emit_viewer_count(sid, count)
-        try:
-            await pubsub.unsubscribe(channel)
-            await pubsub.close()
-        except Exception as e:
-            log_exception(logger, e, f"Redis pubsub close error for {_hash_token(sid)}")
+        # StreamingResponse cancels this generator inside an AnyIO cancel scope.
+        # Without a shield, the first cleanup await is cancelled too, leaking one
+        # subscribed Redis connection for every disconnected EventSource.
+        with anyio.move_on_after(SSE_CLEANUP_TIMEOUT_SECONDS, shield=True):
+            try:
+                # Closing the connection unsubscribes it server-side; a separate
+                # UNSUBSCRIBE round trip only gives cancellation another leak window.
+                await pubsub.aclose()
+            except Exception as e:
+                log_exception(logger, e, f"Redis pubsub close error for {_hash_token(sid)}")
+
+            count = await _viewer_presence_op(sid, remove=viewer_id, label="viewer presence leave")
+            if count != last_emitted_count:
+                await _emit_viewer_count(sid, count)
 
 def validate_query_param(value: str, param_name: str = "parameter") -> tuple[bool, str]:
     """Validate user input to prevent NoSQL injection. Returns (is_valid, error_message)."""
@@ -1323,11 +1335,12 @@ def _get_room_co_owner_emails(room: dict) -> list[str]:
 
 
 async def _require_room_owner(request: Request, room: dict) -> None:
-    """Raise 403 if the room is owned and the current user is not the owner, a co-owner, or a site admin."""
+    """Allow the owner, a co-owner, or a site admin authenticated by cookie or API key."""
     owner_email = await _get_room_owner_email(room)
     if not owner_email:
         return
-    if not await _owns_room(_get_session_email(request), room):
+    ident = await get_identity(request)
+    if not ident or not await _owns_room(ident.email, room):
         raise HTTPException(status_code=403, detail="This session is owned by another user.")
 
 
