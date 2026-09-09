@@ -779,6 +779,11 @@ async def _publish_display_dictionary_update(sid: str, language_maps: dict) -> N
     )
 
 
+async def _publish_viewer_clear(sid: str) -> None:
+    """Tell currently connected viewers to clear local display text."""
+    await _publish_transcription_update(sid, {"__sse_event": "viewer_clear"})
+
+
 async def _iter_replay_transcription_events(sid: str, last_event_id: float) -> AsyncIterator[dict]:
     zset_key = f"transcription:{sid}:list"
     try:
@@ -864,6 +869,10 @@ async def _session_sse_stream(
                     {"language_maps": payload.get("language_maps") or {}},
                     event="display_dictionary_update",
                 )
+                continue
+
+            if payload.get("__sse_event") == "viewer_clear":
+                yield _format_sse({}, event="viewer_clear")
                 continue
 
             event_id_raw = payload.get("start_time")
@@ -1675,6 +1684,15 @@ async def verify_otp_endpoint(request: Request):
 
     is_admin = _is_admin_email(email)
     return {"status": "ok", "is_admin": is_admin, "redirect": "/dashboard" if is_admin else "/user-dashboard"}
+
+
+@app.post("/api/session/{sid}/viewers/clear", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def clear_session_viewers_endpoint(request: Request, sid: str):
+    """Clear text on connected viewers without changing stored transcriptions."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _verify_session_lock_holder(request, sid)
+    await _publish_viewer_clear(sid)
+    return {"status": "ok"}
 
 
 @app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])

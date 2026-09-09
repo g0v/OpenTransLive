@@ -123,6 +123,16 @@
             <iconify-icon icon="ph:pencil-simple" width="14" height="14" class="flex-shrink-0"></iconify-icon>
           </button>
         </div>
+        <!-- Ephemeral viewer display control -->
+        <div class="toolbar-group">
+          <span class="toolbar-label">Viewers</span>
+          <button id="viewer-clear-btn" type="button"
+            class="panel-add-btn inline-flex min-w-28 items-center justify-center gap-1.5 disabled:cursor-wait disabled:opacity-60"
+            title="Temporarily clear text on all connected viewers">
+            <iconify-icon icon="ph:eraser" width="14" height="14"></iconify-icon>
+            <span id="viewer-clear-label" aria-live="polite">Clear screens</span>
+          </button>
+        </div>
         <!-- Translate Tone -->
         <div class="toolbar-group">
           <span class="toolbar-label">Tone</span>
@@ -1929,6 +1939,32 @@
     setTimeout(() => feedback.classList.add('hidden'), 1800)
   }
 
+  async function clearViewerScreens() {
+    const btn = document.getElementById('viewer-clear-btn')
+    const label = document.getElementById('viewer-clear-label')
+    btn.disabled = true
+    label.textContent = 'Clearing...'
+    try {
+      const res = await fetch(`/api/session/${sid}/viewers/clear`, {
+        method: 'POST',
+        credentials: 'same-origin'
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || `Request failed (${res.status})`)
+      }
+      label.textContent = 'Cleared'
+    } catch (error) {
+      label.textContent = 'Failed'
+      console.error('Failed to clear viewer screens:', error)
+    } finally {
+      setTimeout(() => {
+        label.textContent = 'Clear screens'
+        btn.disabled = false
+      }, 1500)
+    }
+  }
+
   // Wire a popup modal to a trigger button. Open via button click, then run the
   // optional onOpen callback; close via backdrop, close button, or Escape below.
   function setupModal(modal, btn, onOpen) {
@@ -1966,6 +2002,7 @@
       btn.addEventListener('click', () => applyViewerUrlParam(btn))
     })
     document.getElementById('copy-url-btn').addEventListener('click', copyViewerUrl)
+    document.getElementById('viewer-clear-btn').addEventListener('click', clearViewerScreens)
 
     // Wire up the engine and detect language selects. The language options depend on
     // the engine, so loadSttProvider populates them and only then is the saved code

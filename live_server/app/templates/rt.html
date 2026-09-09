@@ -1110,8 +1110,9 @@
     const existing = historyEl._items || [];
 
     // Align existing to newItems: find how many to drop from the start so
-    // existing.slice(dropFromStart) is a prefix of newItems.
-    let dropFromStart = 0;
+    // existing.slice(dropFromStart) is a prefix of newItems. An empty target
+    // must drop everything rather than matching every list as a vacuous prefix.
+    let dropFromStart = newItems.length === 0 ? existing.length : 0;
     while (dropFromStart <= existing.length) {
       const tail = existing.length - dropFromStart;
       const compareLen = Math.min(tail, newItems.length);
@@ -1148,6 +1149,11 @@
         removedFromStartHeight += historyEl.firstChild.getBoundingClientRect().height;
         historyEl.removeChild(historyEl.firstChild);
       }
+    }
+
+    if (newItems.length === 0) {
+      historyEl._leadingPadPx = 0;
+      historyEl.style.paddingLeft = '';
     }
 
     const retained = existing.length - dropFromStart;
@@ -1480,6 +1486,14 @@
       refreshView();
     }
 
+    function handleViewerClear() {
+      transcriptionsData["transcriptions"] = [];
+      transcriptionsData["partial"] = null;
+      // Keep languageOrder and the existing cards intact. Re-discovering/pruning
+      // from an empty buffer would collapse the configured language grid.
+      refreshView();
+    }
+
     function scheduleReconnect() {
       if (pageUnloading || reconnectTimer) return;
       reconnected = true;
@@ -1504,6 +1518,7 @@
       };
 
       stream.addEventListener('transcription_update', handleTranscriptionUpdate);
+      stream.addEventListener('viewer_clear', handleViewerClear);
       stream.addEventListener('display_dictionary_update', function (event) {
         const data = JSON.parse(event.data);
         const next = data && data.language_maps ? data.language_maps : {};
