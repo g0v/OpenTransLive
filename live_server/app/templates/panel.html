@@ -39,9 +39,6 @@
       </a>
       <a href="/login" class="nav-link">Login</a>
       {% endif %}
-      <button id="info-btn" type="button" class="nav-link inline-flex items-center gap-1" aria-label="Viewer URL parameters">
-        <iconify-icon icon="ph:info" width="13" height="13"></iconify-icon><span class="max-[420px]:hidden">Viewer URL</span>
-      </button>
     </div>
     <div id="header-toolbar-wrap" class="max-md:absolute max-md:inset-x-0 max-md:top-full max-md:z-50 max-md:grid max-md:grid-rows-[0fr] max-md:transition-[grid-template-rows] max-md:duration-200 max-md:[.header-open_&]:grid-rows-[1fr] max-md:[.header-open_&]:shadow-xl">
       <div id="header-toolbar" class="flex flex-wrap items-center gap-1.5 border-b border-[#2a3646] bg-[#182230] px-2 py-1.5 md:[&_.toolbar-group]:shrink-0 md:[&_.toolbar-group]:gap-1.5 md:[&_.toolbar-group]:p-0.5 md:[&_.toolbar-label]:pl-1.5 md:[&_.toolbar-label]:text-[0.65rem] max-md:min-h-0 max-md:max-h-[min(68vh,34rem)] max-md:flex-wrap max-md:content-start max-md:overflow-hidden max-md:border-x max-md:border-[#2a3646] max-md:py-0 max-md:transition-[padding] max-md:duration-200 max-md:[.header-open_&]:overflow-y-auto max-md:[.header-open_&]:py-2 max-md:[&_.toolbar-group]:w-full max-md:[&_.toolbar-group]:justify-between">
@@ -126,6 +123,12 @@
         <!-- Ephemeral viewer display control -->
         <div class="toolbar-group">
           <span class="toolbar-label">Viewers</span>
+          <button id="info-btn" type="button"
+            class="panel-add-btn inline-flex min-w-24 items-center justify-center gap-1.5"
+            aria-label="Viewer URL parameters">
+            <iconify-icon icon="ph:info" width="14" height="14"></iconify-icon>
+            <span>Viewer URL</span>
+          </button>
           <button id="viewer-clear-btn" type="button"
             class="panel-add-btn inline-flex min-w-28 items-center justify-center gap-1.5 disabled:cursor-wait disabled:opacity-60"
             title="Temporarily clear text on all connected viewers">
