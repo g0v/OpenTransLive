@@ -39,6 +39,9 @@
       </a>
       <a href="/login" class="nav-link">Login</a>
       {% endif %}
+      <button id="info-btn" type="button" class="nav-link inline-flex items-center gap-1" aria-label="Viewer URL parameters">
+        <iconify-icon icon="ph:info" width="13" height="13"></iconify-icon><span class="max-[420px]:hidden">Viewer URL</span>
+      </button>
     </div>
     <div id="header-toolbar-wrap" class="max-md:absolute max-md:inset-x-0 max-md:top-full max-md:z-50 max-md:grid max-md:grid-rows-[0fr] max-md:transition-[grid-template-rows] max-md:duration-200 max-md:[.header-open_&]:grid-rows-[1fr] max-md:[.header-open_&]:shadow-xl">
       <div id="header-toolbar" class="flex flex-wrap items-center gap-1.5 border-b border-[#2a3646] bg-[#182230] px-2 py-1.5 md:[&_.toolbar-group]:shrink-0 md:[&_.toolbar-group]:gap-1.5 md:[&_.toolbar-group]:p-0.5 md:[&_.toolbar-label]:pl-1.5 md:[&_.toolbar-label]:text-[0.65rem] max-md:min-h-0 max-md:max-h-[min(68vh,34rem)] max-md:flex-wrap max-md:content-start max-md:overflow-hidden max-md:border-x max-md:border-[#2a3646] max-md:py-0 max-md:transition-[padding] max-md:duration-200 max-md:[.header-open_&]:overflow-y-auto max-md:[.header-open_&]:py-2 max-md:[&_.toolbar-group]:w-full max-md:[&_.toolbar-group]:justify-between">
@@ -317,9 +320,87 @@
   </div>
   {% endif %}
 
+  <!-- Viewer URL parameters modal -->
+  <div id="info-modal" class="modal-overlay hidden fixed inset-0 z-[100] flex items-center justify-center bg-[rgba(3,7,13,0.72)] p-4 backdrop-blur-sm" role="dialog" aria-modal="true"
+    aria-labelledby="info-modal-title">
+    <div class="modal-panel flex max-h-[85vh] w-full max-w-[34rem] flex-col overflow-hidden rounded-xl border border-[#3b4a5d] bg-[#182230] shadow-[0_24px_72px_rgba(3,8,15,0.48)]">
+      <div class="modal-header flex min-h-[52px] shrink-0 items-center gap-2 border-b border-[#2a3646] px-4 py-3">
+        <div class="min-w-0 flex-1">
+          <h2 id="info-modal-title" class="modal-title m-0 text-base font-bold text-[#edf3fa]">Viewer URL parameters</h2>
+          <p class="mt-0.5 text-[11px] leading-snug text-[#9eacbf]">Customize the public transcript URL and preview.</p>
+        </div>
+        <button type="button" class="modal-close-btn inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-[#8d9aae] transition-colors hover:bg-[#273548] hover:text-[#edf3fa]" data-modal-close aria-label="Close">
+          <iconify-icon icon="ph:x" width="20" height="20"></iconify-icon>
+        </button>
+      </div>
+      <div class="modal-body min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+        <section>
+          <div class="mb-2 flex items-center justify-between gap-2">
+            <code class="viewer-param-code rounded-md px-2 py-0.5 font-mono text-xs">font-size</code>
+            <span class="text-xs text-[#9eacbf]">default: 1.25rem</span>
+          </div>
+          <p class="mb-2 text-sm text-[#9eacbf]">Controls the transcript text size. Accepts any CSS length value or a bare number treated as pixels.</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button type="button" class="viewer-param-btn" data-viewer-param="font-size" data-value="1rem">1rem</button>
+            <button type="button" class="viewer-param-btn" data-viewer-param="font-size" data-value="1.25rem" data-default>1.25rem</button>
+            <button type="button" class="viewer-param-btn" data-viewer-param="font-size" data-value="1.5rem">1.5rem</button>
+            <button type="button" class="viewer-param-btn" data-viewer-param="font-size" data-value="2rem">2rem</button>
+            <button type="button" class="viewer-param-btn" data-viewer-param="font-size" data-value="3rem">3rem</button>
+            <button type="button" class="viewer-param-btn" data-viewer-param="font-size" data-value="24px">24px</button>
+          </div>
+        </section>
+
+        <div class="border-t border-[#2a3646]"></div>
+
+        <section>
+          <div class="mb-2 flex items-center justify-between gap-2">
+            <code class="viewer-param-code rounded-md px-2 py-0.5 font-mono text-xs">theme</code>
+            <span class="text-xs text-[#9eacbf]">default: light</span>
+          </div>
+          <p class="mb-2 text-sm text-[#9eacbf]">Sets the viewer color scheme.</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button type="button" class="viewer-param-btn" data-viewer-param="theme" data-value="light" data-default>light</button>
+            <button type="button" class="viewer-param-btn" data-viewer-param="theme" data-value="dark">dark</button>
+            <button type="button" class="viewer-param-btn" data-viewer-param="theme" data-value="high-contrast">high-contrast</button>
+          </div>
+        </section>
+
+        <div class="border-t border-[#2a3646]"></div>
+
+        <section>
+          <div class="mb-2 flex items-center justify-between gap-2">
+            <code class="viewer-param-code rounded-md px-2 py-0.5 font-mono text-xs">show</code>
+            <span class="text-xs text-[#9eacbf]">default: all</span>
+          </div>
+          <p class="mb-2 text-sm text-[#9eacbf]">Comma-separated language codes to display. Omit the parameter to show every language.</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button type="button" class="viewer-param-btn" data-viewer-param="show" data-value="" data-default>all</button>
+            <button type="button" class="viewer-param-btn" data-viewer-param="show" data-value="en-US">en</button>
+            <button type="button" class="viewer-param-btn" data-viewer-param="show" data-value="zh-Hant-TW">zh</button>
+            <button type="button" class="viewer-param-btn" data-viewer-param="show" data-value="ja-JP">ja</button>
+            <button type="button" class="viewer-param-btn" data-viewer-param="show" data-value="en-US,zh-Hant-TW">en,zh</button>
+          </div>
+        </section>
+
+        <div class="border-t border-[#2a3646]"></div>
+
+        <section>
+          <div class="mb-1.5 text-xs font-semibold text-[#9eacbf]">Viewer URL</div>
+          <div class="flex items-start gap-2">
+            <code id="current-url-display" class="viewer-param-code min-w-0 flex-1 break-all rounded-lg px-2.5 py-2 font-mono text-xs"></code>
+            <button id="copy-url-btn" type="button" class="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-[#aebed2] transition-colors hover:bg-[#273548] hover:text-[#edf3fa]" title="Copy URL" aria-label="Copy viewer URL">
+              <iconify-icon icon="ph:copy" width="16" height="16"></iconify-icon>
+            </button>
+          </div>
+          <div id="copy-feedback" class="mt-1 hidden text-right text-xs text-[#9eacbf]" role="status" aria-live="polite">Copied!</div>
+        </section>
+      </div>
+    </div>
+  </div>
+
   <div class="flex-1 flex min-h-0">
     <div id="viewer-wrap" class="relative m-1 min-w-0 flex-1 overflow-hidden rounded-xl border border-[#2a3646] bg-[#101826] shadow-[0_18px_44px_rgba(3,8,15,0.24)] max-md:mx-1.5 max-md:mt-1.5 max-md:mb-0 max-md:rounded-[10px] max-md:pb-10">
-      <iframe src="/rt/{{ sid }}?theme=dark&show=all" class="w-full h-full border-0" allow="autoplay; fullscreen"></iframe>
+      <iframe id="viewer-frame" src="/rt/{{ sid }}?theme=dark&show=all" class="w-full h-full border-0" allow="autoplay; fullscreen"></iframe>
     </div>
     <!-- Flow panel (side column on desktop, bottom drawer on mobile) -->
     <div id="flow-panel" class="mr-1 my-1 flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border border-[#2a3646] bg-[#111925] max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-40 max-md:m-0 max-md:grid max-md:max-h-[60vh] max-md:w-auto max-md:grid-rows-[auto_0fr] max-md:rounded-t-[10px] max-md:rounded-b-none max-md:border-x-0 max-md:border-b-0 max-md:shadow-[0_-4px_12px_rgba(0,0,0,0.4)] max-md:transition-[grid-template-rows] max-md:duration-200 max-md:[&.flow-open]:grid-rows-[auto_1fr]">
@@ -428,6 +509,36 @@
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
     }
+  }
+
+  .viewer-param-code {
+    background: #111a27;
+    color: #9fc4fa;
+    border: 1px solid #2a3646;
+  }
+
+  .viewer-param-btn {
+    border: 1px solid #3b4a5d;
+    border-radius: 0.375rem;
+    background: #202b3a;
+    color: #bdc9d7;
+    padding: 0.25rem 0.625rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+  }
+
+  .viewer-param-btn:hover {
+    background: #293749;
+    border-color: #52647a;
+    color: #edf3fa;
+  }
+
+  .viewer-param-btn.active-param {
+    background: #17355c;
+    border-color: #568bd2;
+    color: #b9d8ff;
   }
 
 </style>
@@ -1756,15 +1867,78 @@
   // primary's timer is started lazily once loadCoOwners() finds co-owners.
   if (!isPrimaryOwner) startSettingsSync()
 
-  // Wire a popup modal to a trigger button. Open via button click, close via
-  // backdrop click, the close button, or the global Escape handler below.
-  function setupModal(modal, btn) {
+  const viewerParamButtons = document.querySelectorAll('[data-viewer-param]')
+
+  function getViewerUrl() {
+    const frame = document.getElementById('viewer-frame')
+    try {
+      const liveUrl = frame.contentWindow?.location.href
+      if (liveUrl && liveUrl !== 'about:blank') return new URL(liveUrl)
+    } catch {
+      // Fall back to the configured source if the preview is not same-origin.
+    }
+    return new URL(frame.src)
+  }
+
+  function refreshViewerUrlControls(url = getViewerUrl()) {
+    document.getElementById('current-url-display').textContent = url.href
+    viewerParamButtons.forEach(btn => {
+      const value = url.searchParams.get(btn.dataset.viewerParam)
+      const active = value === btn.dataset.value || (value === null && btn.hasAttribute('data-default'))
+      btn.classList.toggle('active-param', active)
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false')
+    })
+  }
+
+  function applyViewerUrlParam(btn) {
+    const url = getViewerUrl()
+    const param = btn.dataset.viewerParam
+    const value = btn.dataset.value
+    if ((param === 'theme' && value === 'light') || (param === 'show' && value === '')) {
+      url.searchParams.delete(param)
+    } else {
+      url.searchParams.set(param, value)
+    }
+    document.getElementById('viewer-frame').src = url.href
+    refreshViewerUrlControls(url)
+  }
+
+  async function copyText(text, fallbackElement = null) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return
+    } catch {
+      // Clipboard API requires a secure context; use a selected element as fallback.
+    }
+    const element = fallbackElement || document.createElement('textarea')
+    if (!fallbackElement) {
+      element.value = text
+      element.style.position = 'fixed'
+      element.style.opacity = '0'
+      document.body.appendChild(element)
+    }
+    element.select()
+    document.execCommand('copy')
+    if (!fallbackElement) element.remove()
+  }
+
+  async function copyViewerUrl() {
+    await copyText(getViewerUrl().href)
+    const feedback = document.getElementById('copy-feedback')
+    feedback.classList.remove('hidden')
+    setTimeout(() => feedback.classList.add('hidden'), 1800)
+  }
+
+  // Wire a popup modal to a trigger button. Open via button click, then run the
+  // optional onOpen callback; close via backdrop, close button, or Escape below.
+  function setupModal(modal, btn, onOpen) {
     if (!modal || !btn) return
     btn.addEventListener('click', function (e) {
       e.stopPropagation()
       const willOpen = modal.classList.contains('hidden')
       modal.classList.toggle('hidden')
       if (willOpen) {
+        if (onOpen) onOpen()
         const firstInput = modal.querySelector('input:not([type="hidden"])')
         if (firstInput) setTimeout(() => firstInput.focus(), 0)
       }
@@ -1785,6 +1959,14 @@
   })
 
   document.addEventListener('DOMContentLoaded', function () {
+    const infoModal = document.getElementById('info-modal')
+    const infoBtn = document.getElementById('info-btn')
+    setupModal(infoModal, infoBtn, refreshViewerUrlControls)
+    viewerParamButtons.forEach(btn => {
+      btn.addEventListener('click', () => applyViewerUrlParam(btn))
+    })
+    document.getElementById('copy-url-btn').addEventListener('click', copyViewerUrl)
+
     // Wire up the engine and detect language selects. The language options depend on
     // the engine, so loadSttProvider populates them and only then is the saved code
     // applied — hence the sequencing here rather than two independent loads.
@@ -1971,12 +2153,7 @@
     const inputs = Array.from(document.getElementsByClassName('copyable-input'))
     inputs.forEach(element => {
       element.addEventListener("click", async function () {
-        try {
-          await navigator.clipboard.writeText(element.value)
-        } catch {
-          element.select()
-          document.execCommand('copy')
-        }
+        await copyText(element.value, element)
         const origBg = element.style.backgroundColor
         element.style.backgroundColor = 'rgb(34, 197, 94)'
         setTimeout(() => { element.style.backgroundColor = origBg }, 200)

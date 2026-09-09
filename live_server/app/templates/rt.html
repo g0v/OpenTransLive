@@ -60,10 +60,6 @@
 
       <!-- Action buttons -->
       <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
-        <!-- Info / help button -->
-        <button id="info-btn" class="icon-btn icon-btn-sm" aria-label="URL parameters help" title="URL parameters">
-          <iconify-icon icon="ph:info" width="15" height="15"></iconify-icon>
-        </button>
         <!-- QR code button -->
         <div id="qr-area" class="relative">
           <button id="qr-btn" class="icon-btn icon-btn-sm" aria-label="Show QR code" aria-expanded="false"
@@ -105,111 +101,6 @@
     </div>
   </div>
 
-  <!-- Info popup (modal overlay) -->
-  <div id="info-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center" role="dialog"
-    aria-modal="true" aria-labelledby="info-modal-title">
-    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" id="info-backdrop"></div>
-    <div class="info-modal-bg relative z-10 mx-4 w-full max-w-lg overflow-hidden rounded-xl border border-[var(--rt-border-strong)] bg-[var(--rt-surface)] text-[var(--rt-text)] shadow-[0_24px_70px_color-mix(in_srgb,var(--rt-canvas)_82%,transparent)]">
-      <!-- Header -->
-      <div class="flex items-center justify-between px-5 py-4 border-b border-divider">
-        <div>
-          <h2 id="info-modal-title" class="text-base font-semibold">URL Parameters</h2>
-          <p class="mt-0.5 text-xs text-[var(--rt-muted)]">Customize the viewer by adding these parameters to the URL</p>
-        </div>
-        <button id="info-close" class="icon-btn icon-btn-md" aria-label="Close">
-          <iconify-icon icon="ph:x" width="16" height="16"></iconify-icon>
-        </button>
-      </div>
-
-      <!-- Body -->
-      <div class="px-5 py-4 space-y-4 max-h-[70vh] overflow-y-auto">
-
-        <!-- font-size -->
-        <div>
-          <div class="param-header">
-            <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">font-size</code>
-            <span class="text-xs text-[var(--rt-muted)]">default: 1.25rem</span>
-          </div>
-          <p class="mb-2 text-sm text-[var(--rt-muted)]">Controls the text size of the transcript. Accepts any CSS length value or a
-            bare number (treated as pixels).</p>
-          <div class="param-btn-row">
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
-              data-value="1rem">1rem</button>
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
-              data-value="1.25rem">1.25rem</button>
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
-              data-value="1.5rem">1.5rem</button>
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
-              data-value="2rem">2rem</button>
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
-              data-value="3rem">3rem</button>
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="font-size"
-              data-value="24px">24px</button>
-          </div>
-        </div>
-
-        <div class="border-t border-divider"></div>
-
-        <!-- theme -->
-        <div>
-          <div class="param-header">
-            <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">theme</code>
-            <span class="text-xs text-[var(--rt-muted)]">default: light</span>
-          </div>
-          <p class="mb-2 text-sm text-[var(--rt-muted)]">Sets the color scheme of the viewer.</p>
-          <div class="param-btn-row">
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="theme"
-              data-value="light">light</button>
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="theme"
-              data-value="dark">dark</button>
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="theme"
-              data-value="high-contrast">high-contrast</button>
-          </div>
-        </div>
-
-        <div class="border-t border-divider"></div>
-
-        <!-- show -->
-        <div>
-          <div class="param-header">
-            <code class="text-xs font-mono px-2 py-0.5 rounded-md param-code">show</code>
-            <span class="text-xs text-[var(--rt-muted)]">default: all</span>
-          </div>
-          <p class="mb-2 text-sm text-[var(--rt-muted)]">Comma-separated language codes to display. Omit to show every language. Use
-            the language settings popup to toggle visibility and order interactively.</p>
-          <div class="param-btn-row">
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="show"
-              data-value="">all</button>
-            <span class="self-center text-xs text-[var(--rt-muted)]">or codes:</span>
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="show"
-              data-value="en-US">en</button>
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="show"
-              data-value="zh-Hant-TW">zh</button>
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="show"
-              data-value="ja-JP">ja</button>
-            <button class="param-example-btn text-xs px-2.5 py-1 rounded-md font-mono" data-param="show"
-              data-value="en-US,zh-Hant-TW">en,zh</button>
-          </div>
-        </div>
-
-        <div class="border-t border-divider"></div>
-
-        <!-- current URL preview -->
-        <div>
-          <div class="mb-1.5 text-xs font-semibold text-[var(--rt-muted)]">Current URL</div>
-          <div class="copyable-row">
-            <code id="current-url-display"
-              class="text-xs font-mono break-all flex-1 px-2.5 py-2 rounded-lg param-code"></code>
-            <button id="copy-url-btn" class="icon-btn shrink-0 icon-btn-md" title="Copy URL">
-              <iconify-icon icon="ph:copy" width="15" height="15"></iconify-icon>
-            </button>
-          </div>
-          <div id="copy-feedback" class="mt-1 hidden text-right text-xs text-[var(--rt-muted)]">Copied!</div>
-        </div>
-
-      </div>
-    </div>
-  </div>
 
   <!-- Footer -->
   <footer class="viewer-footer flex min-h-8 shrink-0 flex-wrap items-center justify-center gap-y-1 overflow-x-auto border-t border-[var(--rt-border)] bg-[var(--rt-surface)] px-4 text-xs text-[var(--rt-muted)] [scrollbar-width:none] max-md:flex-nowrap max-md:justify-start">
@@ -331,27 +222,6 @@
     color: #111827;
   }
 
-  .param-code {
-    background-color: #f3f4f6;
-    color: #7c3aed;
-  }
-
-  .param-example-btn {
-    background-color: #f3f4f6;
-    color: #374151;
-    border: 1px solid #e5e7eb;
-    transition: background-color 0.12s;
-  }
-
-  .param-example-btn:hover {
-    background-color: #e5e7eb;
-  }
-
-  .param-example-btn.active-param {
-    background-color: #dbeafe;
-    color: #1d4ed8;
-    border-color: #93c5fd;
-  }
 
   .grid-lang-box {
     border: 1.5px solid #e5e7eb;
@@ -433,26 +303,6 @@
     color: #e2e8f0;
   }
 
-  #app-root.theme-dark .param-code {
-    background-color: #0f172a;
-    color: #a78bfa;
-  }
-
-  #app-root.theme-dark .param-example-btn {
-    background-color: #1e293b;
-    color: #94a3b8;
-    border-color: #334155;
-  }
-
-  #app-root.theme-dark .param-example-btn:hover {
-    background-color: #334155;
-  }
-
-  #app-root.theme-dark .param-example-btn.active-param {
-    background-color: #1e3a5f;
-    color: #60a5fa;
-    border-color: #3b82f6;
-  }
 
   #app-root.theme-dark .grid-lang-box {
     border-color: #334155;
@@ -533,26 +383,6 @@
     color: #ffffff;
   }
 
-  #app-root.theme-high-contrast .param-code {
-    background-color: #111;
-    color: #ffff00;
-  }
-
-  #app-root.theme-high-contrast .param-example-btn {
-    background-color: #111;
-    color: #ffffff;
-    border-color: #555;
-  }
-
-  #app-root.theme-high-contrast .param-example-btn:hover {
-    background-color: #222;
-  }
-
-  #app-root.theme-high-contrast .param-example-btn.active-param {
-    background-color: #333;
-    color: #ffff00;
-    border-color: #ffff00;
-  }
 
   #app-root.theme-high-contrast .grid-lang-box {
     border-color: #ffff00;
@@ -892,13 +722,8 @@
       url.searchParams.set(key, value);
     }
     window.history.replaceState({}, '', url);
-    updateCurrentUrlDisplay();
   }
 
-  function updateCurrentUrlDisplay() {
-    const el = document.getElementById('current-url-display');
-    if (el) el.textContent = window.location.href;
-  }
 
   // ------------------------------------------------------------------ //
   // QR code popup                                                       //
@@ -960,55 +785,6 @@
     }
   });
 
-  // ------------------------------------------------------------------ //
-  // Info modal                                                          //
-  // ------------------------------------------------------------------ //
-  const infoModal = document.getElementById('info-modal');
-  const infoButton = document.getElementById('info-btn');
-
-  function closeInfoModal() {
-    infoModal.classList.add('hidden');
-  }
-
-  infoButton.addEventListener('click', () => {
-    infoModal.classList.remove('hidden');
-    updateCurrentUrlDisplay();
-  });
-  document.getElementById('info-close').addEventListener('click', closeInfoModal);
-  document.getElementById('info-backdrop').addEventListener('click', closeInfoModal);
-
-  // Copy URL button
-  document.getElementById('copy-url-btn').addEventListener('click', () => {
-    navigator.clipboard.writeText(window.location.href).then(() => {
-      const fb = document.getElementById('copy-feedback');
-      fb.classList.remove('hidden');
-      setTimeout(() => fb.classList.add('hidden'), 1800);
-    });
-  });
-
-  // Param example buttons: apply the param and highlight the button
-  document.querySelectorAll('.param-example-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const param = btn.dataset.param;
-      const value = btn.dataset.value;
-      // Apply the param immediately
-      if (param === 'font-size') {
-        const rem = parseFloat(value);
-        if (!isNaN(rem)) applyFontSize(rem); else applyFontSize(1.25);
-        document.querySelectorAll(`[data-param="font-size"]`).forEach(b => b.classList.remove('active-param'));
-        btn.classList.add('active-param');
-      } else if (param === 'theme') {
-        applyTheme(value);
-        document.querySelectorAll(`[data-param="theme"]`).forEach(b => b.classList.remove('active-param'));
-        btn.classList.add('active-param');
-      } else if (param === 'show') {
-        applyShowSelection(value);
-        document.querySelectorAll(`[data-param="show"]`).forEach(b => b.classList.remove('active-param'));
-        btn.classList.add('active-param');
-      }
-      updateCurrentUrlDisplay();
-    });
-  });
 
   // ------------------------------------------------------------------ //
   // Language visibility & order                                         //
@@ -1258,7 +1034,6 @@
     if (event.key !== 'Escape') return;
     qrPopup.classList.add('hidden');
     qrBtn.setAttribute('aria-expanded', 'false');
-    closeInfoModal();
     closeLangModal();
   });
 
@@ -1796,10 +1571,6 @@
         if (remMatch) currentFontSizeRem = parseFloat(remMatch[1]);
         else if (pxMatch) currentFontSizeRem = parseFloat(pxMatch[1]) / 16;
         document.documentElement.style.setProperty('--rt-font-size', normalized);
-        // Highlight matching param example button if any
-        document.querySelectorAll(`[data-param="font-size"]`).forEach(b => {
-          if (b.dataset.value === normalized || b.dataset.value === fontSizeParam) b.classList.add('active-param');
-        });
       }
 
       // theme
@@ -1814,7 +1585,6 @@
       // fade highlight
       applyFade(params.get('fade') !== '0');
 
-      updateCurrentUrlDisplay();
     });
 
     window.addEventListener('beforeunload', function () {
