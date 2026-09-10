@@ -81,6 +81,23 @@ _SEGMENT_WRITE_QUEUE_MAXSIZE = max(1, int(os.getenv("SEGMENT_WRITE_QUEUE_MAXSIZE
 _SEGMENT_WRITE_METRICS_LOG_INTERVAL = max(
     1.0, float(os.getenv("SEGMENT_WRITE_METRICS_LOG_INTERVAL_SEC", "10"))
 )
+# Fixed local safety budgets, not deployment policy: without them a blackholed
+# Redis or MongoDB parks caption work (and shutdown) forever. No max_connections:
+# every SSE viewer holds a pub/sub connection from this pool for its whole
+# lifetime, so a cap starves the command/publish path long before Redis does.
+_SEGMENT_WRITE_DRAIN_TIMEOUT = 5.0
+_REDIS_CONNECT_TIMEOUT = 2.0
+_REDIS_SOCKET_TIMEOUT = 5.0
+
+
+def _create_redis_client():
+    return redis.from_url(
+        REDIS_URL,
+        decode_responses=True,
+        socket_connect_timeout=_REDIS_CONNECT_TIMEOUT,
+        socket_timeout=_REDIS_SOCKET_TIMEOUT,
+    )
+
 
 
 class _SocketRateLimiter:
@@ -210,11 +227,30 @@ class SegmentWriteQueue:
     async def stop(self) -> None:
         if not self._tasks:
             return
-        # Drain queued writes before worker shutdown so committed segments are persisted.
-        await self.queue.join()
-        for _ in self._tasks:
-            await self.queue.put(None)
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        # Drain committed segments, but never let an unavailable MongoDB keep the
+        # process alive past its shutdown budget.
+        try:
+            async with asyncio.timeout(_SEGMENT_WRITE_DRAIN_TIMEOUT):
+                await self.queue.join()
+        except TimeoutError:
+            logger.error(
+                "segment_write_queue drain timed out after %.1fs; queue_depth=%d",
+                _SEGMENT_WRITE_DRAIN_TIMEOUT,
+                self.queue.qsize(),
+            )
+            for task in self._tasks:
+                task.cancel()
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+            while True:
+                try:
+                    self.queue.get_nowait()
+                    self.queue.task_done()
+                except asyncio.QueueEmpty:
+                    break
+        else:
+            for _ in self._tasks:
+                await self.queue.put(None)
+            await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
         self._log_metrics(force=True)
 
@@ -338,9 +374,9 @@ def _get_or_create_translation_manager(session_id):
     manager = active_translation_managers.get(session_id)
     if not manager:
         from .translation_service import TranslationQueueManager
-        manager = TranslationQueueManager(on_translation_completed)
+        manager = TranslationQueueManager(on_translation_completed, get_cached_transcription)
         active_translation_managers[session_id] = manager
-        asyncio.create_task(manager.start())
+        manager.start()
     return manager
 
 
@@ -348,24 +384,26 @@ def _get_or_create_translation_manager(session_id):
 async def lifespan(app: FastAPI):
     # Startup
     await init_indexes()
-    _limiter_redis = redis.from_url(REDIS_URL, decode_responses=True)
+    _limiter_redis = _create_redis_client()
     await FastAPILimiter.init(_limiter_redis)
     segment_write_queue.start()
     yield
     # Shutdown
     logger.info("Shutting down resources")
     await FastAPILimiter.close()
-    # Close translator and shared HTTP client
-    from .translators import close_translator
-    await close_translator()
 
-    # Stop all active scribe managers (snapshot first to avoid mutation during iteration)
+    # Stop all active scribe managers (snapshot first to avoid mutation during
+    # iteration). Each submits its last open segment to the translation manager.
     for manager in list(active_scribe_managers.values()):
         await manager.stop()
 
-    # Stop all active translation managers
+    # Translation managers drain those commits, so they stop before the translator
+    # and its shared HTTP client are closed underneath them.
     for manager in list(active_translation_managers.values()):
         await manager.stop()
+
+    from .translators import close_translator
+    await close_translator()
     await segment_write_queue.stop()
 
 # Initialize FastAPI app with lifespan.
@@ -603,7 +641,7 @@ socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 youtube_data_cache: TTLCache = TTLCache(maxsize=256, ttl=_YOUTUBE_CACHE_TTL)
 
-redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+redis_client = _create_redis_client()
 
 TRANSCRIPTION_TTL = 3600
 TRANSCRIPTION_ZSET_MAX = 250
@@ -3047,8 +3085,17 @@ async def _process_transcription_update(session_id, sync_data):
                 translated = carried_partial_result(cached_partial, sync_data).get("translated")
                 sync_data["result"] = {"translated": translated} if translated else {}
             else:
-                await redis_client.setex(partial_key, TRANSCRIPTION_TTL, json.dumps(sync_data))
-                redis_rtts += 1
+                try:
+                    await redis_client.setex(partial_key, TRANSCRIPTION_TTL, json.dumps(sync_data))
+                    redis_rtts += 1
+                except Exception as e:
+                    # Redis is a cache on this path. Keep the live broadcast moving
+                    # instead of failing the caption delivery.
+                    log_exception(
+                        logger,
+                        e,
+                        "Redis partial write error in _process_transcription_update",
+                    )
         else:
             pipe = redis_client.pipeline()
             pipe.zadd(list_key, {json.dumps(sync_data): sync_data["start_time"]})
@@ -3250,26 +3297,14 @@ async def leave_session(socket_id, data):
 async def on_translation_completed(session_id, sync_data):
     await _process_transcription_update(session_id, sync_data)
 
-async def on_scribe_transcription(session_id, transcription):
-    """Callback for Scribe transcription"""
-    # Most partials don't earn an LLM call — scribe's partial_interval and the
-    # translator's own gates rule them out. Ask first, so those cost no Redis round
-    # trip and no deserialization of every language's translations.
-    from .translation_service import GATE_DROP, GATE_FLOW_ONLY
-    manager = _get_or_create_translation_manager(session_id)
-    decision = manager.classify(transcription)
-    if decision == GATE_DROP:
-        return
-    if decision == GATE_FLOW_ONLY:
-        # Untranslated, but the panel's flow shows every partial: broadcast the source
-        # text alone and let _process_transcription_update carry the current
-        # translation over so viewers keep the line they already have.
-        await _process_transcription_update(session_id, {**transcription, "flow_only": True})
-        return
+def on_scribe_transcription(session_id, transcription):
+    """Submit a Scribe transcription to the bounded per-session manager.
 
-    # The translator only needs the last few committed segments for context.
-    cached_data = await get_cached_transcription(session_id, num_committed=5)
-    await manager.put(session_id, transcription.copy(), cached_data, redis_client)
+    Submission performs no I/O, so the provider receive loop stays responsive
+    without creating one detached task per transcript.
+    """
+    manager = _get_or_create_translation_manager(session_id)
+    manager.submit(session_id, transcription.copy(), redis_client)
 
 @sio.event
 async def realtime_connect(socket_id, data):

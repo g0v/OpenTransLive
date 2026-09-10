@@ -295,7 +295,7 @@ class ScribeSessionManager:
         if cancel_timeout:
             self._cancel_commit_timeout()
         logger.info(f"{reason} for {self.session_id}, flushing: {repr(text)}")
-        asyncio.create_task(self.callback(self.session_id, transcription))
+        self.callback(self.session_id, transcription)
 
     def _cancel_commit_timeout(self):
         """Cancel the pending short-commit flush task, if any is scheduled."""
@@ -474,14 +474,14 @@ class ScribeSessionManager:
                 # closed out below regardless of size, so it never needs the encode.
                 if len(encoding.encode(combined_text)) > _MAX_PARTIAL_TOKENS:
                     self.should_commit = True
-                asyncio.create_task(self.callback(self.session_id, transcription))
+                self.callback(self.session_id, transcription)
             else:
                 transcription = self._build_transcription(combined_text, False, now)
                 self.pending_commit_text = ""
                 self.seg_start_time = None
                 self.should_commit = False
                 self._cancel_commit_timeout()
-                asyncio.create_task(self.callback(self.session_id, transcription))
+                self.callback(self.session_id, transcription)
 
         except Exception as e:
             log_exception(logger, e, "Error handling transcript")
@@ -690,7 +690,7 @@ class ScribeSessionManager:
                     f"Committing last partial on stop for {self.session_id}: "
                     f"{repr(final_text)}"
                 )
-                await self.callback(self.session_id, transcription)
+                self.callback(self.session_id, transcription)
             except Exception as e:
                 log_exception(logger, e, "Error committing last partial on stop")
 
