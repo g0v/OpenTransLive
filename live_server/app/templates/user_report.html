@@ -1,0 +1,93 @@
+{#
+  This file is part of g0v/OpenTransLive.
+  Copyright (c) 2025 Sean Gau <rrtw0627@gmail.com>
+  Licensed under the GNU AGPL v3.0
+  See LICENSE for details.
+-#}
+{% extends "base.html" %}
+{% block title %}OpenTransLive - {{ user.email }}{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-900 text-gray-100 font-sans">
+
+  <!-- Top bar -->
+  <header class="bg-gray-800 border-b border-gray-700 px-6 py-3 flex items-center justify-between">
+    <span class="font-bold text-gray-100 tracking-tight">User Report</span>
+    <div class="flex items-center gap-4">
+      <span class="text-xs text-gray-500">{{ current_email }}</span>
+      <a href="/dashboard" class="nav-link">Admin Dashboard</a>
+      <a href="/logout" class="nav-link">Logout</a>
+    </div>
+  </header>
+
+  <main class="container py-8">
+
+    <div class="mb-6">
+      <a href="/dashboard" class="text-xs text-gray-500 hover:text-gray-300">&larr; All users</a>
+      <h1 class="mt-2 font-mono text-gray-100 break-all">{{ user.email }}</h1>
+      <div class="mt-3 flex flex-wrap gap-2 text-xs">
+        <span class="px-2 py-1 rounded {% if user.realtime_enabled %}bg-green-900 text-green-200{% else %}bg-gray-700 text-gray-300{% endif %}">
+          Realtime {{ 'enabled' if user.realtime_enabled else 'disabled' }}
+        </span>
+        <span class="px-2 py-1 rounded bg-gray-700 text-gray-300">
+          Provider: {{ user.ai_provider or 'default' }}
+        </span>
+        <span class="px-2 py-1 rounded bg-gray-700 text-gray-300">
+          Interval: {{ user.partial_interval | default('default', true) }}
+        </span>
+        <span class="px-2 py-1 rounded bg-gray-700 text-gray-300">
+          API key: {{ (user.api_key_prefix ~ '…') if user.api_key_prefix else 'none' }}
+        </span>
+      </div>
+      <p class="mt-3 text-xs text-gray-500">
+        Created {{ user.created_at[:19].replace('T', ' ') ~ ' UTC' if user.created_at else '—' }} ·
+        last login {{ user.last_login_at[:19].replace('T', ' ') ~ ' UTC' if user.last_login_at else 'never' }}
+      </p>
+    </div>
+
+    {% include "partials/usage_chart.html" %}
+
+    <h2 class="text-lg font-semibold text-gray-100 mb-1">Owned Rooms</h2>
+    <p class="text-sm text-gray-500 mb-4">All-time transcribed audio across owned rooms:
+      <span class="font-mono text-gray-300">{{ total_audio_display }}</span>
+      over {{ rooms|length }} room{{ '' if rooms|length == 1 else 's' }}. Days before daily tracking was
+      deployed are reconstructed from the server logs (<span class="font-mono">app.usage_backfill</span>),
+      so their granularity is coarser than live data.
+    </p>
+
+    {% if rooms %}
+    <div class="dark-card overflow-hidden">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-gray-700 text-left text-xs text-gray-500 uppercase tracking-wider">
+            <th class="px-3 py-2 font-semibold">Room</th>
+            <th class="px-3 py-2 font-semibold">Created</th>
+            <th class="px-3 py-2 font-semibold">Last heartbeat</th>
+            <th class="px-3 py-2 font-semibold text-right">Audio (all time)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for room in rooms %}
+          <tr class="border-b border-gray-700 last:border-0">
+            <td class="px-3 py-2 font-mono text-xs text-gray-200 break-all">{{ room.sid }}</td>
+            <td class="px-3 py-2 text-xs text-gray-500">
+              {{ room.created_at[:19].replace('T', ' ') ~ ' UTC' if room.created_at else '—' }}
+            </td>
+            <td class="px-3 py-2 text-xs text-gray-500">
+              {{ room.admin_last_heartbeat[:19].replace('T', ' ') ~ ' UTC' if room.admin_last_heartbeat else '—' }}
+            </td>
+            <td class="px-3 py-2 text-right font-mono text-xs text-gray-300">{{ room.audio_display }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="dark-card px-6 py-10 text-center text-sm text-gray-500">
+      This account owns no rooms.
+    </div>
+    {% endif %}
+
+  </main>
+</div>
+{% endblock %}

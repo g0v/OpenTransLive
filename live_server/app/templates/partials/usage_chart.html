@@ -1,0 +1,183 @@
+{#
+  This file is part of g0v/OpenTransLive.
+  Copyright (c) 2025 Sean Gau <rrtw0627@gmail.com>
+  Licensed under the GNU AGPL v3.0
+  See LICENSE for details.
+
+  Shared audio-usage panel: daily / monthly bar chart plus totals, filled from
+  a JSON endpoint with the shape returned by _usage_report().
+
+  The including template must provide `usage_endpoint` (e.g. "/api/usage" for
+  the caller's own report, "/api/users/<email>/usage" for the admin view).
+  Include once per page — the ids below are fixed.
+-#}
+<div class="dark-card p-6 mb-8">
+  <div class="flex flex-wrap items-start justify-between gap-3 mb-5">
+    <div>
+      <h3 class="text-md font-semibold text-gray-100">Audio Usage</h3>
+      <p class="text-xs text-gray-500 mt-1">Transcribed audio, bucketed by UTC day. Counted against the
+        account that owns the room.</p>
+    </div>
+    <div class="inline-flex overflow-hidden rounded border border-gray-700 text-xs">
+      <button type="button" data-range="daily" aria-pressed="true"
+        class="usage-range-btn px-3 py-1 font-semibold transition-colors">Daily · 30d</button>
+      <button type="button" data-range="monthly" aria-pressed="false"
+        class="usage-range-btn px-3 py-1 font-semibold border-l border-gray-700 transition-colors">Monthly ·
+        12m</button>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-3 gap-3 mb-5">
+    <div class="rounded bg-gray-900 border border-gray-700 px-3 py-2">
+      <p class="text-[10px] uppercase tracking-wider text-gray-500">Today</p>
+      <p id="usage-stat-today" class="text-sm font-mono text-gray-100 mt-1">—</p>
+    </div>
+    <div class="rounded bg-gray-900 border border-gray-700 px-3 py-2">
+      <p class="text-[10px] uppercase tracking-wider text-gray-500">This month</p>
+      <p id="usage-stat-month" class="text-sm font-mono text-gray-100 mt-1">—</p>
+    </div>
+    <div class="rounded bg-gray-900 border border-gray-700 px-3 py-2">
+      <p id="usage-stat-range-label" class="text-[10px] uppercase tracking-wider text-gray-500">Last 30 days</p>
+      <p id="usage-stat-range" class="text-sm font-mono text-gray-100 mt-1">—</p>
+    </div>
+  </div>
+
+  <div id="usage-chart" class="flex h-40 items-stretch gap-[2px]"></div>
+  <div id="usage-axis" class="mt-1 flex gap-[2px] text-[9px] text-gray-600"></div>
+  <p id="usage-message" class="mt-3 text-xs text-gray-500">Loading usage…</p>
+
+  <div id="usage-rooms-wrap" class="mt-6 hidden">
+    <p id="usage-rooms-label" class="text-[10px] uppercase tracking-wider text-gray-500 mb-2">Rooms</p>
+    <div id="usage-rooms" class="divide-y divide-gray-700 border-t border-gray-700 text-xs"></div>
+  </div>
+</div>
+
+<script>
+  (() => {
+    const endpoint = {{ usage_endpoint | tojson }}
+    const chartEl = document.getElementById('usage-chart')
+    const axisEl = document.getElementById('usage-axis')
+    const messageEl = document.getElementById('usage-message')
+    const roomsWrap = document.getElementById('usage-rooms-wrap')
+    const roomsEl = document.getElementById('usage-rooms')
+    const buttons = Array.from(document.querySelectorAll('.usage-range-btn'))
+    const ACTIVE = 'bg-indigo-700 text-indigo-100'
+    const IDLE = 'text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+    let report = null
+    let range = 'daily'
+
+    function formatSecs(secs) {
+      secs = Math.round(secs || 0)
+      if (secs <= 0) return '0'
+      if (secs < 60) return secs + 's'
+      // Round to whole minutes first: rounding the remainder on its own lets
+      // 1h 59m 45s print as "1h 60m" because the carry never reaches the hour.
+      const totalMinutes = Math.round(secs / 60)
+      const h = Math.floor(totalMinutes / 60)
+      const m = totalMinutes % 60
+      return h > 0 ? h + 'h ' + String(m).padStart(2, '0') + 'm' : m + 'm'
+    }
+
+    // Daily labels would collide at 30 bars, so only every 5th day (plus the
+    // last one) gets a tick; monthly always has room for all 12.
+    function tickVisible(index, total) {
+      if (range === 'monthly') return true
+      return index === total - 1 || index % 5 === 0
+    }
+
+    function render() {
+      const points = range === 'monthly' ? report.monthly : report.daily
+      const key = range === 'monthly' ? 'month' : 'day'
+      const max = points.reduce((acc, p) => Math.max(acc, p.audio_secs), 0)
+
+      chartEl.replaceChildren()
+      axisEl.replaceChildren()
+      points.forEach((point, index) => {
+        const column = document.createElement('div')
+        column.className = 'flex flex-1 min-w-0 flex-col justify-end'
+        const bar = document.createElement('div')
+        const pct = max > 0 ? (point.audio_secs / max) * 100 : 0
+        if (point.audio_secs > 0) {
+          bar.className = 'rounded-t bg-indigo-600 hover:bg-indigo-400 transition-colors'
+          // Floor at 2% so a short session is still visible next to a long one.
+          bar.style.height = Math.max(pct, 2) + '%'
+        } else {
+          bar.className = 'rounded-t bg-gray-700/60'
+          bar.style.height = '2px'
+        }
+        const label = point[key] + ' · ' + formatSecs(point.audio_secs) +
+          ' · ' + point.session_count + (point.session_count === 1 ? ' room' : ' rooms')
+        bar.title = label
+        // Bars are decorative <div>s, so the value only reaches assistive tech
+        // through a labelled role — `title` alone is mouse-only.
+        bar.setAttribute('role', 'img')
+        bar.setAttribute('aria-label', label)
+        column.appendChild(bar)
+        chartEl.appendChild(column)
+
+        const tick = document.createElement('div')
+        tick.className = 'flex-1 min-w-0 text-center whitespace-nowrap overflow-hidden'
+        tick.textContent = tickVisible(index, points.length)
+          ? (range === 'monthly' ? point.month.slice(2) : point.day.slice(5))
+          : ''
+        axisEl.appendChild(tick)
+      })
+
+      const rangeLabel = document.getElementById('usage-stat-range-label')
+      rangeLabel.textContent = range === 'monthly'
+        ? 'Last ' + report.months + ' months'
+        : 'Last ' + report.days + ' days'
+      document.getElementById('usage-stat-today').textContent = formatSecs(report.totals.today_secs)
+      document.getElementById('usage-stat-month').textContent = formatSecs(report.totals.month_secs)
+      document.getElementById('usage-stat-range').textContent = range === 'monthly'
+        ? formatSecs(report.monthly.reduce((acc, p) => acc + p.audio_secs, 0))
+        : formatSecs(report.totals.range_secs)
+
+      messageEl.textContent = max > 0
+        ? ''
+        : 'No audio recorded in this window. Usage is counted while a panel session streams audio.'
+      messageEl.classList.toggle('hidden', max > 0)
+
+      // The room split always covers the daily window; saying so keeps it from
+      // reading as a breakdown of whichever range is selected.
+      document.getElementById('usage-rooms-label').textContent =
+        'Rooms · last ' + report.days + ' days'
+      roomsEl.replaceChildren()
+      report.rooms.forEach(room => {
+        const row = document.createElement('div')
+        row.className = 'flex items-center justify-between gap-3 py-1.5'
+        const sid = document.createElement('span')
+        sid.className = 'font-mono text-gray-300 break-all'
+        sid.textContent = room.sid
+        const meta = document.createElement('span')
+        meta.className = 'shrink-0 font-mono text-gray-400'
+        meta.textContent = formatSecs(room.audio_secs) + ' · ' + room.active_days +
+          (room.active_days === 1 ? ' day' : ' days') + ' · last ' + room.last_day
+        row.append(sid, meta)
+        roomsEl.appendChild(row)
+      })
+      roomsWrap.classList.toggle('hidden', report.rooms.length === 0)
+
+      buttons.forEach(btn => {
+        const active = btn.dataset.range === range
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false')
+        btn.className = 'usage-range-btn px-3 py-1 font-semibold transition-colors ' +
+          (btn.dataset.range === 'monthly' ? 'border-l border-gray-700 ' : '') +
+          (active ? ACTIVE : IDLE)
+      })
+    }
+
+    buttons.forEach(btn => btn.addEventListener('click', () => {
+      range = btn.dataset.range
+      if (report) render()
+    }))
+
+    fetch(endpoint, { credentials: 'same-origin' })
+      .then(resp => resp.ok ? resp.json() : Promise.reject(new Error('HTTP ' + resp.status)))
+      .then(data => { report = data; render() })
+      .catch(err => {
+        messageEl.textContent = 'Could not load usage: ' + err.message
+        messageEl.classList.remove('hidden')
+      })
+  })()
+</script>

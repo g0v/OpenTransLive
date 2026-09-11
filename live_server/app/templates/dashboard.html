@@ -45,6 +45,7 @@
         Toggle realtime transcription access and per-account overrides for AI provider and partial
         interval. Leave provider as <span class="text-gray-400">Default</span> or interval blank to use
         the server config. Overrides apply to newly started sessions.
+        Click an email to open that account's daily / monthly usage report.
         Users must log in via <a href="/login" class="underline text-gray-400 hover:text-gray-200">/login</a> before
         they appear here.
       </p>
@@ -67,7 +68,11 @@
         <tbody id="user-table-body">
           {% for user in users %}
           <tr class="border-b border-gray-700 last:border-0" data-email="{{ user.email }}">
-            <td class="px-2 py-1 font-mono text-xs text-gray-200 break-keep">{{ user.email }}</td>
+            <td class="px-2 py-1 font-mono text-xs break-keep">
+              <a href="/dashboard/users/{{ user.email | urlencode }}"
+                class="text-indigo-300 underline decoration-gray-600 hover:text-indigo-200"
+                title="Open usage report for {{ user.email }}">{{ user.email }}</a>
+            </td>
             <td class="px-2 py-1 text-xs text-gray-500">
               {% if user.last_login_at %}
               {{ user.last_login_at[:19].replace('T', ' ') }} UTC
@@ -75,7 +80,10 @@
               —
               {% endif %}
             </td>
-            <td class="px-2 py-1 text-xs text-gray-300 whitespace-nowrap">{{ user.audio_display }}</td>
+            <td class="px-2 py-1 text-xs whitespace-nowrap">
+              <a href="/dashboard/users/{{ user.email | urlencode }}"
+                class="text-gray-300 hover:text-indigo-200">{{ user.audio_display }}</a>
+            </td>
             <td class="px-2 py-1 text-xs text-gray-300">{{ user.session_count }}</td>
             <td class="px-2 py-1">
               <select

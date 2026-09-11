@@ -79,11 +79,15 @@ _MAX_PARTIAL_TOKENS = 150     # maximum length of partial transcript; token-base
 _MIN_COMMIT_WORDS = 6       # ~6 Han characters, ~7 English words, ~2 Korean eojeol
 _COMMIT_TIMEOUT_SECS = 10     # force-flush buffered short commits after this delay if no follow-up arrives
 
+# Audio wire format for every provider here: 16kHz 16-bit mono PCM. Exported
+# because usage reporting converts stored byte counts back into seconds.
+AUDIO_BYTES_PER_SEC = 16000 * 2
+
 class ScribeSessionManager:
     """Provider-agnostic transcription session. Subclass and fill in the hooks."""
 
-    _BYTES_PER_SEC = 16000 * 2          # 16kHz 16-bit mono PCM
-    _LOG_INTERVAL_BYTES = 30 * 16000 * 2  # log every 30s of audio
+    _BYTES_PER_SEC = AUDIO_BYTES_PER_SEC
+    _LOG_INTERVAL_BYTES = 30 * AUDIO_BYTES_PER_SEC  # log every 30s of audio
     _AUDIO_QUEUE_MAXSIZE = 1000         # ~30s of audio; drop oldest when full
 
     # ── Provider surface ──────────────────────────────────────────────────────
@@ -150,6 +154,11 @@ class ScribeSessionManager:
         self.audio_chunks = 0
         self._logged_at_bytes = 0
         self._usage_restored = False  # set to True after first DB restore attempt
+        # Watermark of the counters already folded into the per-day usage rollup.
+        # Deltas (not absolutes) are written there, so this must track exactly
+        # what has been persisted, including restored values.
+        self._usage_flushed_bytes = 0
+        self._usage_flushed_chunks = 0
 
     def restore_usage(self, audio_bytes: int, audio_chunks: int):
         """Restore usage counters from a previously saved DB value.
@@ -160,6 +169,11 @@ class ScribeSessionManager:
         self.audio_bytes_total += audio_bytes
         self.audio_chunks += audio_chunks
         self._logged_at_bytes = self.audio_bytes_total
+        # Restored bytes were already counted into the per-day rollup by the
+        # heartbeat that persisted them; moving the watermark prevents a
+        # page refresh from billing the same audio twice.
+        self._usage_flushed_bytes += audio_bytes
+        self._usage_flushed_chunks += audio_chunks
 
     def get_usage_stats(self) -> dict:
         """Return audio usage counters for this session."""
@@ -168,6 +182,32 @@ class ScribeSessionManager:
             "audio_chunks": self.audio_chunks,
             "audio_duration_secs": round(self.audio_bytes_total / self._BYTES_PER_SEC, 1),
         }
+
+    def flush_usage_delta(self) -> dict | None:
+        """Return the usage accumulated since the last flush and advance the
+        watermark, or None when nothing new arrived.
+
+        The room document stores absolute counters; the per-day rollup needs
+        increments, and only this object knows what has already been reported.
+        Byte counts only: seconds are derived once, when a report is built, so
+        rounding cannot accumulate across increments.
+        """
+        delta_bytes = self.audio_bytes_total - self._usage_flushed_bytes
+        if delta_bytes <= 0:
+            return None
+        delta_chunks = self.audio_chunks - self._usage_flushed_chunks
+        self._usage_flushed_bytes = self.audio_bytes_total
+        self._usage_flushed_chunks = self.audio_chunks
+        return {"audio_bytes": delta_bytes, "audio_chunks": delta_chunks}
+
+    def rollback_usage_delta(self, delta: dict) -> None:
+        """Un-reserve a delta whose persistence failed so the next flush retries it.
+
+        Subtracts rather than restoring a snapshot: audio may have arrived while
+        the failed write was in flight, and those bytes must stay unflushed too.
+        """
+        self._usage_flushed_bytes -= delta["audio_bytes"]
+        self._usage_flushed_chunks -= delta["audio_chunks"]
 
     async def push_audio(self, base64_audio: str):
         """Called by socket.io to push audio from the client"""

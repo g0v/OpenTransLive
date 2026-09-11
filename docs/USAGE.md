@@ -88,7 +88,8 @@ Session 擁有者或 co-owner 可開啟 `/edit/{session_id}`：
 | `/login`                            | Email OTP 登入   | 公開             |
 | `/logout`                           | 登出             | 已登入            |
 | `/dashboard`                        | 系統管理員後台        | 系統管理員          |
-| `/user-dashboard`                   | 使用者 session 清單 | 已登入            |
+| `/user-dashboard`                   | 使用者 session 清單與用量圖表 | 已登入            |
+| `/dashboard/users/{email}`          | 個別使用者用量報表      | 系統管理員          |
 | `/panel/{session_id}`               | Session 控制台    | 擁有者或 co-owner  |
 | `/rt/{session_id}`                  | 即時字幕觀看頁        | 公開             |
 | `/yt/{session_id}`                  | YouTube 字幕觀看頁  | 公開             |
@@ -197,6 +198,7 @@ Server to client：
 | Method | Path                          | 用途                |
 | ------ | ----------------------------- | ----------------- |
 | `POST` | `/api/users/{email}/realtime` | 開啟或關閉指定使用者的即時轉錄權限 |
+| `GET`  | `/api/users/{email}/usage`    | 指定使用者的每日／每月用量報表   |
 
 
 > 管理員 API 僅接受 cookie session 登入的 admin;**API key 認證一律被拒絕**,即使 key 的擁有者是 admin。
@@ -219,6 +221,7 @@ Key 管理 API：
 | `POST`   | `/api/apikey` | 產生或 rotate 自己的 key（回傳明文一次） |
 | `DELETE` | `/api/apikey` | 撤銷自己的 key                  |
 | `GET`    | `/api/me`     | 讀取自己的身分、權限清單與 key 識別碼      |
+| `GET`    | `/api/usage`  | 讀取自己的每日／每月用量（`days`、`months` 可調）|
 
 
 ## 6. 資料儲存
@@ -226,7 +229,8 @@ Key 管理 API：
 
 | 儲存位置                                | 用途                                     |
 | ----------------------------------- | -------------------------------------- |
-| MongoDB `rooms`                     | session 擁有者、secret key、co-owner、設定與使用量 |
+| MongoDB `rooms`                     | session 擁有者、secret key、co-owner、設定與累計使用量 |
+| MongoDB `usage_daily`               | 每日用量（email + UTC 日期 + sid 的音訊 bytes／chunk；歷史可用 `python -m app.usage_backfill` 從 log 回填） |
 | MongoDB `transcription_segments`    | 已完成的字幕片段                               |
 | MongoDB `transcription_store`       | session metadata 與舊資料相容                |
 | Redis `transcription:{sid}:list`    | 近期已完成字幕片段快取                            |

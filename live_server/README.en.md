@@ -130,8 +130,19 @@ Full event list and APIs in [../docs/USAGE.en.md](../docs/USAGE.en.md#5-apis-and
 
 Field details in [../docs/USAGE.en.md](../docs/USAGE.en.md#6-data-storage). Summary:
 
-- **MongoDB**: `rooms` (session config + owners), `transcription_segments` (committed segments), `transcription_store` (legacy)
+- **MongoDB**: `rooms` (session config + owners), `transcription_segments` (committed segments), `transcription_store` (legacy), `usage_daily` (per-day usage: audio bytes / chunks accumulated per `email` + `day` (UTC) + `sid`; seconds are derived once when a report is built, so per-increment rounding cannot accumulate)
 - **Redis**: `transcription:{sid}:list` (recent segments), `transcription:{sid}:partial`, `transcription:{sid}:meta`, `keywords:{sid}`, `locked_keywords:{sid}`, `text_dictionary:{sid}`
+
+Usage is written by `/heartbeat/{sid}`: each heartbeat adds the audio accumulated since the previous one (a delta) to the room **primary owner's** record for that UTC day, while the room document keeps the absolute counters — so summing a room's daily rows reproduces the room's counters. Users see daily / monthly charts on `/user-dashboard` (`GET /api/usage?days=&months=`); admins click an email on `/dashboard` to open `/dashboard/users/{email}` for one account's report (`GET /api/users/{email}/usage`).
+
+**Backfilling history**: run this once per environment when deploying the feature — from then on the heartbeat records every day itself. The room counters carry no date, but `push_audio` has always logged a cumulative `[audio_usage] session=… bytes=…` line every 30s of audio, so `python -m app.usage_backfill` differentiates those snapshots back into per-day usage (log timestamps are UTC+8 and are converted to UTC days):
+
+```bash
+docker compose exec backend ./.venv/bin/python -m app.usage_backfill            # report only
+docker compose exec backend ./.venv/bin/python -m app.usage_backfill --apply --residual
+```
+
+Backfilled rows carry `source: "log_backfill"` and are written with `$setOnInsert` only. A re-run is a no-op: it skips days already in `usage_daily` and subtracts what the rollup already holds from the residual, so nothing is billed twice even with `--residual`. Limits: resolution is one log line (30s of audio); rotated-away log files cannot be recovered, and `--residual` books whatever the room counters hold beyond log coverage against each room's last activity day; rooms whose ownership was released cannot be attributed and are only reported.
 
 ## Security
 
