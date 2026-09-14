@@ -12,6 +12,10 @@ rooms_collection = db['room']
 transcription_store_collection = db['transcription_store']
 transcription_segments_collection = db['transcription_segments']
 users_collection = db['users']
+# Per-day, per-room audio rollup written by the heartbeat. Keyed
+# (email, day, sid) so the daily chart, the monthly chart, and the per-room
+# breakdown all read from one small collection.
+usage_daily_collection = db['usage_daily']
 
 
 async def init_indexes():
@@ -24,3 +28,6 @@ async def init_indexes():
     # Sparse+unique: only users that have generated a key carry the field, and no
     # two users can ever share a hash. Lookups on every API-key request hit this.
     await users_collection.create_index([("api_key_hash", ASCENDING)], unique=True, sparse=True)
+    await usage_daily_collection.create_index(
+        [("email", ASCENDING), ("day", ASCENDING), ("sid", ASCENDING)], unique=True
+    )

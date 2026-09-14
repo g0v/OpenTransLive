@@ -188,7 +188,11 @@ class ChatCompletionTranslator(BaseTranslator):
 
     @staticmethod
     def _message_text(response_json: dict) -> str:
-        return response_json["choices"][0]["message"]["content"]
+        try:
+            content = response_json["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError):
+            return ""
+        return content if isinstance(content, str) else ""
 
     def supports_glossary(self) -> bool:
         return bool(self._api_key and _GENERATE_GLOSSARY_PROMPT and self.glossary_params)
@@ -243,7 +247,7 @@ class ChatCompletionTranslator(BaseTranslator):
         result = await self._chat(body)
         if result:
             corrected = (
-                (self._message_text(result) or "")
+                self._message_text(result)
                 .replace("<correct_this>", "")
                 .replace("</correct_this>", "")
                 .strip()
@@ -293,7 +297,7 @@ class ChatCompletionTranslator(BaseTranslator):
         )
         if result:
             raw = (
-                (self._message_text(result) or "")
+                self._message_text(result)
                 .replace("<translate_this>", "")
                 .replace("</translate_this>", "")
                 .strip()

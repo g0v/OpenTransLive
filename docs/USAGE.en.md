@@ -85,7 +85,8 @@ Constraints:
 | `/login` | Email OTP login | Public |
 | `/logout` | Log out | Authenticated |
 | `/dashboard` | Admin console | System admin |
-| `/user-dashboard` | User session list | Authenticated |
+| `/user-dashboard` | User session list and usage charts | Authenticated |
+| `/dashboard/users/{email}` | Per-user usage report | System admin |
 | `/panel/{session_id}` | Session control panel | Owner or co-owner |
 | `/rt/{session_id}` | Realtime subtitle view | Public |
 | `/yt/{session_id}` | YouTube subtitle view | Public |
@@ -184,6 +185,7 @@ Requires session management permission.
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/api/users/{email}/realtime` | Toggle realtime transcription permission for a user |
+| `GET` | `/api/users/{email}/usage` | Daily / monthly usage report for one user |
 
 > Admin APIs accept only cookie-session admins; **API-key authentication is always refused**, even when the key's owner is an admin.
 
@@ -204,12 +206,14 @@ Key management API:
 | `POST` | `/api/apikey` | Create or rotate your own key (returns the plaintext once) |
 | `DELETE` | `/api/apikey` | Revoke your own key |
 | `GET` | `/api/me` | Read your identity, permission list, and key id |
+| `GET` | `/api/usage` | Read your own daily / monthly usage (`days`, `months` tunable) |
 
 ## 6. Data Storage
 
 | Location | Purpose |
 |---|---|
-| MongoDB `rooms` | Session owner, secret key, co-owners, settings, usage |
+| MongoDB `rooms` | Session owner, secret key, co-owners, settings, cumulative usage |
+| MongoDB `usage_daily` | Per-day usage (audio bytes / chunks per email + UTC day + sid; history can be rebuilt from the logs with `python -m app.usage_backfill`) |
 | MongoDB `transcription_segments` | Committed subtitle segments |
 | MongoDB `transcription_store` | Session metadata; legacy compatibility |
 | Redis `transcription:{sid}:list` | Recent committed segment cache |

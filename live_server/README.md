@@ -127,8 +127,19 @@ app/
 
 詳細欄位請看 [../docs/USAGE.md](../docs/USAGE.md#6-資料儲存)。摘要：
 
-- **MongoDB**：`rooms`（session 設定 + 擁有者）、`transcription_segments`（committed 片段）、`transcription_store`（legacy）
+- **MongoDB**：`rooms`（session 設定 + 擁有者）、`transcription_segments`（committed 片段）、`transcription_store`（legacy）、`usage_daily`（每日用量：`email` + `day`（UTC）+ `sid` 的音訊 bytes／chunk 累加；秒數在產生報表時換算一次，避免逐筆四捨五入累積誤差）
 - **Redis**：`transcription:{sid}:list`（近期片段）、`transcription:{sid}:partial`（partial）、`transcription:{sid}:meta`、`keywords:{sid}`、`locked_keywords:{sid}`、`text_dictionary:{sid}`
+
+用量統計由 `/heartbeat/{sid}` 寫入：每次心跳把上次之後新增的音訊量（delta）累加到房間**主擁有者**的當日紀錄，room 文件本身仍保留累計總量；把某房間的每日紀錄相加即等於 room 的計數。使用者於 `/user-dashboard` 看日／月圖表（`GET /api/usage?days=&months=`），管理員在 `/dashboard` 點 email 進入 `/dashboard/users/{email}` 看個別報表（`GET /api/users/{email}/usage`）。
+
+**回填歷史**：部署這個版本時每個環境跑一次就好 —— 之後每天的用量由心跳自己記錄。room 計數器沒有日期，但 `push_audio` 一向每 30 秒音訊寫一行 `[audio_usage] session=… bytes=…` 到 `logs/`，`python -m app.usage_backfill` 解析這些累計快照、相鄰相減還原每日用量（時間戳是 UTC+8，會換算成 UTC 日期）：
+
+```bash
+docker compose exec backend ./.venv/bin/python -m app.usage_backfill            # 只報告，不寫入
+docker compose exec backend ./.venv/bin/python -m app.usage_backfill --apply --residual
+```
+
+回填列標記 `source: "log_backfill"`，且只用 `$setOnInsert`。重跑是 no-op：已存在的日期會跳過，residual 也會先扣掉 `usage_daily` 既有的量，因此就算帶 `--residual` 也不會重複計算。限制：精度為一行 log（30 秒音訊）；已輪替掉的 log 檔無法還原，`--residual` 會把「room 計數器有、但沒被記錄」的差額記到該房間最後活動日；已釋放擁有權的房間無從歸屬，只會列在報告裡。
 
 ## 安全性
 

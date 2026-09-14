@@ -14,9 +14,10 @@ import time
 import uuid
 import weakref
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
+from urllib.parse import quote
 
 import anyio
 import dotenv
@@ -46,10 +47,11 @@ if not SETTINGS.get("SECRET_KEY"):
         "ephemeral fallback — that silently invalidates every session cookie "
         "on restart."
     )
-from .database import rooms_collection, transcription_store_collection, transcription_segments_collection, users_collection, init_indexes
+from .database import (rooms_collection, transcription_store_collection, transcription_segments_collection,
+                       users_collection, usage_daily_collection, init_indexes)
 from .logger_config import setup_logger, log_exception
-from .scribe_manager import (SCRIBE_MANAGERS, ScribeSessionManager, create_scribe_manager,
-                             normalize_language_code)
+from .scribe_manager import (AUDIO_BYTES_PER_SEC, SCRIBE_MANAGERS, ScribeSessionManager,
+                             create_scribe_manager, normalize_language_code)
 from .socket_schema import (
     validate_sync_payload,
     validate_audio_buffer_append_payload,
@@ -82,6 +84,23 @@ _SEGMENT_WRITE_QUEUE_MAXSIZE = max(1, int(os.getenv("SEGMENT_WRITE_QUEUE_MAXSIZE
 _SEGMENT_WRITE_METRICS_LOG_INTERVAL = max(
     1.0, float(os.getenv("SEGMENT_WRITE_METRICS_LOG_INTERVAL_SEC", "10"))
 )
+# Fixed local safety budgets, not deployment policy: without them a blackholed
+# Redis or MongoDB parks caption work (and shutdown) forever. No max_connections:
+# every SSE viewer holds a pub/sub connection from this pool for its whole
+# lifetime, so a cap starves the command/publish path long before Redis does.
+_SEGMENT_WRITE_DRAIN_TIMEOUT = 5.0
+_REDIS_CONNECT_TIMEOUT = 2.0
+_REDIS_SOCKET_TIMEOUT = 5.0
+
+
+def _create_redis_client():
+    return redis.from_url(
+        REDIS_URL,
+        decode_responses=True,
+        socket_connect_timeout=_REDIS_CONNECT_TIMEOUT,
+        socket_timeout=_REDIS_SOCKET_TIMEOUT,
+    )
+
 
 
 class _SocketRateLimiter:
@@ -175,6 +194,13 @@ _segment_write_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref
 # WeakValueDictionary so entries vanish once no caller is holding / waiting on the lock;
 # otherwise every session_id ever seen would leak an asyncio.Lock for the life of the process.
 _scribe_create_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
+# Per-session locks serializing audio accounting: snapshotting the manager's
+# absolute counters, reserving the delta, writing the per-day rollup, and
+# persisting the room absolutes must happen as one unit. Two concurrent
+# heartbeats for the same sid (two panels sharing the lock key, or a client
+# retrying) would otherwise interleave across those awaits and write a stale
+# absolute over a newer one, or roll back a delta another call reserved.
+_usage_flush_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 
 
 def _get_or_create_lock(registry: "weakref.WeakValueDictionary[str, asyncio.Lock]", key: str) -> asyncio.Lock:
@@ -218,11 +244,30 @@ class SegmentWriteQueue:
     async def stop(self) -> None:
         if not self._tasks:
             return
-        # Drain queued writes before worker shutdown so committed segments are persisted.
-        await self.queue.join()
-        for _ in self._tasks:
-            await self.queue.put(None)
-        await asyncio.gather(*self._tasks, return_exceptions=True)
+        # Drain committed segments, but never let an unavailable MongoDB keep the
+        # process alive past its shutdown budget.
+        try:
+            async with asyncio.timeout(_SEGMENT_WRITE_DRAIN_TIMEOUT):
+                await self.queue.join()
+        except TimeoutError:
+            logger.error(
+                "segment_write_queue drain timed out after %.1fs; queue_depth=%d",
+                _SEGMENT_WRITE_DRAIN_TIMEOUT,
+                self.queue.qsize(),
+            )
+            for task in self._tasks:
+                task.cancel()
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+            while True:
+                try:
+                    self.queue.get_nowait()
+                    self.queue.task_done()
+                except asyncio.QueueEmpty:
+                    break
+        else:
+            for _ in self._tasks:
+                await self.queue.put(None)
+            await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
         self._log_metrics(force=True)
 
@@ -346,9 +391,9 @@ def _get_or_create_translation_manager(session_id):
     manager = active_translation_managers.get(session_id)
     if not manager:
         from .translation_service import TranslationQueueManager
-        manager = TranslationQueueManager(on_translation_completed)
+        manager = TranslationQueueManager(on_translation_completed, get_cached_transcription)
         active_translation_managers[session_id] = manager
-        asyncio.create_task(manager.start())
+        manager.start()
     return manager
 
 
@@ -356,24 +401,26 @@ def _get_or_create_translation_manager(session_id):
 async def lifespan(app: FastAPI):
     # Startup
     await init_indexes()
-    _limiter_redis = redis.from_url(REDIS_URL, decode_responses=True)
+    _limiter_redis = _create_redis_client()
     await FastAPILimiter.init(_limiter_redis)
     segment_write_queue.start()
     yield
     # Shutdown
     logger.info("Shutting down resources")
     await FastAPILimiter.close()
-    # Close translator and shared HTTP client
-    from .translators import close_translator
-    await close_translator()
 
-    # Stop all active scribe managers (snapshot first to avoid mutation during iteration)
+    # Stop all active scribe managers (snapshot first to avoid mutation during
+    # iteration). Each submits its last open segment to the translation manager.
     for manager in list(active_scribe_managers.values()):
         await manager.stop()
 
-    # Stop all active translation managers
+    # Translation managers drain those commits, so they stop before the translator
+    # and its shared HTTP client are closed underneath them.
     for manager in list(active_translation_managers.values()):
         await manager.stop()
+
+    from .translators import close_translator
+    await close_translator()
     await segment_write_queue.stop()
 
 # Initialize FastAPI app with lifespan.
@@ -397,7 +444,7 @@ app = FastAPI(
 # _require_session_primary_owner). Admin-management endpoints are cookie-only
 # (Identity.can_admin) and browser pages are HTML, so both are excluded here.
 _PUBLIC_API_ENDPOINTS = {
-    "create_api_key", "revoke_api_key", "get_me",
+    "create_api_key", "revoke_api_key", "get_me", "get_my_usage",
     "create_room", "list_rooms",
     "get_session_languages_endpoint", "update_session_languages_endpoint",
     "get_session_keywords_endpoint", "update_session_keywords_endpoint",
@@ -611,7 +658,7 @@ socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 youtube_data_cache: TTLCache = TTLCache(maxsize=256, ttl=_YOUTUBE_CACHE_TTL)
 
-redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+redis_client = _create_redis_client()
 
 TRANSCRIPTION_TTL = 3600
 TRANSCRIPTION_ZSET_MAX = 250
@@ -830,6 +877,11 @@ async def _publish_display_dictionary_update(sid: str, language_maps: dict) -> N
     )
 
 
+async def _publish_viewer_clear(sid: str) -> None:
+    """Tell currently connected viewers to clear local display text."""
+    await _publish_transcription_update(sid, {"__sse_event": "viewer_clear"})
+
+
 async def _iter_replay_transcription_events(sid: str, last_event_id: float) -> AsyncIterator[dict]:
     zset_key = f"transcription:{sid}:list"
     try:
@@ -929,6 +981,10 @@ async def _session_sse_stream(
                     {"segment": payload.get("segment") or {}},
                     event="segment_updated",
                 )
+                continue
+
+            if payload.get("__sse_event") == "viewer_clear":
+                yield _format_sse({}, event="viewer_clear")
                 continue
 
             event_id_raw = payload.get("start_time")
@@ -1359,6 +1415,198 @@ async def logout(request: Request):
     return RedirectResponse(url="/login", status_code=302)
 
 
+# ---------------------------------------------------------------------------
+# Usage reporting
+# ---------------------------------------------------------------------------
+# A room document carries absolute audio counters, which cannot answer "how
+# much did this account use last Tuesday". The heartbeat therefore folds each
+# delta into usage_daily — one document per (owner email, UTC day, room) — and
+# every report below is a rollup of those documents. Days are UTC so a report
+# lines up with the UTC timestamps the dashboards already render.
+_USAGE_MAX_DAYS = 365
+_USAGE_MAX_MONTHS = 36
+_USAGE_ROOM_ROWS = 50
+
+
+def _usage_day(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _usage_day_keys(end: datetime, days: int) -> list[str]:
+    return [_usage_day(end - timedelta(days=offset)) for offset in reversed(range(days))]
+
+
+def _usage_month_keys(end: datetime, months: int) -> list[str]:
+    keys, year, month = [], end.year, end.month
+    for _ in range(months):
+        keys.append(f"{year:04d}-{month:02d}")
+        month -= 1
+        if month == 0:
+            year, month = year - 1, 12
+    return list(reversed(keys))
+
+
+def _clamp_usage_window(days: int, months: int) -> tuple[int, int]:
+    return max(1, min(days, _USAGE_MAX_DAYS)), max(1, min(months, _USAGE_MAX_MONTHS))
+
+
+def _format_audio_duration(secs: float) -> str:
+    """Humanize a duration for the report tables ("3h 07m", "12m", "45s")."""
+    total = int(round(secs or 0))
+    if total < 60:
+        return f"{total}s"
+    hours, minutes = divmod(total // 60, 60)
+    return f"{hours}h {minutes:02d}m" if hours else f"{minutes}m"
+
+
+async def _record_room_usage(room: dict, delta: dict, now: datetime) -> bool:
+    """Add one heartbeat's audio delta to the room owner's daily rollup.
+
+    Attributed to the primary owner even when a co-owner holds the lock, so the
+    account that owns the room also owns its usage report — the same rule the
+    admin dashboard's per-owner totals already use.
+
+    Returns True when the increment is durable. A False return means the caller
+    must un-reserve the delta, otherwise the audio is billed to nobody: the room
+    keeps the absolute counters, so no later heartbeat would see it again.
+    """
+    email = (await _get_room_owner_email(room) or "").lower()
+    sid = room.get("sid")
+    if not email or not sid:
+        # An unowned room has nobody to bill. Reporting success is deliberate:
+        # retrying cannot find an owner for audio that already happened.
+        return True
+    try:
+        await usage_daily_collection.update_one(
+            {"email": email, "day": _usage_day(now), "sid": sid},
+            {
+                "$inc": {
+                    "audio_bytes": delta["audio_bytes"],
+                    "audio_chunks": delta["audio_chunks"],
+                },
+                "$set": {"updated_at": now},
+            },
+            upsert=True,
+        )
+        return True
+    except Exception as exc:
+        # Usage accounting must never break the lock refresh the panel needs.
+        log_exception(logger, exc, f"usage rollup failed for sid={sid}")
+        return False
+
+
+async def _release_session_usage(sid: str, room: dict) -> None:
+    """Close out a session's audio accounting before its ownership changes.
+
+    Bills the pending delta to the outgoing owner and drops the manager, so a
+    new claimant cannot inherit a watermark whose unflushed bytes belong to
+    somebody else. Without this, releasing a session and having another account
+    claim it within the manager cache TTL bills the previous owner's audio to
+    the new one.
+    """
+    async with _get_or_create_lock(_usage_flush_locks, sid):
+        manager = active_scribe_managers.pop(sid, None)
+        if manager is None:
+            return
+        now = datetime.now(timezone.utc)
+        delta = manager.flush_usage_delta()
+        if delta:
+            await _record_room_usage(room, delta, now)
+        if manager.audio_bytes_total > 0:
+            await rooms_collection.update_one(
+                {"sid": sid}, {"$set": {**manager.get_usage_stats(), "updated_at": now}}
+            )
+        manager.mark_superseded()
+        asyncio.create_task(manager.stop())
+
+
+def _usage_secs(audio_bytes: float) -> float:
+    return round(audio_bytes / AUDIO_BYTES_PER_SEC, 1)
+
+
+async def _usage_report(email_lc: str, days: int, months: int) -> dict:
+    """Daily and monthly audio totals for one account, plus a per-room split.
+
+    One scan over the account's documents covering the wider of the two windows;
+    folding in Python keeps it to a single round trip and lets the daily series,
+    the monthly series, and the room breakdown share it. Stored bytes are summed
+    as integers and converted to seconds once per bucket, so no rounding error
+    accumulates across the increments a day is built from.
+    """
+    now = datetime.now(timezone.utc)
+    day_keys = _usage_day_keys(now, days)
+    month_keys = _usage_month_keys(now, months)
+    start_day = min(day_keys[0], f"{month_keys[0]}-01")
+
+    daily = {d: 0 for d in day_keys}
+    monthly = {m: 0 for m in month_keys}
+    day_sids: dict[str, set[str]] = collections.defaultdict(set)
+    month_sids: dict[str, set[str]] = collections.defaultdict(set)
+    room_totals: dict[str, dict] = {}
+
+    async for doc in usage_daily_collection.find(
+        {"email": email_lc, "day": {"$gte": start_day}},
+        {"_id": 0, "day": 1, "sid": 1, "audio_bytes": 1},
+    ):
+        day = doc.get("day") or ""
+        sid = doc.get("sid") or ""
+        audio_bytes = doc.get("audio_bytes") or 0
+        if day in daily:
+            daily[day] += audio_bytes
+            day_sids[day].add(sid)
+            room = room_totals.setdefault(sid, {"sid": sid, "audio_bytes": 0, "active_days": 0,
+                                                "last_day": day})
+            room["audio_bytes"] += audio_bytes
+            room["active_days"] += 1
+            room["last_day"] = max(room["last_day"], day)
+        month = day[:7]
+        if month in monthly:
+            monthly[month] += audio_bytes
+            month_sids[month].add(sid)
+
+    rooms = [{"sid": r["sid"], "audio_secs": _usage_secs(r["audio_bytes"]),
+              "active_days": r["active_days"], "last_day": r["last_day"]}
+             for r in room_totals.values()]
+    rooms.sort(key=lambda r: r["audio_secs"], reverse=True)
+    return {
+        "email": email_lc,
+        "days": days,
+        "months": months,
+        "daily": [{"day": d, "audio_secs": _usage_secs(daily[d]), "session_count": len(day_sids[d])}
+                  for d in day_keys],
+        "monthly": [{"month": m, "audio_secs": _usage_secs(monthly[m]),
+                     "session_count": len(month_sids[m])} for m in month_keys],
+        "totals": {
+            "today_secs": _usage_secs(daily[day_keys[-1]]),
+            "month_secs": _usage_secs(monthly[month_keys[-1]]),
+            "range_secs": _usage_secs(sum(daily.values())),
+            "range_sessions": len(room_totals),
+        },
+        "rooms": rooms[:_USAGE_ROOM_ROWS],
+    }
+
+
+@app.get("/api/usage", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def get_my_usage(request: Request, days: int = 30, months: int = 12):
+    """Your own audio usage, bucketed by UTC day and by month.
+
+    `days` (1–365) and `months` (1–36) size the two series; both end today.
+    """
+    ident = await require_identity(request)
+    days, months = _clamp_usage_window(days, months)
+    return await _usage_report(ident.email, days, months)
+
+
+@app.get("/api/users/{email}/usage", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def admin_user_usage(request: Request, email: str, days: int = 30, months: int = 12):
+    """Audio usage for one account (admin only). Same shape as /api/usage."""
+    await require_admin(request)
+    if not validate_email_format(email):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    days, months = _clamp_usage_window(days, months)
+    return await _usage_report(email.strip().lower(), days, months)
+
+
 @app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def dashboard(request: Request):
     _require_admin_email(request)
@@ -1393,6 +1641,38 @@ async def dashboard(request: Request):
     })
 
 
+@app.get("/dashboard/users/{email}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def admin_user_report(request: Request, email: str):
+    """Per-user report reached from the admin dashboard: usage charts (filled by
+    /api/users/{email}/usage) plus the account's all-time room totals."""
+    _require_admin_email(request)
+    if not validate_email_format(email):
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    email_lc = email.strip().lower()
+    user = await users_collection.find_one({"email": email_lc}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    _isoformat_fields(user, "created_at", "last_login_at")
+    rooms = await rooms_collection.find(
+        {"admin_email": email_lc},
+        {"_id": 0, "sid": 1, "created_at": 1, "admin_last_heartbeat": 1, "audio_duration_secs": 1},
+    ).sort("created_at", -1).to_list(length=200)
+    total_secs = 0.0
+    for room in rooms:
+        _isoformat_fields(room, "created_at", "admin_last_heartbeat")
+        secs = room.get("audio_duration_secs") or 0
+        total_secs += secs
+        room["audio_display"] = _format_audio_duration(secs)
+    return templates.TemplateResponse("user_report.html", {
+        "request": request,
+        "user": user,
+        "rooms": rooms,
+        "total_audio_display": _format_audio_duration(total_secs),
+        "usage_endpoint": f"/api/users/{quote(email_lc)}/usage",
+        "current_email": _get_session_email(request),
+    })
+
+
 @app.get("/user-dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def user_dashboard(request: Request):
     email, user_uid = _require_logged_in(request)
@@ -1423,6 +1703,7 @@ async def user_dashboard(request: Request):
         "is_realtime_enabled": is_realtime_enabled,
         "permissions": ident.permissions() if ident else [],
         "api_key_prefix": ident.api_key_prefix if ident else None,
+        "usage_endpoint": "/api/usage",
     })
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
@@ -1741,6 +2022,15 @@ async def verify_otp_endpoint(request: Request):
 
     is_admin = _is_admin_email(email)
     return {"status": "ok", "is_admin": is_admin, "redirect": "/dashboard" if is_admin else "/user-dashboard"}
+
+
+@app.post("/api/session/{sid}/viewers/clear", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def clear_session_viewers_endpoint(request: Request, sid: str):
+    """Clear text on connected viewers without changing stored transcriptions."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _verify_session_lock_holder(request, sid)
+    await _publish_viewer_clear(sid)
+    return {"status": "ok"}
 
 
 @app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
@@ -3089,21 +3379,10 @@ async def heartbeat(request: Request, sid: str):
     sid = sanitize_query_param(sid, "session ID")
     # Heartbeat refreshes the single-holder lock, so it stays gated on the
     # lock's secret_key (not mere ownership) — only the active panel holds it.
-    await _verify_session_lock_holder(request, sid)
-    now = datetime.now(timezone.utc)
-    update = {"admin_last_heartbeat": now, "updated_at": now}
+    room = await _verify_session_lock_holder(request, sid)
     viewer_count = await _viewer_presence_op(sid, label="viewer count heartbeat")
     response: dict = {"status": "ok", "viewer_count": viewer_count}
     scribe_manager = active_scribe_managers.get(sid)
-    if scribe_manager and scribe_manager.audio_bytes_total > 0:
-        stats = scribe_manager.get_usage_stats()
-        audio_fields = {
-            "audio_bytes": stats["audio_bytes"],
-            "audio_duration_secs": stats["audio_duration_secs"],
-            "audio_chunks": stats["audio_chunks"],
-        }
-        update.update(audio_fields)
-        response.update(audio_fields)
     if scribe_manager and scribe_manager.is_running:
         # Refresh the TTL so an active session is never evicted mid-recording.
         active_scribe_managers[sid] = scribe_manager
@@ -3113,7 +3392,26 @@ async def heartbeat(request: Request, sid: str):
         # the 60s default expiry from evicting it mid-commit and silently
         # dropping committed translations.
         active_translation_managers[sid] = translation_manager
-    await rooms_collection.update_one({"sid": sid}, {"$set": update})
+    # One critical section per session: the absolutes written to the room and the
+    # delta written to the daily rollup must describe the same snapshot, and a
+    # stale absolute must never land on top of a newer one.
+    async with _get_or_create_lock(_usage_flush_locks, sid):
+        now = datetime.now(timezone.utc)
+        update = {"admin_last_heartbeat": now, "updated_at": now}
+        if scribe_manager and scribe_manager.audio_bytes_total > 0:
+            audio_fields = scribe_manager.get_usage_stats()
+            update.update(audio_fields)
+            response.update(audio_fields)
+            # Split the same audio into the owner's per-day rollup. The room keeps
+            # absolutes, so the two writes stay consistent: summing a room's daily
+            # rows reproduces the room's counters.
+            delta = scribe_manager.flush_usage_delta()
+            if delta and not await _record_room_usage(room, delta, now):
+                # The rollup did not take it and the room only stores absolutes,
+                # so nothing would ever bill this audio again: un-reserve it and
+                # let the next heartbeat retry.
+                scribe_manager.rollback_usage_delta(delta)
+        await rooms_collection.update_one({"sid": sid}, {"$set": update})
     return response
 
 @app.delete("/api/sessions/{sid}", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
@@ -3122,7 +3420,11 @@ async def delete_session(request: Request, sid: str):
     Once deleted, anyone can claim the session again. Primary owner only —
     co-owners cannot release the session out from under the owner."""
     sid = sanitize_query_param(sid, "session ID")
-    await _require_session_primary_owner(request, sid)
+    _, room = await _require_session_primary_owner(request, sid)
+    # Bill whatever the outgoing owner streamed since the last heartbeat and drop
+    # the live manager before the room loses its owner — the next claimant must
+    # not inherit its counters.
+    await _release_session_usage(sid, room)
     await rooms_collection.update_one(
         {"sid": sid},
         {"$set": {
@@ -3324,8 +3626,17 @@ async def _process_transcription_update(session_id, sync_data):
                 translated = carried_partial_result(cached_partial, sync_data).get("translated")
                 sync_data["result"] = {"translated": translated} if translated else {}
             else:
-                await redis_client.setex(partial_key, TRANSCRIPTION_TTL, json.dumps(sync_data))
-                redis_rtts += 1
+                try:
+                    await redis_client.setex(partial_key, TRANSCRIPTION_TTL, json.dumps(sync_data))
+                    redis_rtts += 1
+                except Exception as e:
+                    # Redis is a cache on this path. Keep the live broadcast moving
+                    # instead of failing the caption delivery.
+                    log_exception(
+                        logger,
+                        e,
+                        "Redis partial write error in _process_transcription_update",
+                    )
         else:
             pipe = redis_client.pipeline()
             pipe.zadd(list_key, {json.dumps(sync_data): sync_data["start_time"]})
@@ -3527,26 +3838,14 @@ async def leave_session(socket_id, data):
 async def on_translation_completed(session_id, sync_data):
     await _process_transcription_update(session_id, sync_data)
 
-async def on_scribe_transcription(session_id, transcription):
-    """Callback for Scribe transcription"""
-    # Most partials don't earn an LLM call — scribe's partial_interval and the
-    # translator's own gates rule them out. Ask first, so those cost no Redis round
-    # trip and no deserialization of every language's translations.
-    from .translation_service import GATE_DROP, GATE_FLOW_ONLY
-    manager = _get_or_create_translation_manager(session_id)
-    decision = manager.classify(transcription)
-    if decision == GATE_DROP:
-        return
-    if decision == GATE_FLOW_ONLY:
-        # Untranslated, but the panel's flow shows every partial: broadcast the source
-        # text alone and let _process_transcription_update carry the current
-        # translation over so viewers keep the line they already have.
-        await _process_transcription_update(session_id, {**transcription, "flow_only": True})
-        return
+def on_scribe_transcription(session_id, transcription):
+    """Submit a Scribe transcription to the bounded per-session manager.
 
-    # The translator only needs the last few committed segments for context.
-    cached_data = await get_cached_transcription(session_id, num_committed=5)
-    await manager.put(session_id, transcription.copy(), cached_data, redis_client)
+    Submission performs no I/O, so the provider receive loop stays responsive
+    without creating one detached task per transcript.
+    """
+    manager = _get_or_create_translation_manager(session_id)
+    manager.submit(session_id, transcription.copy(), redis_client)
 
 @sio.event
 async def realtime_connect(socket_id, data):

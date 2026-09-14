@@ -38,6 +38,10 @@ _KEYWORD_STORE_CAP = _KEYWORD_CAP * 2  # store 2x so low-freq words can recover
 # wastes calls and is a major source of caption flicker; the LLM tends to
 # rewrite the whole sentence even when only one word was added.
 _MIN_PARTIAL_DELTA_CHARS = 4
+# Fixed local budget for one caption's cache write, broadcast and publish, so a
+# blackholed Redis cannot park a lane (or shutdown) forever.
+_DELIVERY_TIMEOUT_SECS = 10.0
+
 
 # Outcomes of TranslationQueueManager.classify(): translate it, broadcast the source
 # text alone (the flow shows every partial, translation stays on its own interval),
@@ -805,56 +809,77 @@ async def translate_transcription(
 class TranslationQueueManager:
     _COMMIT_QUEUE_MAXSIZE = 50  # bound commit queue to prevent OOM under slow LLM
 
-    def __init__(self, callback):
+    def __init__(self, callback, cache_loader):
         self.callback = callback
+        self.cache_loader = cache_loader
         self.partial_task = None
-        self._pending_partial = None  # latest partial waiting for in-flight to finish
+        self.flow_task = None
+        # Each partial lane has one replaceable pending slot. This keeps input
+        # bounded while preserving translated partial cadence separately from the
+        # higher-frequency source-only flow updates.
+        self._pending_partial = None
+        self._pending_flow = None
         self.commit_queue = asyncio.Queue(maxsize=self._COMMIT_QUEUE_MAXSIZE)
         # Most recently dispatched partial. Its text gates tiny extensions that would
         # only cause LLM rewrites without giving the reader new content; its segment
         # decides whether a commit gets to drop the claim.
         self._claimed_partial = None
-        # Segment of the partial currently translating, so a commit tears down only
-        # partial work it actually supersedes instead of killing the live segment's.
+        # Segment of each in-flight partial lane, so a commit tears down only work it
+        # supersedes instead of killing the live segment's updates.
         self._inflight_partial_start: float | None = None
+        self._inflight_flow_start: float | None = None
         # Segment of the newest commit accepted into the queue: everything at or
-        # before it is superseded. Partials for *later* segments keep flowing while
-        # that commit translates — a commit can hold the queue for tens of seconds
-        # (correct() plus _COMMIT_RETRIES worth of translate()), and parking every
-        # partial behind it froze the caption on a segment scribe had already closed.
+        # before it is superseded. Partials for later segments keep flowing while
+        # that commit translates.
         self._committed_through = float("-inf")
         self.is_running = False
         self.task = None
 
-    async def start(self):
+    def start(self):
+        if self.is_running:
+            return
         self.is_running = True
-        self.task = asyncio.create_task(self._loop())
+        self.task = asyncio.create_task(self._loop(), name="translation-commit-worker")
 
     async def stop(self):
+        # Clearing is_running blocks new submissions and stops either lane from
+        # rescheduling its pending item, so the drain below cannot be extended.
         self.is_running = False
         self._pending_partial = None
+        self._pending_flow = None
         self._claimed_partial = None
         self._inflight_partial_start = None
+        self._inflight_flow_start = None
         self._committed_through = float("-inf")
-        partial_task, self.partial_task = self.partial_task, None
-        if partial_task:
-            partial_task.cancel()
-            try:
-                await partial_task
-            except (asyncio.CancelledError, Exception):
-                pass
-        worker_task, self.task = self.task, None
-        if worker_task:
-            worker_task.cancel()
-            try:
-                await worker_task
-            except (asyncio.CancelledError, Exception):
-                pass
 
-        # A stopped manager is never restarted. Release every queued item's
-        # transcription context immediately instead of retaining up to 50 copies
-        # until the manager itself is garbage-collected. The worker is stopped first,
-        # so no coroutine can race this drain or consume an item between get/task_done.
+        # Commits are history, and Scribe submits its last open segment from its own
+        # stop(), so accepted commits are finished before the worker is cancelled.
+        # Partials are replaceable snapshots and are dropped instead.
+        if self.task is not None and not self.commit_queue.empty():
+            try:
+                async with asyncio.timeout(_DELIVERY_TIMEOUT_SECS):
+                    await self.commit_queue.join()
+            except TimeoutError:
+                logger.error(
+                    "commit_queue drain timed out after %.1fs; queue_depth=%d",
+                    _DELIVERY_TIMEOUT_SECS,
+                    self.commit_queue.qsize(),
+                )
+
+        tasks = [
+            task for task in (self.partial_task, self.flow_task, self.task)
+            if task is not None
+        ]
+        self.partial_task = None
+        self.flow_task = None
+        self.task = None
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        # A stopped manager is never restarted. Release queued commits immediately
+        # instead of retaining their transcription data until garbage collection.
         while True:
             try:
                 self.commit_queue.get_nowait()
@@ -874,121 +899,160 @@ class TranslationQueueManager:
         return (self._claimed_partial or {}).get("text", "") or ""
 
     def classify(self, sync_data):
-        """Gate a transcription before the caller fetches its cached context.
-
-        Returns one of GATE_DISPATCH / GATE_FLOW_ONLY / GATE_DROP. Commits always
-        dispatch. Call it exactly once per transcription, immediately before put():
-        on GATE_DISPATCH it *claims* the partial slot, so put() only re-checks what
-        can change across the caller's cache fetch. Staying synchronous is what makes
-        that safe — the check and the claim happen in one event-loop step, so two
-        concurrent partials can't both pass on the same text.
-        """
+        """Classify and claim a transcription in one event-loop step."""
         if sync_data.get("partial") is not True:
             return GATE_DISPATCH
-        # Drop partials for a segment scribe has already closed; the broadcast path
-        # would reject them again as skip_older_partial.
         if self._stale(sync_data):
             return GATE_DROP
-        # scribe already decided this one lands inside its partial_interval.
         if sync_data.get("flow_only"):
             return GATE_FLOW_ONLY
-        # Throttle by content delta: don't translate partials whose source text grew
-        # by fewer than _MIN_PARTIAL_DELTA_CHARS chars. A shrinking text
-        # (negative delta) means ASR corrected itself — always pass that
-        # through since it's a meaningful change worth re-translating.
         new_text = sync_data.get("text", "") or ""
         delta = len(new_text) - len(self._claimed_text())
+        # A shrinking text (negative delta) means ASR corrected itself, which is
+        # always worth retranslating; only small growth is throttled.
         if 0 <= delta < _MIN_PARTIAL_DELTA_CHARS:
             return GATE_FLOW_ONLY
         self._claimed_partial = sync_data
         return GATE_DISPATCH
 
-    async def put(self, session_id, sync_data, cached_data, redis_client):
-        item = (session_id, sync_data, cached_data, redis_client)
+    def submit(self, session_id, sync_data, redis_client):
+        """Accept an event without awaiting I/O.
+
+        The caller is the Scribe receive loop, so submission must stay synchronous
+        and bounded. Each partial lane keeps at most one in-flight and one pending
+        item; commits use the existing bounded queue.
+        """
+        if not self.is_running:
+            return
+
+        decision = self.classify(sync_data)
+        if decision == GATE_DROP:
+            return
+
+        if decision == GATE_FLOW_ONLY:
+            flow_data = {**sync_data, "flow_only": True}
+            item = (session_id, flow_data)
+            if self.flow_task and not self.flow_task.done():
+                self._pending_flow = item
+            else:
+                self._inflight_flow_start = segment_start(flow_data)
+                self.flow_task = asyncio.create_task(
+                    self._process_flow(*item), name=f"translation-flow-{session_id}"
+                )
+            return
+
+        item = (session_id, sync_data, redis_client)
         if sync_data.get("partial") is True:
-            # classify() already gated this partial and claimed the slot for its
-            # text; anything claimed since means this one is stale. The caller awaits a
-            # cache fetch between the two calls and scribe_manager fires those callbacks
-            # concurrently, so a slow fetch can land here after a newer partial's and
-            # would otherwise push the older text out as the newest one.
-            if (sync_data.get("text", "") or "") != self._claimed_text():
-                return
-            # The commit closing this segment can also land in that same window, and
-            # only put() sees it. Re-check rather than spend an LLM call on text the
-            # broadcast path would just reject as skip_older_partial.
-            if self._stale(sync_data):
-                return
             if self.partial_task and not self.partial_task.done():
-                # Replace pending slot with the latest partial; it will be
-                # dispatched as soon as the in-flight translation finishes.
                 self._pending_partial = item
             else:
                 self._inflight_partial_start = segment_start(sync_data)
-                self.partial_task = asyncio.create_task(self._process_partial(*item))
-        else:
-            start = segment_start(sync_data)
-            if start is not None:
-                self._committed_through = max(self._committed_through, start)
-            # Tear down only the partial work this commit supersedes; partials for the
-            # segment scribe opened after it have to survive.
-            if (self.partial_task and not self.partial_task.done()
-                    and self._superseded(self._inflight_partial_start)):
-                self.partial_task.cancel()
-            if self._pending_partial is not None and self._stale(self._pending_partial[1]):
-                self._pending_partial = None
-            if self._stale(self._claimed_partial):
-                self._claimed_partial = None
-            if self.commit_queue.full():
-                try:
-                    self.commit_queue.get_nowait()
-                    self.commit_queue.task_done()
-                except asyncio.QueueEmpty:
-                    pass
-                logger.warning(
-                    f"[commit_queue] queue full, dropped oldest item "
-                    f"for session {item[0]}"
+                self.partial_task = asyncio.create_task(
+                    self._process_partial(*item), name=f"translation-partial-{session_id}"
                 )
-            await self.commit_queue.put(item)
+            return
+
+        start = segment_start(sync_data)
+        if start is not None:
+            self._committed_through = max(self._committed_through, start)
+
+        if (self.partial_task and not self.partial_task.done()
+                and self._superseded(self._inflight_partial_start)):
+            self.partial_task.cancel()
+        if (self.flow_task and not self.flow_task.done()
+                and self._superseded(self._inflight_flow_start)):
+            self.flow_task.cancel()
+        if self._pending_partial is not None and self._stale(self._pending_partial[1]):
+            self._pending_partial = None
+        if self._pending_flow is not None and self._stale(self._pending_flow[1]):
+            self._pending_flow = None
+        if self._stale(self._claimed_partial):
+            self._claimed_partial = None
+
+        if self.commit_queue.full():
+            try:
+                self.commit_queue.get_nowait()
+                self.commit_queue.task_done()
+            except asyncio.QueueEmpty:
+                pass
+            logger.warning(
+                "[commit_queue] queue full, dropped oldest item for session %s",
+                session_id,
+            )
+        self.commit_queue.put_nowait(item)
+
+    async def _load_context(self, session_id):
+        return await self.cache_loader(session_id, num_committed=5)
+
+    async def _deliver(self, session_id, result_data):
+        try:
+            async with asyncio.timeout(_DELIVERY_TIMEOUT_SECS):
+                await self.callback(session_id, result_data)
+        except TimeoutError:
+            logger.error(
+                "Transcription delivery timed out after %.1fs for session %s",
+                _DELIVERY_TIMEOUT_SECS,
+                session_id,
+            )
+        except Exception as e:
+            log_exception(logger, e, f"Transcription delivery error for session {session_id}")
 
     async def _loop(self):
-        while self.is_running:
+        # Runs until cancelled by stop(), which drains accepted commits first.
+        while True:
+            item = await self.commit_queue.get()
             try:
-                item = await self.commit_queue.get()
-                await self._process(*item)
-                self.commit_queue.task_done()
-            except asyncio.CancelledError:
-                break
+                session_id, sync_data, redis_client = item
+                cached_data = await self._load_context(session_id)
+                await self._process(session_id, sync_data, cached_data, redis_client)
             except Exception as e:
                 log_exception(logger, e, "Queue loop error")
-            await asyncio.sleep(0.01)
+            finally:
+                self.commit_queue.task_done()
 
-    async def _process_partial(self, session_id, sync_data, cached_data, redis_client):
-        completed = await self._process(session_id, sync_data, cached_data, redis_client)
-        # Dispatch the next queued partial if one arrived while we were in-flight,
-        # unless a commit has since closed its segment.
-        pending, self._pending_partial = self._pending_partial, None
-        self._inflight_partial_start = None
-        if pending is not None and not self._stale(pending[1]):
-            # pending was snapshotted while this request was still in flight, so its
-            # cached partial is one translation behind. Hand it the result we just
-            # produced directly; waiting for the callback to persist it would race
-            # the next dispatch and an extra Redis read would not fix that race.
-            if completed and segment_start(completed) == segment_start(pending[1]):
-                sid, data, context, redis = pending
-                pending = (sid, data, {**context, "partial": completed}, redis)
-            self._inflight_partial_start = segment_start(pending[1])
-            self.partial_task = asyncio.create_task(self._process_partial(*pending))
+    async def _process_flow(self, session_id, sync_data):
+        try:
+            await self._deliver(session_id, sync_data)
+        finally:
+            pending, self._pending_flow = self._pending_flow, None
+            self._inflight_flow_start = None
+            if pending is not None and self.is_running and not self._stale(pending[1]):
+                self._inflight_flow_start = segment_start(pending[1])
+                self.flow_task = asyncio.create_task(
+                    self._process_flow(*pending), name=f"translation-flow-{pending[0]}"
+                )
+            else:
+                self.flow_task = None
+
+    async def _process_partial(self, session_id, sync_data, redis_client):
+        try:
+            cached_data = await self._load_context(session_id)
+            await self._process(session_id, sync_data, cached_data, redis_client)
+        except Exception as e:
+            log_exception(logger, e, f"Partial queue error for session {session_id}")
+        finally:
+            pending, self._pending_partial = self._pending_partial, None
+            self._inflight_partial_start = None
+            if pending is not None and self.is_running and not self._stale(pending[1]):
+                self._inflight_partial_start = segment_start(pending[1])
+                self.partial_task = asyncio.create_task(
+                    self._process_partial(*pending), name=f"translation-partial-{pending[0]}"
+                )
+            else:
+                self.partial_task = None
 
     async def _process(self, session_id, sync_data, cached_data, redis_client):
         try:
             result_data = await translate_transcription(
-                session_id, sync_data, cached_data, redis_client, skip_correction=REALTIME_SETTINGS.get('SKIP_CORRECTION', False)
+                session_id,
+                sync_data,
+                cached_data,
+                redis_client,
+                skip_correction=REALTIME_SETTINGS.get("SKIP_CORRECTION", False),
             )
-            # The partial key is cleared by the callback's broadcast path, which owns
-            # it and holds the per-session lock (see _should_delete_partial).
-            asyncio.create_task(self.callback(session_id, result_data))
-            return result_data
-        except asyncio.CancelledError:
-            logger.debug(f"Translation task cancelled for session {session_id}")
         except Exception as e:
             log_exception(logger, e, f"Process translation error for session {session_id}")
+            return None
+
+        await self._deliver(session_id, result_data)
+        return result_data
