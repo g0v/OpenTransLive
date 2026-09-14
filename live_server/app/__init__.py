@@ -838,30 +838,14 @@ async def _get_recent_committed_segments(sid: str, limit: int = 50) -> list[dict
 
     return await _query_committed_segments(sid, limit)
 
-
-async def _get_latest_committed_segment(sid: str) -> dict | None:
-    """Load the newest committed segment for a newly joined Socket.IO client."""
-    try:
-        raw_segments = await redis_client.zrange(f"transcription:{sid}:list", -1, -1)
-    except Exception as e:
-        log_exception(logger, e, f"Redis latest segment error for {_hash_token(sid)}")
-        return None
-
-    if not raw_segments:
-        return None
-    return _parse_cached_segment(raw_segments[0], sid, "latest")
-
-
 async def _emit_joined_session(socket_id: str, session_id: str, viewer_count: int) -> None:
-    """Confirm a room join and backfill the latest commit exactly once per join."""
+    """Confirm a room join and backfill recent commits in ascending time order."""
     payload = {
         'session_id': session_id,
         'authorized': True,
         'viewer_count': viewer_count,
+        'committed_segments': await _get_recent_committed_segments(session_id),
     }
-    last_committed = await _get_latest_committed_segment(session_id)
-    if last_committed:
-        payload['last_committed'] = last_committed
     await sio.emit('joined_session', payload, to=socket_id)
 
 
@@ -2681,7 +2665,7 @@ async def update_session_segment_endpoint(request: Request, sid: str):
     return {"status": "ok", "segment": new_seg}
 
 
-@app.post("/api/session/{sid}/segments/retranslate", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+@app.post("/api/session/{sid}/segments/retranslate", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_identifier))])
 async def retranslate_session_segment_endpoint(request: Request, sid: str):
     """Retranslate one committed segment and fan the revision out to live viewers.
 
@@ -2717,7 +2701,6 @@ async def retranslate_session_segment_endpoint(request: Request, sid: str):
         float(start_time),
         corrected,
     )
-    await _publish_segment_updated(sid, segment)
     return {"status": "ok", "segment": segment}
 
 
@@ -2983,7 +2966,7 @@ async def _load_committed_segment_with_context(
 
 
 async def _persist_segment_revision(sid: str, original: dict, revised: dict) -> None:
-    """Atomically replace one committed segment's corrected and translated result."""
+    """Atomically update one commit while preserving translations for inactive languages."""
     start_time = float(original["start_time"])
     # Sourced from the pre-revision document, which is what makes "only the result
     # changes" structurally true rather than incidentally true.
@@ -2993,6 +2976,10 @@ async def _persist_segment_revision(sid: str, original: dict, revised: dict) -> 
         if field in original
     }
     result = revised["result"]
+    result["translated"] = {
+        **((original.get("result") or {}).get("translated") or {}),
+        **result["translated"],
+    }
     set_fields = {
         **preserved,
         "result.corrected": result["corrected"],
@@ -3080,6 +3067,7 @@ async def _retranslate_committed_segment(
 
         canonical = _segment_wire_shape(revised)
         await _persist_segment_revision(sid, original, canonical)
+        await _publish_segment_updated(sid, canonical)
         return canonical
 
 

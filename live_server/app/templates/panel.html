@@ -2309,6 +2309,8 @@
       let partialEndTime = 0
       let editingStartTime = null
       let editPending = false
+      let awaitingJoinSnapshot = true
+      const liveSegmentsSinceConnect = new Set()
 
       function updateCount() {
         if (flowCountEl) flowCountEl.textContent = segmentCount + (segmentCount === 1 ? ' segment' : ' segments')
@@ -2528,24 +2530,40 @@
         }
       })
 
+      socket.on('connect', function () {
+        awaitingJoinSnapshot = true
+        liveSegmentsSinceConnect.clear()
+      })
+
       socket.on('transcription_update', function (data) {
         if (data.partial) {
           updatePartial(data)
         } else {
+          if (awaitingJoinSnapshot) liveSegmentsSinceConnect.add(segmentKey(data.start_time))
           updatePartial(null)
           renderCommitted(data, true)
         }
       })
 
       socket.on('segment_updated', function (data) {
-        if (!data || data.session_id !== sessionId) return
+        if (!data || data.session_id !== sessionId || !data.segment) return
+        if (awaitingJoinSnapshot) {
+          liveSegmentsSinceConnect.add(segmentKey(data.segment.start_time))
+        }
         replaceCommitted(data.segment)
       })
 
-      // Fresh joins and reconnects receive one latest committed snapshot instead
-      // of making every partial carry the same full segment.
+      // Reconcile every visible row after a reconnect. Live events can arrive while
+      // the server is loading this snapshot, so never overwrite those newer values.
       socket.on('joined_session', function (data) {
-        if (data.authorized) renderCommitted(data.last_committed, false)
+        if (!data.authorized) return
+        const segments = Array.isArray(data.committed_segments) ? data.committed_segments : []
+        for (const segment of segments) {
+          if (liveSegmentsSinceConnect.has(segmentKey(segment.start_time))) continue
+          if (!replaceCommitted(segment)) renderCommitted(segment, false)
+        }
+        awaitingJoinSnapshot = false
+        liveSegmentsSinceConnect.clear()
       })
 
       socket.on('session_settings_updated', function (data) {
