@@ -839,8 +839,9 @@
       if (!res.ok) return
       const data = await res.json()
       const sel = document.getElementById('stt-provider-select')
-      if (sel) sel.value = data.provider || ''
-      renderScribeLanguageOptions(data.provider || data.default)
+      const provider = data.provider || data.default
+      if (sel) sel.value = provider
+      renderScribeLanguageOptions(provider)
     } catch (e) {
       console.error('Failed to load STT provider:', e)
     }
