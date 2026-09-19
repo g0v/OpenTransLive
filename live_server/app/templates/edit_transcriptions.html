@@ -99,10 +99,12 @@
           <textarea data-field="corrected" rows="1"
             class="seg-input w-full bg-gray-900 border border-gray-700 text-gray-100 text-sm rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none resize-y">{{ (seg.result or {}).corrected or '' }}</textarea>
           {% set translated = (seg.result or {}).translated or {} %}
-          {% for lang, text in translated.items() %}
+          {% for lang in languages %}
+          {% if lang in translated %}
           <label class="text-xs text-gray-500 font-mono self-start pt-1.5 break-all">{{ lang }}</label>
           <textarea data-field="translated" data-lang="{{ lang }}" rows="1"
-            class="seg-input w-full bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none resize-y">{{ text }}</textarea>
+            class="seg-input w-full bg-gray-900 border border-gray-700 text-gray-200 text-sm rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none resize-y">{{ translated[lang] }}</textarea>
+          {% endif %}
           {% endfor %}
         </div>
         <div class="mt-2 flex items-center justify-end gap-2">
