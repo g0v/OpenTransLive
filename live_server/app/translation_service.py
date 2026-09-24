@@ -268,7 +268,7 @@ async def get_session_ai_provider(redis_client, session_id) -> str:
 
 
 async def get_session_partial_interval(session_id) -> float | None:
-    """Return the owner's PARTIAL_INTERVAL override (None = use config default)."""
+    """Return the owner's partial-transcript interval override (None = config default)."""
     pi = (await _resolve_owner_overrides(session_id)).get("partial_interval")
     return pi if isinstance(pi, (int, float)) and not isinstance(pi, bool) else None
 

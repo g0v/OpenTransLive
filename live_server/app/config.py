@@ -10,12 +10,13 @@ Copy secret/config.example.toml to secret/config.toml and fill in your values::
 
 This module only parses config.toml into the module-level settings the rest of
 the app imports (SETTINGS, EMAIL_SETTINGS, MONGODB_SETTINGS, REALTIME_SETTINGS,
-REDIS_URL, IS_PRODUCTION), so those imports keep working unchanged.
+SCRIBE_SETTINGS, REDIS_URL, IS_PRODUCTION), so those imports keep working unchanged.
 
 Any value can be overridden by an environment variable of the same name (e.g.
 OPENAI_API_KEY, SMTP_HOST, REDIS_URL); the env value is coerced to match the
-type of the value in config.toml.
+type of its configured or committed default value.
 """
+import math
 import os
 import tomllib
 from pathlib import Path
@@ -62,6 +63,7 @@ def load_secret_toml(name: str, *, example_fallback: bool = False) -> dict:
         )
 
 
+_SCRIBE_DEFAULTS = load_secret_toml("config.example")["scribe_settings"]
 _CONFIG = load_secret_toml("config")
 
 
@@ -94,4 +96,37 @@ SETTINGS: dict = _CONFIG.get("settings", {})
 EMAIL_SETTINGS: dict = _CONFIG.get("email_settings", {})
 MONGODB_SETTINGS: dict = _CONFIG.get("mongodb_settings", {})
 REALTIME_SETTINGS: dict = _CONFIG.get("realtime_settings", {})
+
+_configured_scribe_settings = _CONFIG.get("scribe_settings", {})
+SCRIBE_SETTINGS: dict = dict(_SCRIBE_DEFAULTS)
+
+# Preserve deployments created from the old example, where the partial cadence
+# lived under [realtime_settings] as PARTIAL_INTERVAL. An explicitly configured
+# new key wins; its environment override is applied below and wins over both.
+if "PARTIAL_INTERVAL_SECS" not in _configured_scribe_settings:
+    if (legacy_partial_interval := os.environ.get("PARTIAL_INTERVAL")) is not None:
+        SCRIBE_SETTINGS["PARTIAL_INTERVAL_SECS"] = _coerce(
+            SCRIBE_SETTINGS["PARTIAL_INTERVAL_SECS"], legacy_partial_interval
+        )
+    elif "PARTIAL_INTERVAL" in REALTIME_SETTINGS:
+        SCRIBE_SETTINGS["PARTIAL_INTERVAL_SECS"] = REALTIME_SETTINGS[
+            "PARTIAL_INTERVAL"
+        ]
+
+SCRIBE_SETTINGS.update(_configured_scribe_settings)
+for _key, _value in SCRIBE_SETTINGS.items():
+    SCRIBE_SETTINGS[_key] = _apply_env(_key, _value)
+
+for _key in ("RECONNECT_BASE_DELAY_SECS", "RECONNECT_MAX_DELAY_SECS"):
+    _value = SCRIBE_SETTINGS[_key]
+    if (
+        isinstance(_value, bool)
+        or not isinstance(_value, (int, float))
+        or not math.isfinite(_value)
+        or _value <= 0
+    ):
+        raise RuntimeError(
+            f"scribe_settings.{_key} must be a finite number greater than zero"
+        )
+
 REDIS_URL: str = str(_apply_env("REDIS_URL", _CONFIG.get("redis_url", "redis://redis:6379")))

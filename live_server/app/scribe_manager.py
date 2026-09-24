@@ -18,6 +18,7 @@ break those wire contracts for nothing, so it stays the generic term here.
 """
 import asyncio
 import json
+import math
 import random
 import re
 import time
@@ -26,7 +27,7 @@ from urllib.parse import urlencode
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
 from datetime import datetime, timezone
-from .config import REALTIME_SETTINGS
+from .config import REALTIME_SETTINGS, SCRIBE_SETTINGS
 from .logger_config import setup_logger, log_exception
 from .text_script import (approx_word_count, dominant_script, should_force_traditional,
                           to_taiwan_traditional)
@@ -36,59 +37,47 @@ encoding = tiktoken.get_encoding("o200k_base")
 
 # No retry ceiling on purpose: as long as audio keeps arriving we keep trying to
 # reconnect, because a session that silently stops transcribing mid-stream is worse
-# than a long gap. What bounds the loop is not a count but rate: attempts back off to
-# _RECONNECT_MAX_DELAY and only a connection that proves healthy clears the backoff
-# (_HEALTHY_CONNECTION_SECS), and when audio really stops the _IDLE_TIMEOUT_SECS
-# watchdog ends the session.
-_RECONNECT_BASE_DELAY = 2.0   # seconds; doubles each attempt, capped at 60s
-_RECONNECT_MAX_DELAY = 60.0
-_MAX_BACKOFF_SHIFT = 10       # cap the doubling exponent; 2.0 * 2**10 already exceeds the max delay
-_STATUS_ALERT_ATTEMPT = 2     # attempt number from which the panel is told transcription is interrupted
-# A connection must survive this long to count as healthy and clear the backoff.
-# ElevenLabs can accept the socket and close it immediately (quota / plan errors);
-# resetting the retry counter on connect alone would make every such cycle retry with
-# delay 0, i.e. an unthrottled handshake loop for the whole stream.
-_HEALTHY_CONNECTION_SECS = 30
-_WS_PING_INTERVAL = 15        # keepalive ping cadence; primary dead-socket detector
-_WS_PING_TIMEOUT = 10         # drop the connection if a pong is missing this long
-_RECV_POLL_INTERVAL = 2.0     # seconds; recv() timeout granularity for stall checks
-# Application-level backstop for a socket that stays ping-alive but stops producing
-# transcripts, mid-segment: partials should keep coming, and a short commit closes the
-# segment within _COMMIT_TIMEOUT_SECS, so a tight timeout is both safe and fast. It must
-# stay comfortably above _WS_PING_TIMEOUT so keepalive detects real dead sockets first
-# and the two layers don't race into false reconnects. Its between-segments counterpart
-# varies by provider — see IDLE_OUTPUT_STALL_TIMEOUT.
-_OUTPUT_STALL_TIMEOUT = 25
-_SEGMENT_START_OFFSET = 0.3   # seconds subtracted from seg_start_time to account for ASR processing latency
-_IDLE_TIMEOUT_SECS = 60       # stop session after 1 minute with no audio
-_IDLE_CHECK_INTERVAL = 30     # how often the watchdog checks (seconds)
-_MAX_SESSION_SECS = 300       # while audio keeps flowing, proactively restart a connection older than this.
-                              # It bounds ElevenLabs session length (avoids long-run buildup / queue_overflow)
-                              # and stays well inside Gemini Live's hard 10-minute session cap.
-_MAX_PARTIAL_TOKENS = 150     # maximum length of partial transcript; token-based on purpose,
-                              # since what it protects is prompt size and LLM cost
-# Whether a commit is long enough to stand on its own is measured on the text itself,
-# in approximate words (see approx_word_count). Neither of the units this replaces
-# worked. Tokens run ~1.2 characters each in Chinese but ~5.4 in English, so a token
-# floor merges far more aggressively in Latin-script languages — precisely the merging
-# that glues two languages into one segment. Elapsed wall clock is worse: it spans
-# message arrival times, so it carries ASR latency, network jitter and the ~1s of
-# silence VAD waits for before committing, and it is ~0 whenever a commit arrives with
-# no preceding partial. Words are comparable across scripts and are the same number
-# whether or not a partial came first, so one gate covers both paths.
-_MIN_COMMIT_WORDS = 6       # ~6 Han characters, ~7 English words, ~2 Korean eojeol
-_COMMIT_TIMEOUT_SECS = 10     # force-flush buffered short commits after this delay if no follow-up arrives
+# than a long gap. Attempts back off at a configured rate, and only a connection
+# that proves healthy clears the backoff.
+_RECONNECT_BASE_DELAY = SCRIBE_SETTINGS["RECONNECT_BASE_DELAY_SECS"]
+_RECONNECT_MAX_DELAY = SCRIBE_SETTINGS["RECONNECT_MAX_DELAY_SECS"]
+_RECONNECT_JITTER_RATIO = SCRIBE_SETTINGS["RECONNECT_JITTER_RATIO"]
+_MAX_BACKOFF_SHIFT = max(
+    0, math.ceil(math.log2(_RECONNECT_MAX_DELAY / _RECONNECT_BASE_DELAY))
+)
+_STATUS_ALERT_ATTEMPT = SCRIBE_SETTINGS["STATUS_ALERT_ATTEMPT"]
+_HEALTHY_CONNECTION_SECS = SCRIBE_SETTINGS["HEALTHY_CONNECTION_SECS"]
+_WS_PING_INTERVAL = SCRIBE_SETTINGS["WEBSOCKET_PING_INTERVAL_SECS"]
+_WS_PING_TIMEOUT = SCRIBE_SETTINGS["WEBSOCKET_PING_TIMEOUT_SECS"]
+_RECV_POLL_INTERVAL = SCRIBE_SETTINGS["RECEIVE_POLL_INTERVAL_SECS"]
+_OUTPUT_STALL_TIMEOUT = SCRIBE_SETTINGS["OUTPUT_STALL_TIMEOUT_SECS"]
+_SEGMENT_START_OFFSET = SCRIBE_SETTINGS["SEGMENT_START_OFFSET_SECS"]
+_IDLE_TIMEOUT_SECS = SCRIBE_SETTINGS["IDLE_TIMEOUT_SECS"]
+_IDLE_CHECK_INTERVAL = SCRIBE_SETTINGS["IDLE_CHECK_INTERVAL_SECS"]
+_MAX_SESSION_SECS = SCRIBE_SETTINGS["MAX_SESSION_SECS"]
+_MAX_PARTIAL_TOKENS = SCRIBE_SETTINGS["MAX_PARTIAL_TOKENS"]
+_MIN_COMMIT_WORDS = SCRIBE_SETTINGS["MIN_COMMIT_WORDS"]
+_COMMIT_TIMEOUT_SECS = SCRIBE_SETTINGS["COMMIT_TIMEOUT_SECS"]
+_MIN_ALPHABETIC_TRANSCRIPT_CHARS = SCRIBE_SETTINGS["MIN_ALPHABETIC_TRANSCRIPT_CHARS"]
+_HALLUCINATION_MIN_TRANSCRIPT_CHARS = SCRIBE_SETTINGS["HALLUCINATION_MIN_TRANSCRIPT_CHARS"]
+_HALLUCINATION_MIN_REPETITIONS = SCRIBE_SETTINGS["HALLUCINATION_MIN_REPETITIONS"]
+_HALLUCINATION_MAX_UNIT_CHARS = SCRIBE_SETTINGS["HALLUCINATION_MAX_UNIT_CHARS"]
 
-# Audio wire format for every provider here: 16kHz 16-bit mono PCM. Exported
-# because usage reporting converts stored byte counts back into seconds.
-AUDIO_BYTES_PER_SEC = 16000 * 2
+# Fixed wire format shared by both providers; unlike the operational thresholds
+# above, changing these requires changing the provider protocol too.
+_AUDIO_SAMPLE_RATE_HZ = 16000
+_AUDIO_BYTES_PER_SAMPLE = 2
+AUDIO_BYTES_PER_SEC = _AUDIO_SAMPLE_RATE_HZ * _AUDIO_BYTES_PER_SAMPLE
+
 
 class ScribeSessionManager:
     """Provider-agnostic transcription session. Subclass and fill in the hooks."""
 
     _BYTES_PER_SEC = AUDIO_BYTES_PER_SEC
-    _LOG_INTERVAL_BYTES = 30 * AUDIO_BYTES_PER_SEC  # log every 30s of audio
-    _AUDIO_QUEUE_MAXSIZE = 1000         # ~30s of audio; drop oldest when full
+    _LOG_INTERVAL_BYTES = (
+        SCRIBE_SETTINGS["AUDIO_LOG_INTERVAL_SECS"] * AUDIO_BYTES_PER_SEC
+    )
+    _AUDIO_QUEUE_MAXSIZE = SCRIBE_SETTINGS["AUDIO_QUEUE_MAX_CHUNKS"]
 
     # ── Provider surface ──────────────────────────────────────────────────────
     PROVIDER = ""            # short id, matching the STT_PROVIDER setting
@@ -143,7 +132,11 @@ class ScribeSessionManager:
         self.last_recv_mono = time.monotonic()  # last time any message arrived from Scribe
         self._connection_start_mono: float | None = None  # set on each successful ws connect
         self._intentional_restart = False  # set when we deliberately drop the ws to reconnect
-        self.partial_interval = partial_interval if partial_interval else REALTIME_SETTINGS.get('PARTIAL_INTERVAL', 2)
+        self.partial_interval = (
+            partial_interval
+            if partial_interval
+            else SCRIBE_SETTINGS["PARTIAL_INTERVAL_SECS"]
+        )
         self.should_commit = False
         # Prefix holding committed text from segments too short to stand alone.
         # Prepended to subsequent partials/commits so translation gets useful context.
@@ -256,10 +249,10 @@ class ScribeSessionManager:
 
         Call it synchronously when restarting a session (e.g. an operator changing the
         detect language), before stop(). Otherwise this manager's terminal "stopped"
-        still reaches the room, and because the replacement must stay healthy for
-        _HEALTHY_CONNECTION_SECS before it reports "connected", the panel paints
-        Transcribe as disconnected for 30s over a restart that took under a second.
-        Shutdown itself is unaffected — only the reporting stops.
+        still reaches the room, and because the replacement must prove itself before
+        it reports "connected", the panel briefly paints Transcribe as disconnected
+        over a restart that took under a second. Shutdown itself is unaffected — only
+        the reporting stops.
         """
         self.status_callback = None
 
@@ -376,7 +369,7 @@ class ScribeSessionManager:
                     # is wedged (keepalive can stay green) — return to force a clean
                     # reconnect. Deliberately not gated on an open segment: the wedge is
                     # just as likely to start right after a commit, and that state used to
-                    # be invisible here until the _MAX_SESSION_SECS restart 5 minutes later.
+                    # be invisible here until the configured max-session restart.
                     now_mono = time.monotonic()
                     stall_timeout = (_OUTPUT_STALL_TIMEOUT if self.seg_start_time is not None
                                      else self.IDLE_OUTPUT_STALL_TIMEOUT)
@@ -428,17 +421,24 @@ class ScribeSessionManager:
 
     @staticmethod
     def _is_hallucination(text: str) -> bool:
-        """Detect common ASR hallucinations: repetitive patterns or pure digit sequences."""
-        if len(text) < 8:
+        """Detect ASR hallucinations made from a short repeated pattern."""
+        if len(text) < _HALLUCINATION_MIN_TRANSCRIPT_CHARS:
             return False
 
         lower = text.lower().replace(" ", "")
 
         # Detect repetitive unit patterns: hahahaha, lalalala, hmm hmm hmm hmm, etc.
-        for unit_len in range(1, min(len(lower) // 4, 8) + 1):
+        max_unit_chars = min(
+            len(lower) // _HALLUCINATION_MIN_REPETITIONS,
+            _HALLUCINATION_MAX_UNIT_CHARS,
+        )
+        for unit_len in range(1, max_unit_chars + 1):
             unit = lower[:unit_len]
             reps = len(lower) // unit_len
-            if reps >= 4 and lower.startswith(unit * reps):
+            if (
+                reps >= _HALLUCINATION_MIN_REPETITIONS
+                and lower.startswith(unit * reps)
+            ):
                 return True
 
         return False
@@ -452,12 +452,13 @@ class ScribeSessionManager:
             if not transcript:
                 return
             # A minimum length only means something where a single character is not a
-            # word: one or two letters of an alphabetic script ("a", "uh") is almost
-            # always ASR noise, while one or two Han/kana/Hangul characters is a
-            # complete reply — 「はい」「好」「對」「네」 were all being dropped by the
-            # blanket length check this replaces. Longer junk is still caught by
-            # _is_hallucination below.
-            if len(transcript) <= 2 and dominant_script(transcript) not in ("han", "kana", "hangul"):
+            # word: a very short alphabetic fragment is almost always ASR noise, while
+            # one or two Han/kana/Hangul characters can be a complete reply. Longer
+            # junk is still caught by _is_hallucination below.
+            if (
+                len(transcript) < _MIN_ALPHABETIC_TRANSCRIPT_CHARS
+                and dominant_script(transcript) not in ("han", "kana", "hangul")
+            ):
                 return
 
             now = datetime.now(timezone.utc)
@@ -621,8 +622,11 @@ class ScribeSessionManager:
                         _RECONNECT_MAX_DELAY,
                     )
                     if delay:
-                        # Jitter (±25%) so many sessions dropped together don't reconnect in lockstep.
-                        delay *= 0.75 + random.random() * 0.5
+                        # Symmetric jitter keeps sessions dropped together from reconnecting in lockstep.
+                        delay *= (
+                            1 - _RECONNECT_JITTER_RATIO
+                            + random.random() * 2 * _RECONNECT_JITTER_RATIO
+                        )
                         logger.warning(
                             f"[reconnect] waiting {delay:.1f}s before attempt "
                             f"{retry_count} for {self.session_id}"
@@ -744,17 +748,25 @@ class ElevenLabsScribeManager(ScribeSessionManager):
     # committed_transcript, measured at ~36s intervals against the live API. The
     # threshold has to clear that heartbeat with margin, otherwise every quiet stretch
     # would force a reconnect.
-    IDLE_OUTPUT_STALL_TIMEOUT = 60
+    IDLE_OUTPUT_STALL_TIMEOUT = SCRIBE_SETTINGS[
+        "ELEVENLABS_IDLE_OUTPUT_STALL_TIMEOUT_SECS"
+    ]
 
     def _connect_target(self):
         params_dict = {
             "model_id": "scribe_v2_realtime",
-            "audio_format": "pcm_16000",
+            "audio_format": f"pcm_{_AUDIO_SAMPLE_RATE_HZ}",
             "commit_strategy": "vad",
-            "vad_silence_threshold_secs": 1,
-            "vad_threshold": 0.3,
-            "min_speech_duration_ms": 100,
-            "min_silence_duration_ms": 100,
+            "vad_silence_threshold_secs": SCRIBE_SETTINGS[
+                "ELEVENLABS_VAD_SILENCE_THRESHOLD_SECS"
+            ],
+            "vad_threshold": SCRIBE_SETTINGS["ELEVENLABS_VAD_THRESHOLD"],
+            "min_speech_duration_ms": SCRIBE_SETTINGS[
+                "ELEVENLABS_MIN_SPEECH_DURATION_MS"
+            ],
+            "min_silence_duration_ms": SCRIBE_SETTINGS[
+                "ELEVENLABS_MIN_SILENCE_DURATION_MS"
+            ],
             "include_timestamps": "false",
             "enable_logging": "false",
             "disable_logging": "true"
@@ -769,7 +781,8 @@ class ElevenLabsScribeManager(ScribeSessionManager):
         await ws.send(
             '{"message_type":"input_audio_chunk","audio_base_64":"'
             + base64_audio
-            + '","sample_rate":16000,"commit":' + str(commit).lower() + '}'
+            + f'","sample_rate":{_AUDIO_SAMPLE_RATE_HZ},"commit":'
+            + str(commit).lower() + '}'
         )
 
     def _parse_message(self, data: dict):
@@ -804,7 +817,7 @@ class GeminiScribeManager(ScribeSessionManager):
     # for. Keepalive pings and the _MAX_SESSION_SECS restart still catch a dead socket.
     IDLE_OUTPUT_STALL_TIMEOUT = None
 
-    _SETUP_TIMEOUT_SECS = 15
+    _SETUP_TIMEOUT_SECS = SCRIBE_SETTINGS["GEMINI_SETUP_TIMEOUT_SECS"]
 
     def _connect_target(self):
         # The key goes in the query string: that is the documented auth for this socket.
@@ -832,7 +845,10 @@ class GeminiScribeManager(ScribeSessionManager):
 
     async def _send_audio(self, ws, base64_audio: str, commit: bool):
         await ws.send(json.dumps({"realtimeInput": {
-            "audio": {"data": base64_audio, "mimeType": "audio/pcm;rate=16000"},
+            "audio": {
+                "data": base64_audio,
+                "mimeType": f"audio/pcm;rate={_AUDIO_SAMPLE_RATE_HZ}",
+            },
         }}))
         if commit:
             # audioStreamEnd is Live Transcribe's "finalize this turn now" — the same

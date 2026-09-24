@@ -47,6 +47,7 @@ _CONFIG = load_secret_toml("models", example_fallback=True)
 _CORRECT_PROMPT = _CONFIG["prompts"]["correct"]
 _TRANSLATE_PROMPT = _CONFIG["prompts"]["translate"]
 _EXTRACT_KEYWORDS_PROMPT = _CONFIG["prompts"]["extract_keywords"]
+_LANGUAGE_GUIDANCE = _CONFIG.get("language_guidance", {})
 # Optional: a deployer's own models.toml predating the glossary feature has no
 # such prompt, and load_secret_toml replaces the example wholesale rather than
 # merging. Missing prompt/params disable generation (reported as 503) instead of
@@ -273,18 +274,21 @@ class ChatCompletionTranslator(BaseTranslator):
         # Carries its own leading space, so an empty source leaves the Task line
         # exactly as it reads without one.
         source_clause = f" from {source}" if source else ""
+        system_prompt = _TRANSLATE_PROMPT.format(
+            language=language,
+            source=source_clause,
+            tone=tone_desc,
+            keywords=keywords,
+            prev_translation=prev_translation or _NO_PREV,
+        )
+        if guidance := _LANGUAGE_GUIDANCE.get(language):
+            system_prompt = f"{system_prompt}\n\nTarget-language guidance:\n{guidance}"
         body = {
             **self.translate_params,
             "messages": [
                 {
                     "role": self.system_role,
-                    "content": _TRANSLATE_PROMPT.format(
-                        language=language,
-                        source=source_clause,
-                        tone=tone_desc,
-                        keywords=keywords,
-                        prev_translation=prev_translation or _NO_PREV,
-                    ),
+                    "content": system_prompt,
                 },
                 {
                     "role": "user",
