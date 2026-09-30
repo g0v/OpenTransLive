@@ -26,15 +26,15 @@
     <div class="viewer-controls ms-auto flex min-w-0 items-center justify-end gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-md:gap-0.5 max-md:[&>div]:ml-0 max-md:[&>div]:gap-0.5 max-md:[&>div]:pl-1.5">
       <!-- Theme buttons -->
       <div class="flex items-center gap-1 shrink-0">
-        <button id="theme-light" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="Light theme"
+        <button data-theme="light" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="Light theme"
           aria-pressed="false" title="Light theme">
           <iconify-icon icon="ph:sun" width="15" height="15"></iconify-icon>
         </button>
-        <button id="theme-dark" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="Dark theme"
+        <button data-theme="dark" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="Dark theme"
           aria-pressed="false" title="Dark theme">
           <iconify-icon icon="ph:moon" width="15" height="15"></iconify-icon>
         </button>
-        <button id="theme-hc" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="High contrast theme"
+        <button data-theme="high-contrast" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="High contrast theme"
           aria-pressed="false" title="High contrast theme">
           <iconify-icon icon="ph:circle-half" width="15" height="15"></iconify-icon>
         </button>
@@ -60,6 +60,11 @@
 
       <!-- Action buttons -->
       <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
+        <!-- Screen capture + captions -->
+        <button id="share-btn" hidden class="icon-btn icon-btn-sm" aria-label="Present a window with captions (this device only)"
+          title="Present a window with captions (this device only)">
+          <iconify-icon icon="ph:presentation" width="15" height="15"></iconify-icon>
+        </button>
         <!-- QR code button -->
         <div id="qr-area" class="relative">
           <button id="qr-btn" class="icon-btn icon-btn-sm" aria-label="Show QR code" aria-expanded="false"
@@ -98,6 +103,59 @@
   <!-- Grid Layout View -->
   <div id="grid-view" class="hidden flex-1 overflow-hidden bg-[var(--rt-canvas)] p-1 max-md:p-0.5">
     <div id="grid-content" class="rt-text grid h-full w-full gap-1">
+    </div>
+  </div>
+
+  <!-- Screen capture + captions combined view -->
+  <div id="combine-view" class="min-h-0 flex-1 flex-col bg-[var(--rt-canvas)]">
+    <div id="combine-captions" class="rt-text relative flex shrink-0 flex-col overflow-hidden border-b border-[var(--rt-border)] bg-[var(--rt-surface)]"></div>
+    <div class="flex min-h-0 flex-1">
+      <div class="relative min-w-0 flex-1 bg-black flex flex-col">
+        <div class="pointer-events-none inline-flex items-center gap-1.5 rounded-md bg-black px-2 py-1 text-xs text-white/50">
+          <iconify-icon icon="ph:lock-simple" width="13" height="13" aria-hidden="true"></iconify-icon>This screen is only visible on this device.
+        </div>
+        <video id="combine-video" class="flex-1 object-contain" autoplay muted playsinline></video>
+      </div>
+      <aside id="combine-sidebar" class="flex w-64 shrink-0 flex-col gap-4 overflow-y-auto border-l border-[var(--rt-border)] bg-[var(--rt-surface)] p-3 text-sm text-[var(--rt-text)]">
+        <section class="flex flex-col items-center gap-2 text-center">
+          <div class="text-xs font-semibold text-[var(--rt-muted)]">Scan for captions on your phone</div>
+          <img id="combine-qr-img" class="aspect-square w-full rounded-lg bg-white" src="" alt="QR code to open this transcript" />
+          <ul class="w-full space-y-1.5 text-left text-xs">
+            <li class="flex items-center gap-2"><iconify-icon icon="ph:translate" width="14" height="14"></iconify-icon>Pick your own language</li>
+            <li class="flex items-center gap-2"><iconify-icon icon="ph:text-aa" width="14" height="14"></iconify-icon>Adjust text size</li>
+            <li class="flex items-center gap-2"><iconify-icon icon="ph:circle-half" width="14" height="14"></iconify-icon>Dark &amp; high-contrast themes</li>
+          </ul>
+          <div class="w-full text-left">
+            <div class="mb-1 text-xs font-semibold text-[var(--rt-muted)]">Available languages</div>
+            <div id="combine-lang-chips" class="flex flex-wrap gap-1"></div>
+          </div>
+        </section>
+        <section class="mt-auto flex flex-col gap-2 border-t border-[var(--rt-border)] pt-3">
+          <div class="text-xs font-semibold text-[var(--rt-muted)]">Controls</div>
+          <label class="flex flex-col gap-1 text-xs">Caption language
+            <select id="combine-lang-select" class="select-ctrl w-full rounded-md border px-2 py-1 text-sm"></select>
+          </label>
+          <div class="flex items-center gap-1">
+            <span class="flex-1 text-xs">Text size</span>
+            <button id="combine-font-decrease" class="icon-btn icon-btn-sm" aria-label="Decrease font size"><iconify-icon icon="ph:minus" width="16" height="16"></iconify-icon></button>
+            <button id="combine-font-increase" class="icon-btn icon-btn-sm" aria-label="Increase font size"><iconify-icon icon="ph:plus" width="16" height="16"></iconify-icon></button>
+          </div>
+          <div class="flex items-center gap-1">
+            <span class="flex-1 text-xs">Theme</span>
+            <button data-theme="light" class="icon-btn theme-btn icon-btn-sm" aria-label="Light theme" aria-pressed="false" title="Light theme">
+              <iconify-icon icon="ph:sun" width="15" height="15"></iconify-icon>
+            </button>
+            <button data-theme="dark" class="icon-btn theme-btn icon-btn-sm" aria-label="Dark theme" aria-pressed="false" title="Dark theme">
+              <iconify-icon icon="ph:moon" width="15" height="15"></iconify-icon>
+            </button>
+            <button data-theme="high-contrast" class="icon-btn theme-btn icon-btn-sm" aria-label="High contrast theme" aria-pressed="false" title="High contrast theme">
+              <iconify-icon icon="ph:circle-half" width="15" height="15"></iconify-icon>
+            </button>
+          </div>
+          <button id="combine-change-source" type="button" class="inline-flex items-center justify-center gap-1.5 rounded-md border border-[var(--rt-border)] px-3 py-1.5 text-xs hover:bg-[var(--rt-surface-muted)]"><iconify-icon icon="ph:arrows-clockwise" width="14" height="14"></iconify-icon>Change source</button>
+          <button id="combine-stop" type="button" class="inline-flex items-center justify-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"><iconify-icon icon="ph:stop-circle" width="14" height="14"></iconify-icon>Stop presenting</button>
+        </section>
+      </aside>
     </div>
   </div>
 
@@ -161,6 +219,34 @@
     /* --grid-row-h is set (in px) only when rows are pinned to a fixed height;
        otherwise rows split the container evenly. */
     grid-template-rows: repeat(var(--grid-rows, 1), var(--grid-row-h, 1fr));
+  }
+
+  /* Screen capture + captions combined view. Hidden via the root class (not
+     per-element `hidden`) so applyVisibilityChange can't re-show the normal
+     views mid-capture; !important beats its Tailwind `hidden` toggles. */
+  #app-root:not(.combine-active) #combine-view {
+    display: none;
+  }
+
+  #app-root.combine-active #combine-view {
+    display: flex;
+  }
+
+  #app-root.combine-active :is(#top-bar, #single-view, #grid-view, #viewer-empty) {
+    display: none !important;
+  }
+
+  /* Exactly 3 caption lines (card line-height 1.62). The card follows the
+     bottom, so the window is 3 lines + bottom padding only: counting the top
+     padding too would expose a sliver of the previous line above them.
+     +1px: the strip's border-b sits inside this border-box height. */
+  #combine-captions {
+    --combine-pad: 0.5rem;
+    height: calc(var(--rt-font-size) * 1.62 * 3 + var(--combine-pad) + 1px);
+  }
+
+  #combine-captions .language-card {
+    padding-block: var(--combine-pad);
   }
 
   /* ------------------------------------------------------------------ */
@@ -569,6 +655,9 @@
   let hiddenLanguages = new Set();
   let langModalAutoShown = false;
   let langAdvanced = false;      // advanced = per-language visibility + reordering
+  let combineActive = false;     // screen capture + captions combined view shown
+  let combineStream = null;      // MediaStream from getDisplayMedia
+  let combineLanguage = null;    // the single language shown in the caption strip
   const langModal = document.getElementById('lang-modal');
   (function initShowListFromUrl() {
     const params = new URLSearchParams(window.location.search);
@@ -684,18 +773,15 @@
       btn.classList.remove('active');
       btn.setAttribute('aria-pressed', 'false');
     });
-    const map = { light: 'theme-light', dark: 'theme-dark', 'high-contrast': 'theme-hc' };
-    const activeBtn = document.getElementById(map[theme]);
-    if (activeBtn) {
-      activeBtn.classList.add('active');
-      activeBtn.setAttribute('aria-pressed', 'true');
-    }
+    document.querySelectorAll('.theme-btn[data-theme="' + theme + '"]').forEach(btn => {
+      btn.classList.add('active');
+      btn.setAttribute('aria-pressed', 'true');
+    });
     updateUrlParam('theme', theme === 'light' ? null : theme);
   }
 
-  document.getElementById('theme-light').addEventListener('click', () => applyTheme('light'));
-  document.getElementById('theme-dark').addEventListener('click', () => applyTheme('dark'));
-  document.getElementById('theme-hc').addEventListener('click', () => applyTheme('high-contrast'));
+  document.querySelectorAll('.theme-btn').forEach(btn =>
+    btn.addEventListener('click', () => applyTheme(btn.dataset.theme)));
 
   // ------------------------------------------------------------------ //
   // Fade highlight toggle                                               //
@@ -785,6 +871,168 @@
     }
   });
 
+  // ------------------------------------------------------------------ //
+  // Screen capture combine mode                                         //
+  // ------------------------------------------------------------------ //
+  // Local-only: the captured stream is shown in this tab (for projecting or
+  // recording) and never leaves the browser. Hidden inside iframes (panel.html's
+  // viewer-frame lacks display-capture permission) and where the API is missing.
+  const canCapture = !!(navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === 'function')
+    && window.self === window.top;
+  // `hidden` attribute, not the class: `.icon-btn-sm`'s display:flex overrides `.hidden`.
+  if (canCapture) document.getElementById('share-btn').hidden = false;
+
+  async function startCapture() {
+    let captured;
+    try {
+      captured = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false, selfBrowserSurface: 'exclude' });
+    } catch (err) {
+      if (err && err.name === 'NotAllowedError') return; // picker dismissed or denied: stay as-is
+      console.error('Screen capture failed', err);
+      window.alert('Screen capture failed: ' + (err && err.message ? err.message : String(err)));
+      return;
+    }
+    setCombineStream(captured);
+    if (!combineActive) enterCombineMode();
+  }
+
+  function setCombineStream(captured) {
+    stopCombineStream();
+    combineStream = captured;
+    document.getElementById('combine-video').srcObject = captured;
+    const track = captured.getVideoTracks()[0];
+    // Fired by the browser's own "Stop sharing" UI; our own stop() doesn't fire
+    // it, and the identity check ignores tracks already replaced.
+    if (track) track.addEventListener('ended', () => { if (combineStream === captured) exitCombineMode(); });
+  }
+
+  function stopCombineStream() {
+    if (!combineStream) return;
+    const old = combineStream;
+    combineStream = null;
+    old.getTracks().forEach(t => t.stop());
+  }
+
+  function renderCombineSidebar() {
+    // Bare viewer URL: each audience member picks their own language/theme.
+    const url = window.location.origin + window.location.pathname;
+    document.getElementById('combine-qr-img').src = `https://quickchart.io/qr?text=${encodeURIComponent(url)}&size=300`;
+    renderCombineLanguages();
+  }
+
+  function renderCombineLanguages() {
+    if (!combineActive) return;
+    if (!combineLanguage || !languageOrder.includes(combineLanguage)) {
+      combineLanguage = getVisibleOrderedLanguages()[0] || languageOrder[0] || null;
+    }
+    const select = document.getElementById('combine-lang-select');
+    select.innerHTML = '';
+    if (languageOrder.length === 0) {
+      const opt = document.createElement('option');
+      opt.textContent = 'Waiting for languages…';
+      select.appendChild(opt);
+      select.disabled = true;
+    } else {
+      languageOrder.forEach(lang => {
+        const opt = document.createElement('option');
+        opt.value = lang;
+        opt.textContent = lang;
+        select.appendChild(opt);
+      });
+      select.value = combineLanguage;
+      select.disabled = false;
+    }
+    const chips = document.getElementById('combine-lang-chips');
+    chips.innerHTML = '';
+    if (languageOrder.length === 0) {
+      const empty = document.createElement('span');
+      empty.className = 'text-xs text-[var(--rt-muted)]';
+      empty.textContent = 'Waiting for languages…';
+      chips.appendChild(empty);
+    } else {
+      languageOrder.forEach(lang => {
+        const chip = document.createElement('span');
+        chip.className = 'rounded bg-[var(--rt-surface-muted)] px-1.5 py-0.5 font-mono text-xs';
+        chip.textContent = lang;
+        chips.appendChild(chip);
+      });
+    }
+  }
+
+  function refreshCombineView() {
+    const box = document.getElementById('combine-captions');
+    if (!combineLanguage) {
+      if (box.dataset.language !== '') {
+        box.innerHTML = '<div class="flex flex-1 items-center justify-center text-[var(--rt-muted)] text-[0.78rem]">Waiting for transcript</div>';
+        box.dataset.language = '';
+      }
+      return;
+    }
+    if (box.dataset.language !== combineLanguage) {
+      box.innerHTML = '';
+      box.dataset.language = combineLanguage;
+      renderedText.delete('combine:' + combineLanguage);
+      const { card, btn } = makeLanguageCard(combineLanguage);
+      box.appendChild(card);
+      box.appendChild(btn);
+    }
+    const { historyItems, lastText, partialText } = buildLanguageText(combineLanguage);
+    const card = box.querySelector('.language-card');
+    updateContent(card.children[0], 'combine:' + combineLanguage, historyItems, lastText, partialText, card);
+  }
+
+  function resetCombineCaptions() {
+    const box = document.getElementById('combine-captions');
+    box.innerHTML = '';
+    delete box.dataset.language;
+    for (const k of renderedText.keys()) {
+      if (k.startsWith('combine:')) renderedText.delete(k);
+    }
+  }
+
+  // Re-render from scratch and jump to the bottom (same idiom as applyVisibilityChange).
+  function rerenderFromBottom() {
+    initialized = false;
+    refreshView();
+    setTimeout(() => { initialized = true; }, 100);
+  }
+
+  function enterCombineMode() {
+    combineActive = true;
+    document.getElementById('app-root').classList.add('combine-active');
+    closeLangModal();
+    qrPopup.classList.add('hidden');
+    qrBtn.setAttribute('aria-expanded', 'false');
+    resetCombineCaptions();
+    renderCombineSidebar();
+    rerenderFromBottom();
+    // The focused #share-btn just vanished with the top bar.
+    document.getElementById('combine-stop').focus();
+  }
+
+  function exitCombineMode() {
+    if (!combineActive) return;
+    stopCombineStream();
+    document.getElementById('combine-video').srcObject = null;
+    combineActive = false;
+    document.getElementById('app-root').classList.remove('combine-active');
+    resetCombineCaptions();
+    // The normal view catches up on text that arrived during capture.
+    rerenderFromBottom();
+    // The focused sidebar control just vanished with the combine view.
+    document.getElementById('share-btn').focus();
+  }
+
+  document.getElementById('share-btn').addEventListener('click', startCapture);
+  document.getElementById('combine-change-source').addEventListener('click', startCapture);
+  document.getElementById('combine-stop').addEventListener('click', exitCombineMode);
+  document.getElementById('combine-font-decrease').addEventListener('click', () => applyFontSize(currentFontSizeRem - FONT_STEP));
+  document.getElementById('combine-font-increase').addEventListener('click', () => applyFontSize(currentFontSizeRem + FONT_STEP));
+  document.getElementById('combine-lang-select').addEventListener('change', (e) => {
+    combineLanguage = e.target.value;
+    rerenderFromBottom();
+  });
+
 
   // ------------------------------------------------------------------ //
   // Language visibility & order                                         //
@@ -842,6 +1090,7 @@
         hiddenLanguages.delete(l);
         renderedText.delete('grid:' + l);
         renderedText.delete('single:' + l);
+        renderedText.delete('combine:' + l);
         changed = true;
       }
     }
@@ -1017,6 +1266,7 @@
   // Shown once per session when several languages exist, so a first-time viewer
   // lands on one language instead of a crowded grid.
   function maybeAutoOpenLangModal(languages) {
+    if (combineActive) return; // don't cover the projection; may still auto-open after exit
     if (langModalAutoShown) return;
     if (languages.length <= 1) return;
     langModalAutoShown = true;
@@ -1059,6 +1309,7 @@
     const added = discoverLanguages();
     const pruned = pruneStaleLanguages();
     if (!added && !pruned) return;
+    renderCombineLanguages();
     renderLangModal();
     // Pick the layout based on what's currently visible. If a new language
     // arrived and is visible, this may flip single → grid.
@@ -1071,6 +1322,7 @@
   }
 
   function refreshView() {
+    if (combineActive) { refreshCombineView(); return; }
     document.getElementById('viewer-empty').classList.toggle(
       'hidden',
       getVisibleOrderedLanguages().length > 0
@@ -1575,7 +1827,7 @@
     }
 
     window.addEventListener('resize', function () {
-      if (currentLayout === 'grid') refreshGridView();
+      if (currentLayout === 'grid' && !combineActive) refreshGridView();
     });
 
     window.addEventListener('load', function () {
