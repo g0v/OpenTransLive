@@ -92,7 +92,18 @@ async def _save_room_field_to_mongo(session_id: str, field: str, value):
 # ---------------------------------------------------------------------------
 
 async def get_session_languages(redis_client, session_id) -> list[str]:
-    """Return translate languages for a session, falling back to MongoDB then config."""
+    """Return the session's effective translate languages.
+
+    Stored list falls back to MongoDB then config, and is capped to the owner's
+    per-session language limit (the first N win) so every consumer - translation,
+    retranslation, glossary lookup, the panel - sees the same set.
+    """
+    languages = await _get_stored_session_languages(redis_client, session_id)
+    limit = await get_session_max_languages(redis_client, session_id)
+    return languages[:limit] if limit else languages
+
+
+async def _get_stored_session_languages(redis_client, session_id) -> list[str]:
     try:
         raw = await redis_client.get(f"languages:{session_id}")
         if raw:
@@ -222,8 +233,13 @@ async def save_session_stt_provider(redis_client, session_id, provider: str):
 
 
 # ---------------------------------------------------------------------------
-# Session: per-account overrides (ai_provider, partial_interval)
+# Session: per-account overrides (ai_provider, partial_interval, max_languages)
 # ---------------------------------------------------------------------------
+
+# Owner overrides cached per session in Redis (key "<field>:<sid>"). The admin
+# settings endpoint deletes these keys when it changes the matching field.
+CACHED_OWNER_OVERRIDES = ("ai_provider", "max_languages")
+
 
 async def _resolve_owner_overrides(session_id) -> dict:
     """Resolve the room owner's per-account override fields from the users
@@ -241,7 +257,7 @@ async def _resolve_owner_overrides(session_id) -> dict:
         if not email:
             return {}
         user = await users_collection.find_one(
-            {"email": email.lower()}, {"ai_provider": 1, "partial_interval": 1}
+            {"email": email.lower()}, {"ai_provider": 1, "partial_interval": 1, "max_languages": 1}
         )
         return user or {}
     except Exception as e:
@@ -271,6 +287,25 @@ async def get_session_partial_interval(session_id) -> float | None:
     """Return the owner's partial-transcript interval override (None = config default)."""
     pi = (await _resolve_owner_overrides(session_id)).get("partial_interval")
     return pi if isinstance(pi, (int, float)) and not isinstance(pi, bool) else None
+
+
+async def get_session_max_languages(redis_client, session_id) -> int:
+    """Return the owner's max translate languages per session (0 = unlimited).
+    Cached in Redis because get_session_languages runs on the translation hot path."""
+    key = f"max_languages:{session_id}"
+    try:
+        cached = await redis_client.get(key)
+        if cached is not None:
+            return max(int(cached), 0)
+    except Exception:
+        pass  # Redis down or a malformed value: re-resolve from the owner below
+    limit = (await _resolve_owner_overrides(session_id)).get("max_languages")
+    limit = limit if isinstance(limit, int) and not isinstance(limit, bool) and limit > 0 else 0
+    try:
+        await redis_client.set(key, limit, ex=86400)
+    except Exception:
+        pass
+    return limit
 
 
 # ---------------------------------------------------------------------------

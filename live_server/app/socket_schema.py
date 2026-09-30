@@ -23,7 +23,7 @@ from typing import Any
 # cap (matches the existing editor endpoint cap).
 _MAX_TEXT_LEN = 5000
 _MAX_LANG_CODE_LEN = 32
-_MAX_TRANSLATED_LANGS = 32
+MAX_TRANSLATED_LANGS = 32  # also the ceiling for an admin-set per-session language limit
 _MAX_SPECIAL_KEYWORDS = 32
 _MAX_KEYWORD_LEN = 128
 _MAX_SECRET_KEY_LEN = 256
@@ -104,8 +104,8 @@ def validate_base64_audio(value: Any) -> tuple[bool, str]:
 def _validate_translated(translated: Any) -> tuple[bool, str]:
     if not isinstance(translated, dict):
         return False, "result.translated must be an object"
-    if len(translated) > _MAX_TRANSLATED_LANGS:
-        return False, f"result.translated exceeds {_MAX_TRANSLATED_LANGS} languages"
+    if len(translated) > MAX_TRANSLATED_LANGS:
+        return False, f"result.translated exceeds {MAX_TRANSLATED_LANGS} languages"
     for k, v in translated.items():
         ok, err = _check_safe_key(k, "language code", _MAX_LANG_CODE_LEN)
         if not ok:

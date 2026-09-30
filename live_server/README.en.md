@@ -135,6 +135,8 @@ Field details in [../docs/USAGE.en.md](../docs/USAGE.en.md#6-data-storage). Summ
 
 Usage is written by `/heartbeat/{sid}`: each heartbeat adds the audio accumulated since the previous one (a delta) to the room **primary owner's** record for that UTC day, while the room document keeps the absolute counters — so summing a room's daily rows reproduces the room's counters. Users see daily / monthly charts on `/user-dashboard` (`GET /api/usage?days=&months=`); admins click an email on `/dashboard` to open `/dashboard/users/{email}` for one account's report (`GET /api/users/{email}/usage`).
 
+Admins can cap the **target languages per session** for an individual account on `/dashboard` (Max langs; `max_languages` on `POST /api/users/{email}/settings`; default `0` = unlimited). The limit follows the room's **primary owner** and applies immediately: only the first N stored languages are translated, `POST /api/session/{sid}/languages` over the limit returns 400, and `GET` reports `max_languages`. Open panels (co-owners included) receive the new limit over Socket.IO and show it in the Languages modal.
+
 **Backfilling history**: run this once per environment when deploying the feature — from then on the heartbeat records every day itself. The room counters carry no date, but `push_audio` has always logged a cumulative `[audio_usage] session=… bytes=…` line every 30s of audio, so `python -m app.usage_backfill` differentiates those snapshots back into per-day usage (log timestamps are UTC+8 and are converted to UTC days):
 
 ```bash

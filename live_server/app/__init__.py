@@ -56,6 +56,7 @@ from .socket_schema import (
     validate_sync_payload,
     validate_audio_buffer_append_payload,
     check_timestamp,
+    MAX_TRANSLATED_LANGS,
 )
 from .email_auth import (
     validate_email_format,
@@ -473,7 +474,8 @@ _PUBLIC_API_REQUEST_BODIES: dict[str, dict] = {
         "schema": {"type": "object", "required": ["languages"], "properties": {
             "languages": {"type": "array", "minItems": 1,
                           "items": {"type": "string", "maxLength": 32},
-                          "description": "Target translation languages."}}},
+                          "description": "Target translation languages. At most the account's "
+                                         "`max_languages` (see GET; 0 = unlimited)."}}},
         "example": {"languages": ["en", "ja", "ko"]},
     },
     "update_session_keywords_endpoint": {
@@ -1716,8 +1718,9 @@ async def set_user_realtime(request: Request, email: str):
 
 @app.post("/api/users/{email}/settings", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def set_user_settings(request: Request, email: str):
-    """Set per-account overrides (ai_provider, partial_interval) for a user (admin only).
-    A null/empty value clears the override so the user falls back to config defaults."""
+    """Set per-account overrides (ai_provider, partial_interval, max_languages) for a user (admin only).
+    A null/empty value clears the override so the user falls back to config defaults;
+    max_languages 0 means unlimited."""
     await require_admin(request)
     if not validate_email_format(email):
         raise HTTPException(status_code=400, detail="Invalid email address")
@@ -1748,6 +1751,27 @@ async def set_user_settings(request: Request, email: str):
                 raise HTTPException(status_code=400, detail="'partial_interval' must be between 0.1 and 10")
             update["$set"]["partial_interval"] = interval
 
+    if "max_languages" in body:
+        limit = body["max_languages"]
+        if limit in (None, ""):
+            limit = 0
+        if isinstance(limit, str) and limit.strip().isdecimal():
+            try:
+                limit = int(limit.strip())
+            except ValueError:  # beyond Python's int-parsing digit limit
+                pass  # left a str, rejected just below
+        # Above MAX_TRANSLATED_LANGS a session's translations are rejected by
+        # the socket schema anyway, so larger caps are not meaningful.
+        if isinstance(limit, bool) or not isinstance(limit, int) or not (0 <= limit <= MAX_TRANSLATED_LANGS):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'max_languages' must be an integer between 0 and {MAX_TRANSLATED_LANGS} (0 = unlimited)",
+            )
+        if limit:
+            update["$set"]["max_languages"] = limit
+        else:
+            update["$unset"]["max_languages"] = ""
+
     update = {op: fields for op, fields in update.items() if fields}
     if not update:
         raise HTTPException(status_code=400, detail="No settings provided")
@@ -1761,29 +1785,59 @@ async def set_user_settings(request: Request, email: str):
     if not result:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Invalidate cached ai_provider for this user's active sessions so the new
-    # provider takes effect without waiting for the 24h Redis TTL.
-    if "ai_provider" in body:
-        await _invalidate_user_ai_provider_cache(email.lower())
+    # Drop the cached overrides of this user's sessions so the change takes
+    # effect without waiting for the 24h Redis TTL.
+    from .translation_service import CACHED_OWNER_OVERRIDES
+    changed = [f for f in CACHED_OWNER_OVERRIDES if f in body]
+    if changed:
+        sids = await _owned_room_sids(result["email"], result.get("user_uid"))
+        await _invalidate_session_cache(sids, changed)
+        # The limit changes the panel's effective languages and hint, so push it
+        # to open panels (owner + co-owners) instead of waiting for a reload.
+        if "max_languages" in body:
+            await asyncio.gather(
+                *(_emit_session_settings_update(sid, "language-limit") for sid in sids),
+                return_exceptions=True,
+            )
 
     return {
         "email": result["email"],
         "ai_provider": result.get("ai_provider") or "",
         "partial_interval": result.get("partial_interval"),
+        "max_languages": result.get("max_languages") or 0,
     }
 
 
-async def _invalidate_user_ai_provider_cache(email_lc: str) -> None:
-    """Delete the cached ai_provider Redis keys for every room this user owns."""
+async def _owned_room_sids(email_lc: str, user_uid: str | None) -> list[str]:
+    """Rooms whose primary owner resolves to this user — same rule as
+    translation_service._resolve_owner_overrides: admin_email, or admin_uid for
+    legacy rooms without an admin_email."""
+    query: dict = {"admin_email": email_lc}
+    if user_uid:
+        query = {"$or": [query, {"admin_email": {"$in": [None, ""]}, "admin_uid": user_uid}]}
     try:
-        rooms = await rooms_collection.find(
-            {"admin_email": email_lc}, {"_id": 0, "sid": 1}
-        ).to_list(length=1000)
-        keys = [f"ai_provider:{r['sid']}" for r in rooms]
-        if keys:
-            await redis_client.delete(*keys)
+        rooms = await rooms_collection.find(query, {"_id": 0, "sid": 1}).to_list(length=1000)
+        return [r["sid"] for r in rooms]
     except Exception as e:
-        log_exception(logger, e, "Failed to invalidate ai_provider cache")
+        log_exception(logger, e, "Failed to list owned rooms")
+        return []
+
+
+async def _invalidate_session_cache(sids: list[str], fields: list[str]) -> None:
+    """Delete the per-session Redis cache keys ("<field>:<sid>") for these rooms."""
+    keys = [f"{field}:{sid}" for sid in sids for field in fields]
+    if not keys:
+        return
+    try:
+        await redis_client.delete(*keys)
+    except Exception as e:
+        log_exception(logger, e, "Failed to invalidate session override cache")
+
+
+async def _invalidate_owner_override_cache(sid: str) -> None:
+    """The room's primary owner changed: its cached overrides belong to the old one."""
+    from .translation_service import CACHED_OWNER_OVERRIDES
+    await _invalidate_session_cache([sid], list(CACHED_OWNER_OVERRIDES))
 
 
 # ---------------------------------------------------------------------------
@@ -1954,10 +2008,11 @@ async def admin_list_users(request: Request):
     """List all users (admin only)."""
     await require_admin(request)
     users = await users_collection.find(
-        {}, {"_id": 0, "email": 1, "realtime_enabled": 1, "ai_provider": 1,
-             "partial_interval": 1, "api_key_prefix": 1, "created_at": 1, "last_login_at": 1}
+        {}, {"_id": 0, "email": 1, "realtime_enabled": 1, "ai_provider": 1, "partial_interval": 1,
+             "max_languages": 1, "api_key_prefix": 1, "created_at": 1, "last_login_at": 1}
     ).to_list(length=1000)
     for u in users:
+        u["max_languages"] = u.get("max_languages") or 0
         _isoformat_fields(u, "created_at", "last_login_at")
         u["has_api_key"] = bool(u.pop("api_key_prefix", None))
         u["is_admin"] = _is_admin_email(u.get("email", ""))
@@ -2019,13 +2074,17 @@ async def clear_session_viewers_endpoint(request: Request, sid: str):
 
 @app.get("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def get_session_languages_endpoint(request: Request, sid: str):
-    """Get the current translate languages for a session."""
+    """Get the current translate languages for a session and the owner's
+    per-session language limit (max_languages, 0 = unlimited)."""
     sid = sanitize_query_param(sid, "session ID")
     await _require_session_owner(request, sid)
 
-    from .translation_service import get_session_languages
+    from .translation_service import get_session_languages, get_session_max_languages
+    # Sequential on purpose: get_session_languages warms the max_languages
+    # cache, so the second call is a Redis hit instead of a duplicate DB lookup.
     languages = await get_session_languages(redis_client, sid)
-    return {"languages": languages}
+    max_languages = await get_session_max_languages(redis_client, sid)
+    return {"languages": languages, "max_languages": max_languages}
 
 
 @app.post("/api/session/{sid}/languages", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
@@ -2045,10 +2104,16 @@ async def update_session_languages_endpoint(request: Request, sid: str):
             raise HTTPException(status_code=400, detail=f"Invalid language value: {lang}")
     languages = [lang.strip() for lang in languages]
 
-    from .translation_service import save_session_languages
+    from .translation_service import get_session_max_languages, save_session_languages
+    max_languages = await get_session_max_languages(redis_client, sid)
+    if max_languages and len(languages) > max_languages:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This account is limited to {max_languages} language{'s' if max_languages != 1 else ''} per session",
+        )
     await save_session_languages(redis_client, sid, languages)
     await _emit_session_settings_update(sid, "languages")
-    return {"languages": languages}
+    return {"languages": languages, "max_languages": max_languages}
 
 
 _KEYWORD_MAX_LEN = 128
@@ -3336,6 +3401,8 @@ async def panel(request: Request, sid: str):
         if not room.get("admin_email"):
             update_fields["admin_email"] = current_email
         await rooms_collection.update_one({"sid": sid}, {"$set": update_fields})
+        if "admin_email" in update_fields:
+            await _invalidate_owner_override_cache(sid)
         request.session["secret_key"] = session_secret_key
         user_secret_key = session_secret_key
         # Reflect the in-memory room dict so the template sees the updated owner.
@@ -3424,6 +3491,7 @@ async def delete_session(request: Request, sid: str):
             "updated_at": datetime.now(timezone.utc),
         }}
     )
+    await _invalidate_owner_override_cache(sid)
     return {"status": "deleted"}
 
 # Socket.IO Event Handlers

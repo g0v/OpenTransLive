@@ -212,6 +212,8 @@
           Select target translation languages. Add a custom BCP-47 code (e.g. <span class="font-mono">ja-JP</span>) if
           it's not in the list.
         </p>
+        <p id="lang-limit-hint" class="hidden rounded-lg border border-[#2a3646] bg-[#111a27] px-3 py-2 text-[11px] leading-snug text-[#aebed2]"
+          role="status" aria-live="polite"></p>
         <div id="lang-checkbox-list" class="modal-list flex min-h-14 flex-1 basis-auto flex-col gap-1 overflow-y-auto pr-1 [scrollbar-color:#4d5d72_transparent] [scrollbar-width:thin] [&>div]:rounded-lg [&>label]:rounded-lg"></div>
         <div class="modal-add-row flex shrink-0 gap-1 border-t border-[#2a3646] pt-3">
           <input id="lang-custom-input" type="text" placeholder="Custom (e.g. ja-JP)"
@@ -944,10 +946,38 @@
   ]
 
   let selectedLanguages = []
+  // Owner's per-session language cap set by an admin (0 = unlimited). The
+  // server enforces it too; the panel mirrors it so the user sees why a box
+  // is greyed out instead of a failed save.
+  let maxLanguages = 0
+
+  function atLanguageLimit() {
+    return maxLanguages > 0 && selectedLanguages.length >= maxLanguages
+  }
 
   function updateDropdownLabel() {
     const label = document.getElementById('lang-dropdown-label')
     label.textContent = selectedLanguages.length ? selectedLanguages.join(', ') : 'None'
+    const btn = document.getElementById('lang-dropdown-btn')
+    btn.title = maxLanguages ? `${selectedLanguages.length}/${maxLanguages} languages (limit set by admin)` : ''
+  }
+
+  function renderLanguageLimitHint() {
+    const hint = document.getElementById('lang-limit-hint')
+    const addInput = document.getElementById('lang-custom-input')
+    const addBtn = document.getElementById('lang-custom-add-btn')
+    const full = atLanguageLimit()
+    hint.classList.toggle('hidden', !maxLanguages)
+    hint.classList.toggle('text-amber-300', full)
+    hint.classList.toggle('text-[#aebed2]', !full)
+    hint.textContent = maxLanguages
+      ? `This account can translate into up to ${maxLanguages} language${maxLanguages === 1 ? '' : 's'} per session ` +
+        `(${selectedLanguages.length}/${maxLanguages} selected).` +
+        (full ? ' Uncheck one to pick another.' : '')
+      : ''
+    addInput.disabled = full
+    addBtn.disabled = full
+    addInput.placeholder = full ? 'Language limit reached' : 'Custom (e.g. ja-JP)'
   }
 
   function renderCheckboxList() {
@@ -964,7 +994,7 @@
     allEntries.forEach(({ code, label }) => {
       const checked = selectedLanguages.includes(code)
       const row = document.createElement('label')
-      row.className = 'flex items-center gap-2 px-2 py-1 rounded cursor-pointer hover:bg-gray-700 text-sm text-gray-300 select-none'
+      row.className = 'flex items-center gap-2 px-2 py-1 rounded select-none text-sm text-gray-300'
       row.innerHTML = `
         <input type="checkbox" value="${code}" ${checked ? 'checked' : ''}
           class="accent-blue-500 w-4 h-4 flex-shrink-0">
@@ -972,30 +1002,87 @@
       `
       row.querySelector('input').addEventListener('change', function () {
         if (this.checked) {
+          if (atLanguageLimit()) {
+            this.checked = false
+            return
+          }
           if (!selectedLanguages.includes(code)) selectedLanguages.push(code)
         } else {
           selectedLanguages = selectedLanguages.filter(c => c !== code)
         }
         updateDropdownLabel()
+        applyLanguageLimit()
         onLanguagesChanged()
         debouncedSaveLanguages()
       })
       list.appendChild(row)
     })
+    applyLanguageLimit()
+  }
+
+  // Grey out unchecked rows once the limit is reached; updated in place so
+  // toggling a box doesn't rebuild the list (and reset its scroll).
+  function applyLanguageLimit() {
+    const full = atLanguageLimit()
+    const title = full ? `Limit of ${maxLanguages} language${maxLanguages === 1 ? '' : 's'} reached` : ''
+    document.querySelectorAll('#lang-checkbox-list label').forEach(row => {
+      const input = row.querySelector('input')
+      const locked = full && !input.checked
+      input.disabled = locked
+      row.title = locked ? title : ''
+      row.classList.toggle('cursor-not-allowed', locked)
+      row.classList.toggle('opacity-50', locked)
+      row.classList.toggle('cursor-pointer', !locked)
+      row.classList.toggle('hover:bg-gray-700', !locked)
+    })
+    renderLanguageLimitHint()
+  }
+
+  function renderLanguages() {
+    updateDropdownLabel()
+    renderCheckboxList()
+    onLanguagesChanged()
+  }
+
+  async function fetchLanguages() {
+    const res = await fetch(`/api/session/${sid}/languages`, { credentials: 'same-origin' })
+    if (!res.ok) return null
+    const data = await res.json()
+    maxLanguages = data.max_languages || 0
+    return data
   }
 
   async function loadLanguages() {
     try {
-      const res = await fetch(`/api/session/${sid}/languages`, { credentials: 'same-origin' })
-      if (res.ok) {
-        const data = await res.json()
+      const data = await fetchLanguages()
+      if (data) {
         selectedLanguages = data.languages
-        updateDropdownLabel()
-        renderCheckboxList()
-        onLanguagesChanged()
+        renderLanguages()
       }
     } catch (e) {
       console.error('Failed to load languages:', e)
+    }
+  }
+
+  // An admin changed the owner's limit. Unlike a regular languages sync this
+  // must land even while the modal is open or an edit is pending: the server
+  // already serves the capped list, so a stale panel would only produce
+  // rejected saves. A pending local edit is capped the same way the server
+  // caps the stored list (first N kept) rather than discarded.
+  async function loadLanguageLimit() {
+    try {
+      const data = await fetchLanguages()
+      if (!data) return
+      if (langSaveInFlight || langSaveTimer) {
+        if (maxLanguages && selectedLanguages.length > maxLanguages) {
+          selectedLanguages = selectedLanguages.slice(0, maxLanguages)
+        }
+      } else {
+        selectedLanguages = data.languages
+      }
+      renderLanguages()
+    } catch (e) {
+      console.error('Failed to load language limit:', e)
     }
   }
 
@@ -1014,6 +1101,10 @@
   }
 
   async function saveLanguages() {
+    // Clear the debounce handle so SETTINGS_KINDS sees no pending edit once
+    // this save settles (it is also called directly, bypassing the timer).
+    clearTimeout(langSaveTimer)
+    langSaveTimer = null
     if (langSaveInFlight) {
       langSaveDirty = true
       return
@@ -1038,8 +1129,13 @@
       if (res.ok) {
         statusEl.textContent = 'Saved'
       } else {
-        const err = await res.json()
+        const err = await res.json().catch(() => ({}))
         statusEl.textContent = err.detail || 'Error'
+        // Rejected (e.g. over the account's language limit after an admin
+        // lowered it): re-read the server's list and limit so the panel
+        // doesn't keep showing a selection that was never saved — unless the
+        // user edited again meanwhile; that newer save will go out instead.
+        if (res.status === 400 && !langSaveTimer && !langSaveDirty) await loadLanguages()
       }
     } catch (e) {
       statusEl.textContent = 'Error'
@@ -1851,11 +1947,15 @@
     'scribe-language': { load: loadScribeLanguage, isInteracting: () => focused('scribe-lang-select'),       polled: true },
     'translate-tone':  { load: loadTranslateTone,  isInteracting: () => focused('tone-custom-input'),        polled: true },
     'co-owners':       { load: loadCoOwners,       isInteracting: () => false,                               polled: false },
+    // Admin-set limit (never edited here): applied even with a modal open or an
+    // edit pending. The poll backstop is 'languages', whose GET carries the limit.
+    'language-limit':  { load: loadLanguageLimit,  isInteracting: () => false,                               polled: false, alwaysApply: true },
   }
 
   function applySettingsUpdate(kind) {
     const entry = SETTINGS_KINDS[kind]
-    if (!entry || isAnySettingsDropdownOpen() || entry.isInteracting()) return
+    if (!entry) return
+    if (!entry.alwaysApply && (isAnySettingsDropdownOpen() || entry.isInteracting())) return
     runWithSyncStatus(entry.load())
   }
 
@@ -2208,6 +2308,10 @@
       const code = input.value.trim()
       if (!code) return
       if (!selectedLanguages.includes(code)) {
+        if (atLanguageLimit()) {
+          document.getElementById('settings-status').textContent = `Limit: ${maxLanguages} language${maxLanguages === 1 ? '' : 's'}`
+          return
+        }
         selectedLanguages.push(code)
         updateDropdownLabel()
         renderCheckboxList()
@@ -2574,6 +2678,9 @@
         }
         awaitingJoinSnapshot = false
         liveSegmentsSinceConnect.clear()
+        // A limit change pushed while disconnected is missed, and the primary
+        // owner's panel doesn't poll; re-read it so the hint/locks converge.
+        applySettingsUpdate('language-limit')
       })
 
       socket.on('session_settings_updated', function (data) {

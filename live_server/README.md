@@ -132,6 +132,8 @@ app/
 
 用量統計由 `/heartbeat/{sid}` 寫入：每次心跳把上次之後新增的音訊量（delta）累加到房間**主擁有者**的當日紀錄，room 文件本身仍保留累計總量；把某房間的每日紀錄相加即等於 room 的計數。使用者於 `/user-dashboard` 看日／月圖表（`GET /api/usage?days=&months=`），管理員在 `/dashboard` 點 email 進入 `/dashboard/users/{email}` 看個別報表（`GET /api/users/{email}/usage`）。
 
+管理員可在 `/dashboard` 為個別帳號設定**單一 session 翻譯語言上限**（Max langs，`POST /api/users/{email}/settings` 的 `max_languages`；預設 `0` = 無限制）。上限依房間**主擁有者**計算、立即生效：超出的語言只取前 N 個翻譯，`POST /api/session/{sid}/languages` 超過上限回 400，`GET` 會回傳 `max_languages`；已開啟的 panel（含 co-owner）透過 Socket.IO 即時同步上限並顯示提示。
+
 **回填歷史**：部署這個版本時每個環境跑一次就好 —— 之後每天的用量由心跳自己記錄。room 計數器沒有日期，但 `push_audio` 一向每 30 秒音訊寫一行 `[audio_usage] session=… bytes=…` 到 `logs/`，`python -m app.usage_backfill` 解析這些累計快照、相鄰相減還原每日用量（時間戳是 UTC+8，會換算成 UTC 日期）：
 
 ```bash
