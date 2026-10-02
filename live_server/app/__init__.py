@@ -376,11 +376,14 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
             asyncio.create_task(existing.stop())
 
         from .translation_service import (get_session_scribe_language, get_session_partial_interval,
-                                          get_session_stt_provider)
+                                          get_session_stt_provider, get_keywords_and_locked)
         language_code = await get_session_scribe_language(redis_client, session_id)
         partial_interval = await get_session_partial_interval(session_id)
         provider = await get_session_stt_provider(redis_client, session_id)
-        manager = create_scribe_manager(provider, session_id, on_scribe_transcription, language_code=language_code, partial_interval=partial_interval, status_callback=_emit_scribe_status)
+        # Only pinned keywords bias recognition: the unpinned ones are reranked and
+        # pruned automatically, and an operator should decide what the model is pushed toward.
+        _, pinned_keywords = await get_keywords_and_locked(redis_client, session_id)
+        manager = create_scribe_manager(provider, session_id, on_scribe_transcription, language_code=language_code, partial_interval=partial_interval, status_callback=_emit_scribe_status, keyterms=pinned_keywords)
         manager.yt_start_time = await get_youtube_start_time(session_id)
         active_scribe_managers[session_id] = manager
         asyncio.create_task(manager.start())
@@ -482,9 +485,12 @@ _PUBLIC_API_REQUEST_BODIES: dict[str, dict] = {
         "required": True,
         "schema": {"type": "object", "required": ["keywords"], "properties": {
             "keywords": {"type": "array", "items": {"type": "string", "maxLength": 128},
-                         "description": "Domain keywords that bias transcription."},
+                         "description": "Domain keywords that guide transcript correction."},
             "locked_keywords": {"type": "array", "items": {"type": "string", "maxLength": 128},
-                                "description": "Optional. Keywords that must never be dropped."}}},
+                                "description": "Optional. Pinned keywords: never dropped, and sent to "
+                                               "the speech engine as recognition bias from its next "
+                                               "connection (no reconnect is forced). ElevenLabs uses "
+                                               "at most 50 pins of up to 20 characters."}}},
         "example": {"keywords": ["OpenTransLive", "g0v"], "locked_keywords": ["g0v"]},
     },
     "update_session_text_dictionary_endpoint": {
@@ -2227,7 +2233,15 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
     # Locked list first: a concurrent rerank restores pinned keywords from the
     # stored locked list, so an unpin must land before the list it applies to.
     if locked_keywords is not None:
-        await save_locked_keywords(redis_client, sid, locked_keywords)
+        # Save and hand the pins to a live transcriber (for its next connection, without
+        # forcing one) under the create lock as one unit: overlapping POSTs then leave
+        # Redis and the manager on the same list, and a manager being built right now
+        # has either read the saved list already or is updated here once registered.
+        async with _get_or_create_lock(_scribe_create_locks, sid):
+            await save_locked_keywords(redis_client, sid, locked_keywords)
+            manager = active_scribe_managers.get(sid)
+            if manager is not None:
+                manager.set_keyterms(locked_keywords)
     await save_current_keywords(redis_client, sid, keywords_dict)
 
     result = {"keywords": list(keywords_dict.keys())}

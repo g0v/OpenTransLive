@@ -86,6 +86,11 @@ class ScribeSessionManager:
     # anything arrives at all while nobody speaks is provider-specific. None means
     # "silence here is normal, don't watch for it".
     IDLE_OUTPUT_STALL_TIMEOUT: float | None = None
+    # Recognition-biasing vocabulary limits as each provider documents them; None means
+    # no documented limit. Terms beyond them are dropped, never truncated: a cut-off
+    # term would bias the model toward a word nobody says.
+    MAX_KEYTERMS: int | None = None
+    MAX_KEYTERM_CHARS: int | None = None
 
     def _connect_target(self) -> tuple[str, dict]:
         """Return the (url, extra headers) this provider's socket is opened with."""
@@ -105,7 +110,7 @@ class ScribeSessionManager:
         raise NotImplementedError
 
     def __init__(self, session_id, callback, language_code: str = "", partial_interval: float | None = None,
-                 status_callback=None):
+                 status_callback=None, keyterms=()):
         self.session_id = session_id
         # Optional async (session_id, status_dict) hook used to surface transcription
         # health to the panel. Always set so a missing-key start can report its failure.
@@ -124,6 +129,8 @@ class ScribeSessionManager:
         self.api_key = REALTIME_SETTINGS.get(self.API_KEY_SETTING, '')
         self.callback = callback
         self.language_code = language_code
+        self.keyterms: list[str] = []
+        self.set_keyterms(keyterms)
         self.seg_start_time = None
         self.yt_start_time: float | None = None
         now = datetime.now(timezone.utc)
@@ -167,6 +174,42 @@ class ScribeSessionManager:
         # page refresh from billing the same audio twice.
         self._usage_flushed_bytes += audio_bytes
         self._usage_flushed_chunks += audio_chunks
+
+    def set_keyterms(self, terms) -> None:
+        """Replace the biasing vocabulary. Both providers take it only when the socket
+        opens, so it applies from the next connection; this deliberately does not
+        reconnect, since a keyword edit is not worth a transcription gap.
+
+        `terms` comes straight from stored JSON, so anything that is not a list of
+        strings is skipped rather than allowed to break manager creation."""
+        if not isinstance(terms, (list, tuple)):
+            terms = ()
+        kept: list[str] = []
+        seen: set[str] = set()
+        too_long = 0
+        for term in terms:
+            if not isinstance(term, str):
+                continue
+            term = term.strip()
+            if not term or term in seen:
+                continue
+            if self.MAX_KEYTERM_CHARS is not None and len(term) > self.MAX_KEYTERM_CHARS:
+                too_long += 1
+                continue
+            seen.add(term)
+            kept.append(term)
+        if too_long:
+            logger.warning(
+                f"{self.PROVIDER}: {too_long} keyterm(s) over {self.MAX_KEYTERM_CHARS} "
+                f"chars dropped for {self.session_id}"
+            )
+        if self.MAX_KEYTERMS is not None and len(kept) > self.MAX_KEYTERMS:
+            logger.warning(
+                f"{self.PROVIDER}: keyterms capped at {self.MAX_KEYTERMS} for "
+                f"{self.session_id}; {len(kept) - self.MAX_KEYTERMS} dropped"
+            )
+            kept = kept[:self.MAX_KEYTERMS]
+        self.keyterms = kept
 
     def get_usage_stats(self) -> dict:
         """Return audio usage counters for this session."""
@@ -751,6 +794,9 @@ class ElevenLabsScribeManager(ScribeSessionManager):
     IDLE_OUTPUT_STALL_TIMEOUT = SCRIBE_SETTINGS[
         "ELEVENLABS_IDLE_OUTPUT_STALL_TIMEOUT_SECS"
     ]
+    # Scribe v2 Realtime keyterm prompting (billed as an add-on per audio hour).
+    MAX_KEYTERMS = 50
+    MAX_KEYTERM_CHARS = 20
 
     def _connect_target(self):
         params_dict = {
@@ -774,8 +820,11 @@ class ElevenLabsScribeManager(ScribeSessionManager):
         if self.language_code:
             params_dict["language_code"] = self.language_code
             logger.info(f"Scribe forced language: {self.language_code} for {self.session_id}")
+        if self.keyterms:
+            # Repeated query parameter: keyterms=A&keyterms=B.
+            params_dict["keyterms"] = self.keyterms
         return ("wss://api.elevenlabs.io/v1/speech-to-text/realtime?"
-                f"{urlencode(params_dict)}"), {"xi-api-key": self.api_key}
+                f"{urlencode(params_dict, doseq=True)}"), {"xi-api-key": self.api_key}
 
     async def _send_audio(self, ws, base64_audio: str, commit: bool):
         await ws.send(
@@ -816,6 +865,8 @@ class GeminiScribeManager(ScribeSessionManager):
     # empty-commit heartbeat — so silence there is normal and there is nothing to watch
     # for. Keepalive pings and the _MAX_SESSION_SECS restart still catch a dead socket.
     IDLE_OUTPUT_STALL_TIMEOUT = None
+    # customVocabulary; no per-term length is documented.
+    MAX_KEYTERMS = 1000
 
     _SETUP_TIMEOUT_SECS = SCRIBE_SETTINGS["GEMINI_SETUP_TIMEOUT_SECS"]
 
@@ -827,10 +878,13 @@ class GeminiScribeManager(ScribeSessionManager):
     async def _handshake(self, ws):
         """Send the setup frame and wait for setupComplete; nothing may be sent before it."""
         codes = [self.language_code] if self.language_code else []  # empty = auto-detect
+        transcription = {"languageCodes": codes}
+        if self.keyterms:
+            transcription["customVocabulary"] = self.keyterms
         await ws.send(json.dumps({"setup": {
             "model": "models/gemini-3.5-transcribe-live",
             "generationConfig": {"responseModalities": ["TEXT"]},
-            "inputAudioTranscription": {"languageCodes": codes},
+            "inputAudioTranscription": transcription,
         }}))
         if self.language_code:
             logger.info(f"Gemini forced language: {self.language_code} for {self.session_id}")

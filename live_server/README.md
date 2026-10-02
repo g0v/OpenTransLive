@@ -60,7 +60,7 @@ Compose 會啟動 FastAPI server、MongoDB、Redis。
 | `[email_settings].SMTP_*` | OTP 信件寄送；留空則 OTP 寫進 log（適合開發）|
 | `[mongodb_settings]` | MongoDB 連線 |
 | `redis_url` | Redis 連線 |
-| `[realtime_settings].STT_PROVIDER` | 預設轉錄引擎 (`elevenlabs` / `gemini`)，每個 room 可在 panel 覆寫 |
+| `[realtime_settings].STT_PROVIDER` | 預設轉錄引擎 (`elevenlabs` / `gemini`)，每個 room 可在 panel 覆寫。釘選（pinned）關鍵字會在下次連線時送入引擎做辨識偏置（ElevenLabs `keyterms`：最多 50 個、每個 ≤20 字元，另計費；Gemini `customVocabulary`），改動不會強制重連 |
 | `[realtime_settings].ELEVENLABS_API_KEY` | ElevenLabs Scribe |
 | `[realtime_settings].AI_PROVIDER` | 預設修正／翻譯 provider (`openai` / `gemini` / `groq` / `cerebras`) |
 | `[realtime_settings].CORRECT_PROVIDER` | （可選）修正流程專用 provider |

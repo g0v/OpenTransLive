@@ -61,7 +61,7 @@ below (`app/config.py` is just the loader that reads this TOML; you rarely touch
 | `[email_settings].SMTP_*` | OTP delivery; leave empty to log the OTP (dev) |
 | `[mongodb_settings]` | MongoDB connection |
 | `redis_url` | Redis connection |
-| `[realtime_settings].STT_PROVIDER` | Default transcription engine (`elevenlabs` / `gemini`); each room can override it from the panel |
+| `[realtime_settings].STT_PROVIDER` | Default transcription engine (`elevenlabs` / `gemini`); each room can override it from the panel. Pinned keywords are sent to the engine on its next connection to bias recognition (ElevenLabs `keyterms`: up to 50, ≤20 chars each, billed as an add-on; Gemini `customVocabulary`); editing them never forces a reconnect |
 | `[realtime_settings].ELEVENLABS_API_KEY` | ElevenLabs Scribe |
 | `[realtime_settings].AI_PROVIDER` | Default correction / translation provider (`openai` / `gemini` / `groq` / `cerebras`) |
 | `[realtime_settings].CORRECT_PROVIDER` | (Optional) provider used for correction only |
