@@ -60,7 +60,7 @@
         <thead>
           <tr class="border-b border-gray-700 text-left text-xs text-gray-500 uppercase tracking-wider">
             <th class="px-2 py-1 font-semibold">Email</th>
-            <th class="px-2 py-1 font-semibold">Last login</th>
+            <th class="px-2 py-1 font-semibold">Last active</th>
             <th class="px-2 py-1 font-semibold">Transcribed</th>
             <th class="px-2 py-1 font-semibold">Sessions</th>
             <th class="px-2 py-1 font-semibold">AI provider</th>
@@ -78,8 +78,8 @@
                 title="Open usage report for {{ user.email }}">{{ user.email }}</a>
             </td>
             <td class="px-2 py-1 text-xs text-gray-500">
-              {% if user.last_login_at %}
-              {{ user.last_login_at[:19].replace('T', ' ') }} UTC
+              {% if user.last_active_at %}
+              {{ user.last_active_at[:19].replace('T', ' ') }} UTC
               {% else %}
               —
               {% endif %}

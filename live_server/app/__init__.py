@@ -1155,6 +1155,47 @@ async def _user_from_api_key(api_key: str | None) -> dict | None:
     return await users_collection.find_one({"api_key_hash": hash_api_key(api_key)})
 
 
+# users.last_active_at is advanced at most once per window per account: the
+# in-process cache skips the DB on hot paths (heartbeats, API pushes), and the
+# filtered update keeps multiple workers from rewriting the same window.
+_LAST_ACTIVE_RESOLUTION = timedelta(minutes=5)
+_last_active_touched: TTLCache = TTLCache(
+    maxsize=10_000, ttl=_LAST_ACTIVE_RESOLUTION.total_seconds()
+)
+
+
+async def _touch_last_active(email: str | None) -> None:
+    """Record that the account did something authenticated just now."""
+    if not email:
+        return
+    email_lc = email.lower()
+    if email_lc in _last_active_touched:
+        return
+    _last_active_touched[email_lc] = True
+    now = datetime.now(timezone.utc)
+    try:
+        await users_collection.update_one(
+            {"email": email_lc, "$or": [
+                {"last_active_at": None},
+                {"last_active_at": {"$lt": now - _LAST_ACTIVE_RESOLUTION}},
+            ]},
+            {"$set": {"last_active_at": now}},
+        )
+    except Exception as e:
+        # Activity bookkeeping must never fail the request it rides on.
+        _last_active_touched.pop(email_lc, None)
+        log_exception(logger, e, "Failed to record last_active_at")
+
+
+async def _touch_socket_actor(session: dict) -> None:
+    """Record activity for the caller behind a verified socket. Only API-key
+    sockets carry the caller's own email; secret_key panel sockets carry the
+    room owner's, even when a co-owner drives the panel, so their activity is
+    recorded by the cookie-authenticated /heartbeat instead."""
+    if session.get('auth_via') == 'api_key':
+        await _touch_last_active(session.get('email'))
+
+
 async def get_identity(request: Request) -> Identity | None:
     """Resolve the caller to an Identity, preferring the cookie session and
     falling back to a Bearer API key. Returns None when unauthenticated."""
@@ -1163,12 +1204,16 @@ async def get_identity(request: Request) -> Identity | None:
     if email and user_uid:
         user = await users_collection.find_one({"email": email.lower()})
         if user:
-            return Identity(user, "cookie")
+            ident = Identity(user, "cookie")
+            await _touch_last_active(ident.email)
+            return ident
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         user = await _user_from_api_key(auth_header[7:].strip())
         if user:
-            return Identity(user, "api_key")
+            ident = Identity(user, "api_key")
+            await _touch_last_active(ident.email)
+            return ident
     return None
 
 
@@ -1239,6 +1284,7 @@ async def _authorize_api_key_socket(socket_id, session, api_key, session_id) -> 
         return False
     if not room or not await _owns_room(user.get("email"), room):
         return False
+    await _touch_last_active(user.get("email"))
     session['verified'] = True
     session['session_id'] = session_id
     session['email'] = user.get("email")
@@ -1613,7 +1659,7 @@ async def dashboard(request: Request):
 
     # Convert datetimes to ISO strings for template rendering
     for u in users:
-        _isoformat_fields(u, "created_at", "last_login_at")
+        _isoformat_user_times(u)
         stats = usage_by_email.get((u.get("email") or "").lower(), {})
         secs = round(stats.get("total_audio_secs", 0))
         u["session_count"] = stats.get("session_count", 0)
@@ -1638,7 +1684,7 @@ async def admin_user_report(request: Request, email: str):
     user = await users_collection.find_one({"email": email_lc}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    _isoformat_fields(user, "created_at", "last_login_at")
+    _isoformat_user_times(user)
     rooms = await rooms_collection.find(
         {"admin_email": email_lc},
         {"_id": 0, "sid": 1, "created_at": 1, "admin_last_heartbeat": 1, "audio_duration_secs": 1},
@@ -1899,6 +1945,13 @@ def _isoformat_fields(doc: dict, *keys: str) -> None:
             doc[k] = doc[k].isoformat()
 
 
+def _isoformat_user_times(user: dict) -> None:
+    """ISO-format a user doc's timestamps. Accounts idle since before activity
+    tracking existed have no last_active_at; their last login is the best bound."""
+    user["last_active_at"] = user.get("last_active_at") or user.get("last_login_at")
+    _isoformat_fields(user, "created_at", "last_login_at", "last_active_at")
+
+
 @app.post("/api/rooms", dependencies=[Depends(RateLimiter(times=60, seconds=60, identifier=_identifier))])
 async def create_room(request: Request):
     """Create a room owned by the caller (realtime access required). An optional
@@ -2009,11 +2062,12 @@ async def admin_list_users(request: Request):
     await require_admin(request)
     users = await users_collection.find(
         {}, {"_id": 0, "email": 1, "realtime_enabled": 1, "ai_provider": 1, "partial_interval": 1,
-             "max_languages": 1, "api_key_prefix": 1, "created_at": 1, "last_login_at": 1}
+             "max_languages": 1, "api_key_prefix": 1, "created_at": 1, "last_login_at": 1,
+             "last_active_at": 1}
     ).to_list(length=1000)
     for u in users:
         u["max_languages"] = u.get("max_languages") or 0
-        _isoformat_fields(u, "created_at", "last_login_at")
+        _isoformat_user_times(u)
         u["has_api_key"] = bool(u.pop("api_key_prefix", None))
         u["is_admin"] = _is_admin_email(u.get("email", ""))
     return {"users": users}
@@ -3467,6 +3521,8 @@ async def heartbeat(request: Request, sid: str):
                 # let the next heartbeat retry.
                 scribe_manager.rollback_usage_delta(delta)
         await rooms_collection.update_one({"sid": sid}, {"$set": update})
+    # After the lock refresh: a slow users write must not delay renewal past ADMIN_TIMEOUT.
+    await _touch_last_active(request.session.get("email"))
     return response
 
 @app.delete("/api/sessions/{sid}", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
@@ -3801,6 +3857,7 @@ async def sync(socket_id, data):
     sync_data = data.copy()
     sync_data.pop("id", None)
     await _process_transcription_update(session_id, sync_data)
+    await _touch_socket_actor(session)
 
 @sio.event
 async def join_session(socket_id, data):
@@ -3999,4 +4056,8 @@ async def audio_buffer_append(socket_id, data):
         if room_usage and room_usage.get("audio_bytes"):
             manager.restore_usage(room_usage["audio_bytes"], room_usage.get("audio_chunks", 0))
     await manager.push_audio(base64_audio)
+    # After the enqueue: the (rare) activity write must not let later chunks,
+    # dispatched as concurrent tasks, overtake this one in the audio queue.
+    # Long-lived broadcasters skip re-auth per chunk, so it is recorded here.
+    await _touch_socket_actor(session)
     

@@ -98,6 +98,10 @@ class UsageWatermarkTest(unittest.IsolatedAsyncioTestCase):
 
 
 class HeartbeatUsageTest(unittest.IsolatedAsyncioTestCase):
+    # The heartbeat reads the cookie session (activity tracking); the lock check
+    # that would normally consume it is patched out, so it stays empty.
+    _request = SimpleNamespace(session={})
+
     async def test_heartbeat_bills_the_room_owner_not_the_lock_holder(self):
         sid = "room-a"
         room = {"sid": sid, "admin_email": "owner@example.com"}
@@ -115,9 +119,9 @@ class HeartbeatUsageTest(unittest.IsolatedAsyncioTestCase):
             patch.dict(app.active_scribe_managers, {sid: manager}, clear=True),
             patch.dict(app.active_translation_managers, {}, clear=True),
         ):
-            response = await app.heartbeat(object(), sid)
+            response = await app.heartbeat(self._request, sid)
             # A second heartbeat with no new audio must not write again.
-            await app.heartbeat(object(), sid)
+            await app.heartbeat(self._request, sid)
 
         self.assertEqual(response["audio_duration_secs"], 3.0)
         self.assertEqual(len(usage.writes), 1)
@@ -146,13 +150,13 @@ class HeartbeatUsageTest(unittest.IsolatedAsyncioTestCase):
             patch.dict(app.active_translation_managers, {}, clear=True),
         ):
             # The lock refresh the panel depends on must survive the write failure.
-            response = await app.heartbeat(object(), sid)
+            response = await app.heartbeat(self._request, sid)
             self.assertEqual(response["status"], "ok")
 
             # Mongo recovers; the dropped audio must not be silently forgiven.
             usage.update_one = _UsageCollection.update_one.__get__(usage)
             await manager.push_audio(_ONE_SECOND_CHUNK)
-            await app.heartbeat(object(), sid)
+            await app.heartbeat(self._request, sid)
 
         self.assertEqual(len(usage.writes), 1)
         self.assertEqual(usage.writes[0][1]["$inc"]["audio_bytes"], 2 * _CHUNK_BYTES)

@@ -211,7 +211,7 @@ async def get_or_create_user(users_collection, email: str, user_uid: str) -> dic
     result = await users_collection.find_one_and_update(
         {"email": email},
         {
-            "$set": {"last_login_at": now},
+            "$set": {"last_login_at": now, "last_active_at": now},
             "$setOnInsert": {
                 "email": email,
                 "user_uid": user_uid,
