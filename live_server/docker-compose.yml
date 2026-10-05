@@ -49,7 +49,13 @@ services:
         hard: 65535
     # Socket.IO fan-out and transcription session state are process-local.
     # Keep one worker; supporting more requires moving that state to Redis.
-    command: ["./.venv/bin/uvicorn", "app:socket_app", "--host", "0.0.0.0", "--port", "5000", "--workers", "1", "--ws", "websockets"]
+    # Viewer SSE streams never end on their own, so uvicorn would wait on them
+    # forever before running lifespan shutdown; cut them after 5s instead.
+    command: ["./.venv/bin/uvicorn", "app:socket_app", "--host", "0.0.0.0", "--port", "5000", "--workers", "1", "--ws", "websockets", "--timeout-graceful-shutdown", "5"]
+    # Lifespan shutdown drains accepted commits for up to 70s (_COMMIT_DRAIN_SECS,
+    # all sessions in parallel) so a slow model's last segment is still stored;
+    # Docker's 10s default would SIGKILL in the middle of it.
+    stop_grace_period: 90s
     depends_on:
       - redis
       - mongodb

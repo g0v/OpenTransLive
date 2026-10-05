@@ -17,7 +17,7 @@ import re
 import httpx
 
 from ..config import load_secret_toml
-from ..http_client import get_async_client, close_async_client, new_isolated_client
+from ..http_client import get_async_client, close_async_client, durable_timeout, new_isolated_client
 from ..logger_config import setup_logger, log_exception
 from .base import BaseTranslator
 
@@ -29,8 +29,8 @@ _MAX_RETRY_DELAY = 8.0    # cap on the exponential backoff window
 # Per-operation retry budgets. Partials are on the hot path and must fail fast
 # so the queue isn't blocked — a dropped partial is harmless because the client
 # keeps showing the previous one. Commits are durable and latency-tolerant, so
-# they retry harder: an unrecovered commit is stored with an empty translation
-# that the viewer can only render as a gap.
+# they retry harder and wait longer per attempt (durable_timeout): an unrecovered
+# commit is stored with the stale partial translation or an empty gap.
 _PARTIAL_RETRIES = 1
 _COMMIT_RETRIES = 4
 _DEFAULT_RETRIES = 3
@@ -64,7 +64,7 @@ _PROVIDER_PARAMS = _CONFIG["providers"]
 
 async def _post_with_retry(
     url: str, headers: dict, body: dict, max_retries: int, label: str,
-    client: httpx.AsyncClient | None = None,
+    client: httpx.AsyncClient | None = None, timeout: httpx.Timeout | None = None,
 ) -> dict | None:
     """POST JSON with full-jitter exponential backoff on retryable statuses.
 
@@ -74,7 +74,7 @@ async def _post_with_retry(
 
     With no *client* the shared hot-path client is used. A caller that passes its
     own client keeps the two apart: a slow request of its own must not fight the
-    hot path's read budget.
+    hot path's read budget. *timeout* overrides the client's budget per attempt.
     """
     if client is None:
         client = get_async_client()
@@ -85,7 +85,10 @@ async def _post_with_retry(
             cap = min(_MAX_RETRY_DELAY, _BASE_RETRY_DELAY * (2 ** (attempt - 1)))
             await asyncio.sleep(random.uniform(0, cap))
         try:
-            response = await client.post(url, json=body, headers=headers)
+            response = await client.post(
+                url, json=body, headers=headers,
+                timeout=httpx.USE_CLIENT_DEFAULT if timeout is None else timeout,
+            )
             if response.status_code == 200:
                 return response.json()
             if response.status_code not in _RETRYABLE_STATUS_CODES:
@@ -173,7 +176,9 @@ class ChatCompletionTranslator(BaseTranslator):
     def __init__(self, settings: dict):
         self._api_key = settings.get(self.api_key_setting)
 
-    async def _chat(self, body: dict, max_retries: int = _DEFAULT_RETRIES) -> dict | None:
+    async def _chat(
+        self, body: dict, max_retries: int = _DEFAULT_RETRIES, timeout: httpx.Timeout | None = None,
+    ) -> dict | None:
         if not self._api_key:
             return None
         return await _post_with_retry(
@@ -185,6 +190,7 @@ class ChatCompletionTranslator(BaseTranslator):
             body,
             max_retries,
             f"{type(self).__name__}._chat",
+            timeout=timeout,
         )
 
     @staticmethod
@@ -232,7 +238,7 @@ class ChatCompletionTranslator(BaseTranslator):
             return None
         return _parse_glossary_reply(raw, term)
 
-    async def correct(self, text: str, prev_corrected: str, keywords: str) -> str:
+    async def correct(self, text: str, prev_corrected: str, keywords: str, commit: bool = False) -> str:
         body = {
             **self.correct_params,
             "messages": [
@@ -245,7 +251,12 @@ class ChatCompletionTranslator(BaseTranslator):
                 {"role": "user", "content": text},
             ],
         }
-        result = await self._chat(body)
+        # A committed line keeps the generic retry budget: a failed correction only
+        # falls back to the raw transcript, so it need not retry as hard as translate.
+        result = await (
+            self._chat(body, timeout=durable_timeout()) if commit
+            else self._chat(body, max_retries=_PARTIAL_RETRIES)
+        )
         if result:
             corrected = (
                 self._message_text(result)
@@ -296,8 +307,9 @@ class ChatCompletionTranslator(BaseTranslator):
                 },
             ],
         }
-        result = await self._chat(
-            body, max_retries=_COMMIT_RETRIES if commit else _PARTIAL_RETRIES
+        result = await (
+            self._chat(body, max_retries=_COMMIT_RETRIES, timeout=durable_timeout()) if commit
+            else self._chat(body, max_retries=_PARTIAL_RETRIES)
         )
         if result:
             raw = (

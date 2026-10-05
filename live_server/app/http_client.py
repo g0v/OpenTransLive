@@ -8,6 +8,10 @@ _client: httpx.AsyncClient | None = None
 
 _CONNECT_TIMEOUT = 5.0
 _READ_TIMEOUT = 10.0
+# Committed segments are stored for good, so their LLM calls may outwait the hot
+# path: a slow model writing out a long segment can need more than _READ_TIMEOUT,
+# and timing that call out stores the stale partial translation permanently.
+DURABLE_READ_TIMEOUT = 30.0
 
 
 def get_async_client() -> httpx.AsyncClient:
@@ -15,6 +19,11 @@ def get_async_client() -> httpx.AsyncClient:
     if _client is None or _client.is_closed:
         _client = httpx.AsyncClient(timeout=httpx.Timeout(_READ_TIMEOUT, connect=_CONNECT_TIMEOUT))
     return _client
+
+
+def durable_timeout() -> httpx.Timeout:
+    """Per-request budget for a call whose result is stored for good (see above)."""
+    return httpx.Timeout(DURABLE_READ_TIMEOUT, connect=_CONNECT_TIMEOUT)
 
 
 def new_isolated_client(timeout: float) -> httpx.AsyncClient:

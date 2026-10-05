@@ -14,13 +14,15 @@ class BaseTranslator(ABC):
     """
 
     @abstractmethod
-    async def correct(self, text: str, prev_corrected: str, keywords: str) -> str:
+    async def correct(self, text: str, prev_corrected: str, keywords: str, commit: bool = False) -> str:
         """Return the ASR-corrected version of *text*.
 
         Args:
             text: Raw transcription segment to correct.
             prev_corrected: Previous partial's corrected text for continuity.
             keywords: Comma-separated domain keywords to guide correction.
+            commit: True for durable committed segments, which may wait longer
+                than a partial; a partial fails fast so its lane isn't blocked.
         """
 
     @abstractmethod
@@ -43,8 +45,9 @@ class BaseTranslator(ABC):
             context: Recent translated sentences for continuity.
             prev_translation: Previous partial translation to minimise diffs.
             keywords: Comma-separated domain keywords.
-            commit: True for durable committed segments, which retry harder
-                since an unrecovered translation is stored as a permanent gap.
+            commit: True for durable committed segments, which retry harder and
+                wait longer per attempt, since an unrecovered translation is
+                stored for good.
             source: Source language code, empty on auto detect. Only ever set
                 from the operator's explicit setting, so the prompt can state
                 it as fact rather than as a guess — a detector's guess here

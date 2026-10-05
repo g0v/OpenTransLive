@@ -64,8 +64,8 @@ class _CompositeTranslator(BaseTranslator):
         self._correct = correct_backend
         self._translate = translate_backend
 
-    async def correct(self, text: str, prev_corrected: str, keywords: str) -> str:
-        return await self._correct.correct(text, prev_corrected, keywords)
+    async def correct(self, text: str, prev_corrected: str, keywords: str, commit: bool = False) -> str:
+        return await self._correct.correct(text, prev_corrected, keywords, commit=commit)
 
     async def translate(
         self,

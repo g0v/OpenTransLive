@@ -419,9 +419,13 @@ async def lifespan(app: FastAPI):
         await manager.stop()
 
     # Translation managers drain those commits, so they stop before the translator
-    # and its shared HTTP client are closed underneath them.
-    for manager in list(active_translation_managers.values()):
-        await manager.stop()
+    # and its shared HTTP client are closed underneath them. Concurrently: each
+    # drain may take up to _COMMIT_DRAIN_SECS, and stop_grace_period budgets for
+    # one drain, not one per session.
+    await asyncio.gather(
+        *(manager.stop() for manager in list(active_translation_managers.values())),
+        return_exceptions=True,
+    )
 
     from .translators import close_translator
     await close_translator()
@@ -3966,7 +3970,7 @@ async def on_translation_completed(session_id, sync_data):
     await _process_transcription_update(session_id, sync_data)
 
 def on_scribe_transcription(session_id, transcription):
-    """Submit a Scribe transcription to the bounded per-session manager.
+    """Submit a Scribe transcription to the per-session translation manager.
 
     Submission performs no I/O, so the provider receive loop stays responsive
     without creating one detached task per transcript.

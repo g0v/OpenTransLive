@@ -7,6 +7,7 @@ import json
 import re
 from functools import lru_cache
 from .config import REALTIME_SETTINGS
+from .http_client import DURABLE_READ_TIMEOUT
 from .database import rooms_collection, users_collection
 from .logger_config import setup_logger, log_exception
 from .socket_schema import is_finite_number
@@ -41,6 +42,27 @@ _MIN_PARTIAL_DELTA_CHARS = 4
 # Fixed local budget for one caption's cache write, broadcast and publish, so a
 # blackholed Redis cannot park a lane (or shutdown) forever.
 _DELIVERY_TIMEOUT_SECS = 10.0
+# Budget for a commit's LLM stages (correction + translation), measured from when
+# correction starts. Without it a hung provider holds one commit for every retry
+# of every stage (minutes), and the unbounded commit queue behind it never
+# drains. Correction is capped at _COMMIT_CORRECT_SECS so translation keeps at
+# least one full durable attempt; a stage that overruns falls back exactly like a
+# failed call (raw transcript / last partial translation). The Redis/Mongo context
+# lookups around these stages are bounded by their clients' own timeouts, not here.
+_COMMIT_CORRECT_SECS = 20.0
+_COMMIT_LLM_BUDGET_SECS = 2 * DURABLE_READ_TIMEOUT
+# How long stop() waits for accepted commits: the in-flight commit's LLM budget
+# plus its delivery (its context lookups are extra, see above). A deeper backlog
+# is dropped and logged rather than holding shutdown open.
+_COMMIT_DRAIN_SECS = _COMMIT_LLM_BUDGET_SECS + _DELIVERY_TIMEOUT_SECS
+# Commit backlog depth worth a warning: translation is falling behind speech.
+# Doubles after each warning until the backlog empties.
+_COMMIT_BACKLOG_WARN = 20
+# Longest the translated-partial lane waits behind outstanding commits, counted
+# from its first park since the last dispatch. Neither a newer partial replacing
+# the parked one nor a commit closing its segment restarts the clock, so a model
+# that stays slower than speech still gets a translated partial out this often.
+_PARTIAL_PARK_MAX_SECS = 3.0
 
 
 # Outcomes of TranslationQueueManager.classify(): translate it, broadcast the source
@@ -756,16 +778,22 @@ async def translate_transcription(
 
     result = {"corrected": corrected_override.strip() if authoritative_correction else text}
 
+    # Partials need no deadline: they already fail fast on the hot-path budget.
+    # Started here, after the context lookups, so correction's cap always fits.
+    llm_deadline = None if partial else asyncio.get_running_loop().time() + _COMMIT_LLM_BUDGET_SECS
+
     # 1. Correction — skipped entirely for an authoritative source edit, which is
     # already the corrected line by definition.
     if not authoritative_correction:
         try:
             if not skip_correction:
-                result["corrected"] = await translator.correct(
-                    text=text,
-                    prev_corrected=prev_corrected,
-                    keywords=correct_keywords,
-                )
+                async with asyncio.timeout(None if partial else _COMMIT_CORRECT_SECS):
+                    result["corrected"] = await translator.correct(
+                        text=text,
+                        prev_corrected=prev_corrected,
+                        keywords=correct_keywords,
+                        commit=not partial,
+                    )
             else:
                 result["corrected"] = text.strip()
         except Exception as e:
@@ -795,16 +823,17 @@ async def translate_transcription(
         # so the flow panel and keyword reranking still see what was actually said.
         src_text = apply_glossary(result['corrected'], build_glossary_map(glossary, language))
         try:
-            out = await translator.translate(
-                text=src_text,
-                language=language,
-                context=lang_context,
-                prev_translation=pt_trans,
-                keywords=keywords_str,
-                tone=tone,
-                commit=not partial,
-                source=scribe_language,
-            )
+            async with asyncio.timeout_at(llm_deadline):
+                out = await translator.translate(
+                    text=src_text,
+                    language=language,
+                    context=lang_context,
+                    prev_translation=pt_trans,
+                    keywords=keywords_str,
+                    tone=tone,
+                    commit=not partial,
+                    source=scribe_language,
+                )
         except Exception as e:
             log_exception(logger, e, f"Translation error for {language}")
             out = None
@@ -815,7 +844,7 @@ async def translate_transcription(
             # rather than dropping the line entirely.
             if not partial:
                 logger.warning(
-                    "Commit translation unrecovered for %s (start=%s); storing empty",
+                    "Commit translation unrecovered for %s (start=%s); storing last partial translation or empty",
                     language, data.get("start_time"),
                 )
             translated[language] = pt_trans or ""
@@ -842,7 +871,15 @@ async def translate_transcription(
 # ---------------------------------------------------------------------------
 
 class TranslationQueueManager:
-    _COMMIT_QUEUE_MAXSIZE = 50  # bound commit queue to prevent OOM under slow LLM
+    """Per-session translation lanes.
+
+    Commits are durable history, so they own the provider first: while any commit
+    is queued or translating, translated partials of later segments wait in their
+    one replaceable slot (flow-only source updates keep broadcasting). On a slow
+    model this lets the closing segment finish before the next one starts
+    competing for the same backend. The wait is capped at _PARTIAL_PARK_MAX_SECS
+    so a sustained backlog cannot silence translated partials until it drains.
+    """
 
     def __init__(self, callback, cache_loader):
         self.callback = callback
@@ -854,7 +891,17 @@ class TranslationQueueManager:
         # higher-frequency source-only flow updates.
         self._pending_partial = None
         self._pending_flow = None
-        self.commit_queue = asyncio.Queue(maxsize=self._COMMIT_QUEUE_MAXSIZE)
+        # Unbounded on purpose: an accepted commit is durable history, so a slow
+        # model must back the queue up rather than evict a segment never stored.
+        self.commit_queue = asyncio.Queue()
+        # Commits queued or translating; translated partials park while non-zero.
+        self._commits_outstanding = 0
+        # Backlog depth that triggers the next "falling behind" warning.
+        self._backlog_warn_at = _COMMIT_BACKLOG_WARN
+        # When the partial lane first parked since its last dispatch (kept across
+        # replacements and stale drops), and the timer that dispatches it at the cap.
+        self._partial_parked_at: float | None = None
+        self._park_timer: asyncio.TimerHandle | None = None
         # Most recently dispatched partial. Its text gates tiny extensions that would
         # only cause LLM rewrites without giving the reader new content; its segment
         # decides whether a commit gets to drop the claim.
@@ -864,8 +911,9 @@ class TranslationQueueManager:
         self._inflight_partial_start: float | None = None
         self._inflight_flow_start: float | None = None
         # Segment of the newest commit accepted into the queue: everything at or
-        # before it is superseded. Partials for later segments keep flowing while
-        # that commit translates.
+        # before it is superseded. Later segments' partials park until it is
+        # translated (at most _PARTIAL_PARK_MAX_SECS), while their flow-only source
+        # updates keep broadcasting.
         self._committed_through = float("-inf")
         self.is_running = False
         self.task = None
@@ -881,6 +929,7 @@ class TranslationQueueManager:
         # rescheduling its pending item, so the drain below cannot be extended.
         self.is_running = False
         self._pending_partial = None
+        self._clear_park()
         self._pending_flow = None
         self._claimed_partial = None
         self._inflight_partial_start = None
@@ -889,16 +938,20 @@ class TranslationQueueManager:
 
         # Commits are history, and Scribe submits its last open segment from its own
         # stop(), so accepted commits are finished before the worker is cancelled.
-        # Partials are replaceable snapshots and are dropped instead.
-        if self.task is not None and not self.commit_queue.empty():
+        # Partials are replaceable snapshots and are dropped instead. Gated on the
+        # outstanding count, not queue emptiness: the worker has already taken the
+        # commit it is translating off the queue. The drain is bounded: it covers the
+        # commit in flight (its LLM stages capped at _COMMIT_LLM_BUDGET_SECS), and
+        # whatever backlog does not fit is dropped and logged rather than holding shutdown.
+        if self.task is not None and self._commits_outstanding:
             try:
-                async with asyncio.timeout(_DELIVERY_TIMEOUT_SECS):
+                async with asyncio.timeout(_COMMIT_DRAIN_SECS):
                     await self.commit_queue.join()
             except TimeoutError:
                 logger.error(
-                    "commit_queue drain timed out after %.1fs; queue_depth=%d",
-                    _DELIVERY_TIMEOUT_SECS,
-                    self.commit_queue.qsize(),
+                    "commit_queue drain timed out after %.1fs; dropping %d unstored commits",
+                    _COMMIT_DRAIN_SECS,
+                    self._commits_outstanding,
                 )
 
         tasks = [
@@ -953,9 +1006,9 @@ class TranslationQueueManager:
     def submit(self, session_id, sync_data, redis_client):
         """Accept an event without awaiting I/O.
 
-        The caller is the Scribe receive loop, so submission must stay synchronous
-        and bounded. Each partial lane keeps at most one in-flight and one pending
-        item; commits use the existing bounded queue.
+        The caller is the Scribe receive loop, so submission must stay synchronous.
+        Each partial lane keeps at most one in-flight and one pending item; commits
+        are queued without eviction.
         """
         if not self.is_running:
             return
@@ -978,13 +1031,8 @@ class TranslationQueueManager:
 
         item = (session_id, sync_data, redis_client)
         if sync_data.get("partial") is True:
-            if self.partial_task and not self.partial_task.done():
-                self._pending_partial = item
-            else:
-                self._inflight_partial_start = segment_start(sync_data)
-                self.partial_task = asyncio.create_task(
-                    self._process_partial(*item), name=f"translation-partial-{session_id}"
-                )
+            self._pending_partial = item
+            self._start_pending_partial()
             return
 
         start = segment_start(sync_data)
@@ -997,6 +1045,8 @@ class TranslationQueueManager:
         if (self.flow_task and not self.flow_task.done()
                 and self._superseded(self._inflight_flow_start)):
             self.flow_task.cancel()
+        # The park clock survives this: under a backlog, short segments would
+        # otherwise each restart it and never get a translated partial out.
         if self._pending_partial is not None and self._stale(self._pending_partial[1]):
             self._pending_partial = None
         if self._pending_flow is not None and self._stale(self._pending_flow[1]):
@@ -1004,17 +1054,57 @@ class TranslationQueueManager:
         if self._stale(self._claimed_partial):
             self._claimed_partial = None
 
-        if self.commit_queue.full():
-            try:
-                self.commit_queue.get_nowait()
-                self.commit_queue.task_done()
-            except asyncio.QueueEmpty:
-                pass
+        self._commits_outstanding += 1
+        self.commit_queue.put_nowait(item)
+        depth = self.commit_queue.qsize()
+        if depth >= self._backlog_warn_at:
             logger.warning(
-                "[commit_queue] queue full, dropped oldest item for session %s",
+                "[commit_queue] %d commits waiting for session %s; translation is behind speech",
+                depth,
                 session_id,
             )
-        self.commit_queue.put_nowait(item)
+            self._backlog_warn_at *= 2
+
+    def _clear_park(self):
+        self._partial_parked_at = None
+        if self._park_timer is not None:
+            self._park_timer.cancel()
+            self._park_timer = None
+
+    def _park_expired(self):
+        self._park_timer = None
+        self._start_pending_partial()
+
+    def _start_pending_partial(self):
+        """Dispatch the parked partial once no partial is in flight and either no
+        commit is outstanding or the lane has waited _PARTIAL_PARK_MAX_SECS since
+        it last dispatched. Newer partials replace the parked one without
+        restarting that clock; only a dispatch or an idle commit lane resets it."""
+        pending = self._pending_partial
+        if pending is None:
+            if not self._commits_outstanding:
+                self._clear_park()
+            return
+        loop = asyncio.get_running_loop()
+        if self._partial_parked_at is None:
+            self._partial_parked_at = loop.time()
+        if self.partial_task is not None and not self.partial_task.done():
+            return
+        if self._commits_outstanding and self.is_running:
+            wait = self._partial_parked_at + _PARTIAL_PARK_MAX_SECS - loop.time()
+            if wait > 0:
+                if self._park_timer is None:
+                    self._park_timer = loop.call_later(wait, self._park_expired)
+                return
+        self._pending_partial = None
+        if not self.is_running or self._stale(pending[1]):
+            self.partial_task = None
+            return
+        self._clear_park()
+        self._inflight_partial_start = segment_start(pending[1])
+        self.partial_task = asyncio.create_task(
+            self._process_partial(*pending), name=f"translation-partial-{pending[0]}"
+        )
 
     async def _load_context(self, session_id):
         return await self.cache_loader(session_id, num_committed=5)
@@ -1044,6 +1134,10 @@ class TranslationQueueManager:
                 log_exception(logger, e, "Queue loop error")
             finally:
                 self.commit_queue.task_done()
+                self._commits_outstanding -= 1
+                if not self._commits_outstanding:
+                    self._backlog_warn_at = _COMMIT_BACKLOG_WARN
+                self._start_pending_partial()
 
     async def _process_flow(self, session_id, sync_data):
         try:
@@ -1066,15 +1160,9 @@ class TranslationQueueManager:
         except Exception as e:
             log_exception(logger, e, f"Partial queue error for session {session_id}")
         finally:
-            pending, self._pending_partial = self._pending_partial, None
             self._inflight_partial_start = None
-            if pending is not None and self.is_running and not self._stale(pending[1]):
-                self._inflight_partial_start = segment_start(pending[1])
-                self.partial_task = asyncio.create_task(
-                    self._process_partial(*pending), name=f"translation-partial-{pending[0]}"
-                )
-            else:
-                self.partial_task = None
+            self.partial_task = None
+            self._start_pending_partial()
 
     async def _process(self, session_id, sync_data, cached_data, redis_client):
         try:
