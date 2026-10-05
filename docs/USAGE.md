@@ -104,7 +104,7 @@ Session 擁有者或 co-owner 可開啟 `/edit/{session_id}`：
 | 項目                    | 說明                                                                                     |
 | --------------------- | -------------------------------------------------------------------------------------- |
 | Translation languages | 設定字幕要翻譯成哪些語言                                                                           |
-| Engine                | 選擇轉錄引擎：ElevenLabs Scribe 或 Gemini Transcribe；留空代表沿用伺服器的 `STT_PROVIDER`                 |
+| Engine                | 選擇轉錄引擎：ElevenLabs Scribe 或 Gemini Transcribe；只列出伺服器有設定 API key 的引擎（`ELEVENLABS_API_KEY` / `GEMINI_API_KEY`）。留空代表沿用伺服器的 `STT_PROVIDER` |
 | Detect language       | 指定語音辨識語言；留空代表自動偵測。語言代碼隨引擎而異（ElevenLabs 用 `zho`，Gemini 用 `cmn-Hant-TW`），切換引擎會把這項重設為自動偵測 |
 | Translate tone        | 指定翻譯語氣，例如正式、口語或其他短字串                                                                   |
 | Keywords              | 提供人名、專有名詞或活動術語給修正與翻譯流程使用                                                               |
@@ -179,7 +179,7 @@ Server to client：
 | `GET`    | `/api/session/{sid}/glossary`          | 讀取多語詞條表                                    |
 | `POST`   | `/api/session/{sid}/glossary`          | 更新多語詞條表                                    |
 | `POST`   | `/api/session/{sid}/glossary/generate` | 以 AI 搜尋網路產生單一詞條（需 Gemini 或 OpenAI key）     |
-| `GET`    | `/api/session/{sid}/stt-provider`      | 讀取轉錄引擎設定                                   |
+| `GET`    | `/api/session/{sid}/stt-provider`      | 讀取轉錄引擎設定；`available` 為已設定 API key 的引擎 |
 | `POST`   | `/api/session/{sid}/stt-provider`      | 更新轉錄引擎（`elevenlabs` / `gemini`；空字串代表伺服器預設） |
 | `GET`    | `/api/session/{sid}/scribe-language`   | 讀取偵測語言設定                                   |
 | `POST`   | `/api/session/{sid}/scribe-language`   | 更新偵測語言設定                                   |

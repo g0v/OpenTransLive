@@ -97,6 +97,9 @@
                 {% for p in providers %}
                 <option value="{{ p }}" {% if user.ai_provider == p %}selected{% endif %}>{{ p }}</option>
                 {% endfor %}
+                {% if user.ai_provider and user.ai_provider not in providers %}
+                <option value="{{ user.ai_provider }}" disabled selected>{{ user.ai_provider }} (no API key)</option>
+                {% endif %}
               </select>
             </td>
             <td class="px-2 py-1">

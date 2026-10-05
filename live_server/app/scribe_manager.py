@@ -942,6 +942,11 @@ SCRIBE_MANAGERS = {c.PROVIDER: c for c in (ElevenLabsScribeManager, GeminiScribe
 _DEFAULT_PROVIDER = ElevenLabsScribeManager.PROVIDER
 
 
+def configured_stt_providers() -> list[str]:
+    """STT providers whose API key is set, in SCRIBE_MANAGERS order."""
+    return [p for p, cls in SCRIBE_MANAGERS.items() if REALTIME_SETTINGS.get(cls.API_KEY_SETTING)]
+
+
 def create_scribe_manager(provider: str, *args, **kwargs) -> ScribeSessionManager:
     """Build the session manager for `provider`, falling back to the deployment's
     STT_PROVIDER (and then to ElevenLabs) for an empty or unknown value."""

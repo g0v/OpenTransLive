@@ -51,7 +51,8 @@ from .database import (rooms_collection, transcription_store_collection, transcr
                        users_collection, usage_daily_collection, init_indexes)
 from .logger_config import setup_logger, log_exception
 from .scribe_manager import (AUDIO_BYTES_PER_SEC, SCRIBE_MANAGERS, ScribeSessionManager,
-                             create_scribe_manager, normalize_language_code)
+                             configured_stt_providers, create_scribe_manager,
+                             normalize_language_code)
 from .socket_schema import (
     validate_sync_payload,
     validate_audio_buffer_append_payload,
@@ -1674,12 +1675,12 @@ async def dashboard(request: Request):
         secs = round(stats.get("total_audio_secs", 0))
         u["session_count"] = stats.get("session_count", 0)
         u["audio_display"] = f"{secs / 3600:.1f} h" if secs >= 3600 else f"{secs // 60} m"
-    from .translators import AVAILABLE_PROVIDERS
+    from .translators import configured_providers
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "users": users,
         "current_email": _get_session_email(request),
-        "providers": AVAILABLE_PROVIDERS,
+        "providers": configured_providers(),
     })
 
 
@@ -2510,7 +2511,8 @@ async def get_session_stt_provider_endpoint(request: Request, sid: str):
     from .translation_service import get_session_stt_provider
     provider = await get_session_stt_provider(redis_client, sid)
     return {"provider": provider,
-            "default": REALTIME_SETTINGS.get("STT_PROVIDER") or "elevenlabs"}
+            "default": REALTIME_SETTINGS.get("STT_PROVIDER") or "elevenlabs",
+            "available": configured_stt_providers()}
 
 
 @app.post("/api/session/{sid}/stt-provider", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])

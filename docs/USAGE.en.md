@@ -99,7 +99,7 @@ Constraints:
 | Item | Description |
 |---|---|
 | Translation languages | Languages the subtitles are translated into |
-| Engine | Transcription engine: ElevenLabs Scribe or Gemini Transcribe; blank uses the server's `STT_PROVIDER` |
+| Engine | Transcription engine: ElevenLabs Scribe or Gemini Transcribe; only engines whose API key is set on the server (`ELEVENLABS_API_KEY` / `GEMINI_API_KEY`) are listed. Blank uses the server's `STT_PROVIDER` |
 | Detect language | STT language; blank means auto-detect. Codes differ per engine (`zho` for ElevenLabs, `cmn-Hant-TW` for Gemini), and switching engine resets this to auto-detect |
 | Translate tone | Short string for translation tone, e.g. formal, casual |
 | Keywords | Names, terminology, or event-specific terms used by correction and translation |
@@ -168,7 +168,7 @@ Requires session management permission.
 | `GET` | `/api/session/{sid}/glossary` | Read the multilingual glossary |
 | `POST` | `/api/session/{sid}/glossary` | Update the multilingual glossary |
 | `POST` | `/api/session/{sid}/glossary/generate` | Look one term up on the web with AI (needs a Gemini or OpenAI key) |
-| `GET` | `/api/session/{sid}/stt-provider` | Read the transcription engine |
+| `GET` | `/api/session/{sid}/stt-provider` | Read the transcription engine; `available` lists the engines with an API key set |
 | `POST` | `/api/session/{sid}/stt-provider` | Update the transcription engine (`elevenlabs` / `gemini`; empty string means the server default) |
 | `GET` | `/api/session/{sid}/scribe-language` | Read the detect language |
 | `POST` | `/api/session/{sid}/scribe-language` | Update the detect language |

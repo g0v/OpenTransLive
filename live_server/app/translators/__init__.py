@@ -37,11 +37,12 @@ from typing import Callable
 
 from ..logger_config import setup_logger
 from .base import BaseTranslator
-from .providers import CerebrasTranslator, GeminiTranslator, GroqTranslator, OpenAITranslator
+from .providers import (CerebrasTranslator, ChatCompletionTranslator, GeminiTranslator,
+                        GroqTranslator, OpenAITranslator)
 
 logger = setup_logger(__name__)
 
-_BACKENDS: dict[str, Callable[[dict], BaseTranslator]] = {
+_BACKENDS: dict[str, type[ChatCompletionTranslator]] = {
     "cerebras": CerebrasTranslator,
     "gemini": GeminiTranslator,
     "groq": GroqTranslator,
@@ -49,6 +50,13 @@ _BACKENDS: dict[str, Callable[[dict], BaseTranslator]] = {
 }
 
 AVAILABLE_PROVIDERS: list[str] = list(_BACKENDS.keys())
+
+
+def configured_providers() -> list[str]:
+    """AI providers whose API key is set, in AVAILABLE_PROVIDERS order."""
+    from ..config import REALTIME_SETTINGS
+    return [p for p, cls in _BACKENDS.items() if REALTIME_SETTINGS.get(cls.api_key_setting)]
+
 
 # Cache of translator instances keyed by provider name. The default (no
 # per-account override) is stored under ``_DEFAULT_KEY`` and honors the
@@ -172,4 +180,5 @@ __all__ = [
     "get_glossary_translator",
     "close_translator",
     "AVAILABLE_PROVIDERS",
+    "configured_providers",
 ]

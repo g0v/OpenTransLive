@@ -80,8 +80,7 @@
           <select id="stt-provider-select"
             class="w-full max-w-40 bg-gray-800 border border-gray-700 text-xs text-gray-300 px-2 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none">
             <option value="">Server Default</option>
-            <option value="elevenlabs">ElevenLabs Scribe</option>
-            <option value="gemini">Gemini Transcribe</option>
+            <!-- Engine options are filled by loadSttProvider: only engines with an API key. -->
           </select>
         </div>
         <!-- Detect Language select (only for realtime transcription) -->
@@ -836,6 +835,22 @@
     }
   }
 
+  const STT_PROVIDER_LABELS = { elevenlabs: 'ElevenLabs Scribe', gemini: 'Gemini Transcribe' }
+
+  // Only engines whose API key the server holds are selectable. A session still set
+  // to an engine without a key shows it as a disabled entry rather than pretending it
+  // uses something else.
+  function renderSttProviderOptions(sel, available, provider) {
+    sel.replaceChildren(new Option('Server Default', ''))
+    for (const p of available) sel.appendChild(new Option(STT_PROVIDER_LABELS[p] || p, p))
+    if (provider && !available.includes(provider)) {
+      const opt = new Option((STT_PROVIDER_LABELS[provider] || provider) + ' (no API key)', provider)
+      opt.disabled = true
+      sel.appendChild(opt)
+    }
+    sel.value = provider
+  }
+
   async function loadSttProvider() {
     try {
       const res = await fetch(`/api/session/${sid}/stt-provider`, { credentials: 'same-origin' })
@@ -843,7 +858,7 @@
       const data = await res.json()
       const sel = document.getElementById('stt-provider-select')
       const provider = data.provider || data.default
-      if (sel) sel.value = provider
+      if (sel) renderSttProviderOptions(sel, data.available || [], provider)
       renderScribeLanguageOptions(provider)
     } catch (e) {
       console.error('Failed to load STT provider:', e)
