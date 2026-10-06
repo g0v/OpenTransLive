@@ -418,13 +418,9 @@
             <code class="viewer-param-code rounded-md px-2 py-0.5 font-mono text-xs">show</code>
             <span class="text-xs text-[#9eacbf]">default: all</span>
           </div>
-          <p class="mb-2 text-sm text-[#9eacbf]">Comma-separated language codes to display. Omit the parameter to show every language.</p>
-          <div class="flex flex-wrap gap-1.5">
+          <p class="mb-2 text-sm text-[#9eacbf]">Choose one of this session's target languages (including custom codes), the complete comma-separated language list, or all. Options follow the session's language settings. Omit the parameter to show every language, including languages added later.</p>
+          <div id="viewer-show-options" class="flex flex-wrap gap-1.5">
             <button type="button" class="viewer-param-btn" data-viewer-param="show" data-value="" data-default>all</button>
-            <button type="button" class="viewer-param-btn" data-viewer-param="show" data-value="en-US">en</button>
-            <button type="button" class="viewer-param-btn" data-viewer-param="show" data-value="zh-Hant-TW">zh</button>
-            <button type="button" class="viewer-param-btn" data-viewer-param="show" data-value="ja-JP">ja</button>
-            <button type="button" class="viewer-param-btn" data-viewer-param="show" data-value="en-US,zh-Hant-TW">en,zh</button>
           </div>
         </section>
 
@@ -1761,12 +1757,12 @@
     return (!target || target === 'flow') ? 'Flow' : langLabel(target)
   }
 
-  // Both halves of the Dictionary modal read the session's language set: the
-  // add-row target <select> offers it, and glossary rows grey out codes that
-  // aren't in it. Call this wherever selectedLanguages changes.
+  // Dictionary targets and viewer URL options share the session's language set.
+  // Call this wherever selectedLanguages changes.
   function onLanguagesChanged() {
     renderTargetOptions()
     renderGlossaryList()
+    renderViewerShowOptions()
   }
 
   // Populate the add-row target <select> with Flow + the session's languages.
@@ -2028,7 +2024,22 @@
   // primary's timer is started lazily once loadCoOwners() finds co-owners.
   if (!isPrimaryOwner) startSettingsSync()
 
-  const viewerParamButtons = document.querySelectorAll('[data-viewer-param]')
+  function renderViewerShowOptions() {
+    const container = document.getElementById('viewer-show-options')
+    const values = ['', ...selectedLanguages]
+    if (selectedLanguages.length > 1) values.push(selectedLanguages.join(','))
+    container.replaceChildren(...values.map(value => {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'viewer-param-btn'
+      btn.dataset.viewerParam = 'show'
+      btn.dataset.value = value
+      btn.textContent = value || 'all'
+      if (!value) btn.setAttribute('data-default', '')
+      return btn
+    }))
+    refreshViewerUrlControls()
+  }
 
   function getViewerUrl() {
     const frame = document.getElementById('viewer-frame')
@@ -2043,9 +2054,11 @@
 
   function refreshViewerUrlControls(url = getViewerUrl()) {
     document.getElementById('current-url-display').textContent = url.href
-    viewerParamButtons.forEach(btn => {
+    document.querySelectorAll('[data-viewer-param]').forEach(btn => {
       const value = url.searchParams.get(btn.dataset.viewerParam)
-      const active = value === btn.dataset.value || (value === null && btn.hasAttribute('data-default'))
+      const active = value === btn.dataset.value ||
+        (btn.hasAttribute('data-default') && (value === null ||
+          (btn.dataset.viewerParam === 'show' && value === 'all')))
       btn.classList.toggle('active-param', active)
       btn.setAttribute('aria-pressed', active ? 'true' : 'false')
     })
@@ -2151,8 +2164,9 @@
     const infoModal = document.getElementById('info-modal')
     const infoBtn = document.getElementById('info-btn')
     setupModal(infoModal, infoBtn, refreshViewerUrlControls)
-    viewerParamButtons.forEach(btn => {
-      btn.addEventListener('click', () => applyViewerUrlParam(btn))
+    infoModal.addEventListener('click', event => {
+      const btn = event.target.closest('[data-viewer-param]')
+      if (btn) applyViewerUrlParam(btn)
     })
     document.getElementById('copy-url-btn').addEventListener('click', copyViewerUrl)
     document.getElementById('viewer-clear-btn').addEventListener('click', clearViewerScreens)

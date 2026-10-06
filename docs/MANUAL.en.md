@@ -108,6 +108,10 @@ Viewer controls, from left to right:
 3. Review the **Current URL**. The viewer stores the chosen layout in its query parameters.
 4. Copy that URL, or close the dialog and use the **QR code** button.
 
+You can also select **Viewer URL** in the panel to configure and copy the link. The `show` buttons are generated from the session's target languages, including custom language codes: one language, the complete comma-separated target-language list (shown when there are at least two languages), or **all**. Options update when languages are added, removed, or synchronized from the server.
+
+The complete list explicitly sets `show` to the current languages and does not include languages added later. **all** removes the `show` parameter and displays every language, including later additions. Updating the options does not rewrite the selected viewer URL; select a button again and copy the URL to change the displayed languages.
+
 Available URL parameters:
 
 | Parameter | Values | Default |
