@@ -5,7 +5,11 @@
   See LICENSE for details.
 -#}
 {% extends "base.html" %}
-{% block title %}OpenTransLive - Real-time Translation{% endblock %}
+{% block title %}OpenTransLive - Open-source Live Translation{% endblock %}
+
+{% block head %}
+<meta name="description" content="OpenTransLive is an AGPL-licensed, self-hostable live transcription and translation tool. Explore its features, roles and permissions, and technical support contacts.">
+{% endblock %}
 
 {% block content %}
 <div class="min-h-screen bg-gray-50 font-sans text-gray-900">
@@ -18,16 +22,19 @@
                 OpenTransLive
             </h1>
             <p class="text-xl md:text-2xl font-semibold max-w-3xl mx-auto mb-4 text-white drop-shadow-sm">
-                An open-source, broadcast-style live translation framework — built for event organizers.
+                An open-source tool for live transcription and translation.
             </p>
             <p class="text-base md:text-lg font-light max-w-3xl mx-auto mb-10 text-indigo-100 drop-shadow-sm">
-                One speaker transcribes and translates in real time; unlimited audience members follow along in their
-                preferred language — on the big screen, on their phones, or as YouTube live subtitles.
+                Self-host captions for talks and livestreams. Share multilingual subtitles on venue screens, phones, or alongside YouTube.
             </p>
             <div class="flex items-center justify-center gap-4 flex-wrap">
-                <a href="#create-session"
+                <a href="#open-source"
                     class="inline-block bg-white text-indigo-600 font-bold py-3 px-8 rounded-full shadow-lg hover:bg-gray-100 transition duration-300 transform hover:-translate-y-1">
-                    Start Now
+                    Explore the Project
+                </a>
+                <a href="#create-session"
+                    class="inline-block border border-white text-white font-bold py-3 px-8 rounded-full hover:bg-white hover:text-indigo-600 transition duration-300 transform hover:-translate-y-1">
+                    Open a Session
                 </a>
                 {% if email %}
                 <a href="/user-dashboard"
@@ -49,12 +56,12 @@
         <div class="max-w-4xl mx-auto text-center">
             <span class="inline-block text-xs font-bold uppercase tracking-widest text-indigo-600 mb-3">For Event
                 Organizers</span>
-            <h2 class="text-3xl md:text-4xl font-bold mb-6 text-gray-800">A broadcast model — not a meeting tool.</h2>
+            <h2 class="text-3xl md:text-4xl font-bold mb-6 text-gray-800">One caption stream, many viewers.</h2>
             <p class="text-gray-600 text-lg leading-relaxed">
-                OpenTransLive is a framework for organizers running conferences, hackathons, public hearings, and
-                livestreamed talks. One transcription source feeds an entire audience: speakers and their captioning
-                team produce the stream, viewers consume it in any supported language. There are no per-attendee seats,
-                no audience login required, and no caps on how many people can watch.
+                Speakers and captioning teams produce a shared stream for conferences, public hearings, and
+                livestreamed talks. Viewers follow in their preferred language without an account.
+                Deploy the framework on your own infrastructure and configure the transcription and translation
+                providers you want to use. Hosting and external AI services may have their own costs.
             </p>
         </div>
     </div>
@@ -70,8 +77,8 @@
                     <iconify-icon icon="mdi:microphone" width="48" height="48"></iconify-icon>
                 </div>
                 <h3 class="text-xl font-bold mb-3">One-to-many broadcast</h3>
-                <p class="text-gray-600">A single speaker or captioning team feeds the session; unlimited viewers tune
-                    in via the web, no account needed.</p>
+                <p class="text-gray-600">A speaker or captioning team feeds the session; viewers follow
+                    captions in their browser without logging in.</p>
             </div>
             <!-- Feature 2 -->
             <div
@@ -80,8 +87,8 @@
                     <iconify-icon icon="mdi:translate" width="48" height="48"></iconify-icon>
                 </div>
                 <h3 class="text-xl font-bold mb-3">Multi-language, multi-engine</h3>
-                <p class="text-gray-600">Pluggable transcription (Whisper, Groq, ElevenLabs Scribe, Google STT) and
-                    context-aware translation into multiple languages in parallel.</p>
+                <p class="text-gray-600">Use ElevenLabs Scribe or Gemini for browser microphone transcription,
+                    or connect external clients. Translate into multiple languages with configurable AI providers.</p>
             </div>
             <!-- Feature 3 -->
             <div class="bg-white rounded-xl shadow-xl p-8 transition duration-300 border-t-4 border-pink-500 transform">
@@ -95,162 +102,64 @@
         </div>
     </div>
 
-    <!-- Access Levels Comparison -->
-    <div class="container mx-auto px-6 py-20">
-        <h2 class="text-3xl font-bold text-center mb-4 text-gray-800">Access Levels</h2>
-        <p class="text-center text-gray-500 mb-12 max-w-2xl mx-auto">Different features are available depending on
-            whether you are logged in and whether your account has realtime transcription enabled.</p>
-
-        <!-- Mobile layout: stacked cards (hidden on md+) -->
-        <div class="md:hidden space-y-4">
-            <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-                <div class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 px-5 py-3">
-                    <h3 class="text-white font-semibold">Not logged in</h3>
-                </div>
-                <ul class="divide-y divide-gray-100 text-sm text-gray-700">
-                    <li class="px-5 py-3">Watch live transcriptions</li>
-                    <li class="px-5 py-3">Download session transcripts</li>
-                    <li class="px-5 py-3">Theme and display controls</li>
-                    <li class="px-5 py-3">
-                        Control a session as panel admin
-                        <p class="text-xs text-amber-600 mt-1">Without login, the admin role is unprotected and can be
-                            claimed by anyone once the 30-second heartbeat expires.</p>
-                    </li>
-                    <li class="px-5 py-3">Configure keywords and languages</li>
-                </ul>
+    <!-- Roles and Permissions -->
+    <section id="permissions" class="container mx-auto px-6 py-20">
+        <h2 class="text-3xl font-bold text-center mb-4 text-gray-800">Roles & Permissions</h2>
+        <p class="text-center text-gray-600 mb-12 max-w-2xl mx-auto">
+            Permissions separate public viewing, session operation, and server administration.
+            They are not subscription plans.
+        </p>
+        <dl class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-5xl mx-auto">
+            <div class="bg-white rounded-xl border border-gray-200 p-6">
+                <dt class="text-xl font-bold text-indigo-600 mb-3">Audience</dt>
+                <dd class="text-gray-600 leading-relaxed">
+                    No login required. Watch public live captions, choose a display language, and adjust the
+                    viewing layout on the live or YouTube viewer page. Viewing does not grant session control
+                    or access to an owned session's transcript exports.
+                </dd>
             </div>
-            <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-                <div class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 px-5 py-3">
-                    <h3 class="text-white font-semibold">Logged in</h3>
-                </div>
-                <p class="px-5 pt-3 text-xs text-gray-400 uppercase tracking-wider font-semibold">Everything above,
-                    plus:</p>
-                <ul class="divide-y divide-gray-100 text-sm text-gray-700">
-                    <li class="px-5 py-3">My Sessions dashboard</li>
-                </ul>
+            <div class="bg-white rounded-xl border border-gray-200 p-6">
+                <dt class="text-xl font-bold text-indigo-600 mb-3">Session Owner</dt>
+                <dd class="text-gray-600 leading-relaxed">
+                    Sign in with email OTP to establish session ownership. Manage languages, keywords and
+                    settings in the panel, edit saved captions, and export JSON or SRT.
+                    Only the primary owner can manage the session's co-owners.
+                </dd>
             </div>
-            <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-                <div class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 px-5 py-3">
-                    <h3 class="text-white font-semibold">Logged in + Realtime</h3>
-                </div>
-                <p class="px-5 pt-3 text-xs text-gray-400 uppercase tracking-wider font-semibold">Everything above,
-                    plus:</p>
-                <ul class="divide-y divide-gray-100 text-sm text-gray-700">
-                    <li class="px-5 py-3">Use microphone for live transcription</li>
-                    <li class="px-5 py-3">Stream audio for server-side processing</li>
-                </ul>
+            <div class="bg-white rounded-xl border border-gray-200 p-6">
+                <dt class="text-xl font-bold text-indigo-600 mb-3">Co-owner</dt>
+                <dd class="text-gray-600 leading-relaxed">
+                    Sign in with an email authorized by the primary owner. Help operate that session's panel,
+                    adjust settings, edit captions, and export transcripts.
+                    Collaboration access is specific to the sessions shared with you.
+                </dd>
             </div>
-        </div>
-
-        <!-- Desktop layout: table (hidden below md) -->
-        <div class="hidden md:block overflow-x-auto rounded-xl shadow-xl">
-            <table class="w-full text-sm text-left bg-white">
-                <thead>
-                    <tr class="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white">
-                        <th class="px-6 py-4 font-semibold text-base w-1/2">Feature</th>
-                        <th class="px-6 py-4 font-semibold text-base text-center">Not logged in</th>
-                        <th class="px-6 py-4 font-semibold text-base text-center">Logged in</th>
-                        <th class="px-6 py-4 font-semibold text-base text-center">Logged in + Realtime</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100">
-                    <tr class="bg-gray-50">
-                        <td colspan="4" class="px-6 py-3 text-xs font-bold uppercase tracking-wider text-gray-500">
-                            Viewing</td>
-                    </tr>
-                    <tr class="hover:bg-gray-50 transition-colors">
-                        <td class="px-6 py-4 text-gray-700">Watch live transcriptions</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                    </tr>
-                    <tr class="hover:bg-gray-50 transition-colors">
-                        <td class="px-6 py-4 text-gray-700">Download session transcripts</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                    </tr>
-                    <tr class="hover:bg-gray-50 transition-colors">
-                        <td class="px-6 py-4 text-gray-700">Theme and display controls</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                    </tr>
-                    <tr class="bg-gray-50">
-                        <td colspan="4" class="px-6 py-3 text-xs font-bold uppercase tracking-wider text-gray-500">
-                            Session Management</td>
-                    </tr>
-                    <tr class="hover:bg-gray-50 transition-colors">
-                        <td class="px-6 py-4 text-gray-700">Control a session as panel admin</td>
-                        <td class="px-6 py-4 text-center">
-                            <div class="text-green-600 font-bold">Yes <span class="text-red-500">*</span></div>
-                        </td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                    </tr>
-                    <tr class="hover:bg-gray-50 transition-colors">
-                        <td class="px-6 py-4 text-gray-700">Configure keywords and languages</td>
-                        <td class="px-6 py-4 text-center">
-                            <div class="text-green-600 font-bold">Yes <span class="text-red-500">*</span></div>
-                        </td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                    </tr>
-                    <tr class="hover:bg-gray-50 transition-colors">
-                        <td class="px-6 py-4 text-gray-700">My Sessions dashboard</td>
-                        <td class="px-6 py-4 text-center text-gray-400">No</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                    </tr>
-                    <tr class="bg-gray-50">
-                        <td colspan="4" class="px-6 py-3 text-xs font-bold uppercase tracking-wider text-gray-500">
-                            Realtime Transcription</td>
-                    </tr>
-                    <tr class="hover:bg-gray-50 transition-colors">
-                        <td class="px-6 py-4 text-gray-700">Use microphone for live transcription</td>
-                        <td class="px-6 py-4 text-center text-gray-400">No</td>
-                        <td class="px-6 py-4 text-center text-gray-400">No</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                    </tr>
-                    <tr class="hover:bg-gray-50 transition-colors">
-                        <td class="px-6 py-4 text-gray-700">Stream audio for server-side processing</td>
-                        <td class="px-6 py-4 text-center text-gray-400">No</td>
-                        <td class="px-6 py-4 text-center text-gray-400">No</td>
-                        <td class="px-6 py-4 text-center text-green-600 font-bold">Yes</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-        <div class="text-center text-xs text-gray-400">
-            <p class="mt-4"><span class="text-red-500">* </span>If not logged in, admin role is unprotected, can be
-                claimed by anyone after the 30-second heartbeat expires.</p>
-            <p class="mt-1">Realtime transcription access is granted by an
-                administrator.
-                <a href="/login" class="text-indigo-500 hover:underline">Log in</a> to request access.
+            <div class="bg-white rounded-xl border border-gray-200 p-6">
+                <dt class="text-xl font-bold text-indigo-600 mb-3">System Administrator</dt>
+                <dd class="text-gray-600 leading-relaxed">
+                    Manage accounts, grant or revoke realtime transcription access, set per-account language
+                    limits, and review usage. Administrators can also access owned sessions for management.
+                    This role is configured by the server operator.
+                </dd>
+            </div>
+        </dl>
+        <div class="max-w-5xl mx-auto mt-8 space-y-4 text-sm text-gray-600 leading-relaxed">
+            <p>
+                <strong class="text-gray-800">Realtime transcription is a separate permission.</strong>
+                Using the panel's microphone or streaming audio to the server requires the operating account
+                to have realtime access granted by this instance's administrator.
+                Owning a session or being a co-owner does not enable it automatically.
+                System administrators have realtime access by default.
             </p>
-        </div>
-
-        {# Optional, operator-configured pointer to a commercial provider. Sits with the
-           access-level footnotes because it answers the same question — what to do when
-           you need more than this instance offers. Kept plain: the project stays
-           independent and open source. #}
-        {% if professional_services_url %}
-        <div class="mt-10 pt-6 border-t border-gray-200 max-w-2xl mx-auto text-center">
-            <h3 class="text-xs font-bold uppercase tracking-widest text-gray-500 mb-2">Professional Services</h3>
-            <p class="text-sm text-gray-600">
-                Need managed deployment, customization, integration, or professional event support for OpenTransLive?
+            <p>
+                <strong class="text-gray-800">Anonymous sessions have no protected ownership.</strong>
+                A session without an owner can be operated without login, and anyone can claim its panel
+                control after the 30-second heartbeat expires. Sign in before creating a session to protect
+                ownership. Audience pages remain public even when the session has an owner.
             </p>
-            <a href="{{ professional_services_url }}" target="_blank" rel="noopener"
-                class="mt-3 inline-flex items-center gap-1 text-sm text-gray-700 underline underline-offset-4 decoration-gray-300 hover:text-gray-900 hover:decoration-gray-500 transition">
-                Learn about professional services
-                <iconify-icon icon="mdi:arrow-right" width="14" height="14"></iconify-icon>
-            </a>
-            <p class="mt-2 text-xs text-gray-400">
-                Provided by a third party. OpenTransLive remains an independent open-source project.
-            </p>
+            <p>For account access on this instance, contact its server administrator.</p>
         </div>
-        {% endif %}
-    </div>
+    </section>
 
     <!-- Create Session Section -->
     <div id="create-session" class="bg-gray-100 py-20">
@@ -259,14 +168,10 @@
                 <div
                     class="md:w-1/2 bg-gradient-to-br from-indigo-600 to-purple-700 p-10 text-white flex flex-col justify-center">
                     <h3 class="text-3xl font-bold mb-4">Start a Session</h3>
-                    <p class="mb-6 opacity-90">Enter a Session ID to begin transcribing or viewing a live stream. Choose
-                        your preferred view mode.</p>
-                    <ul class="space-y-2 text-sm opacity-80">
-                        <li class="flex items-center"><iconify-icon icon="mdi:check-circle" width="16" height="16"
-                                class="mr-2"></iconify-icon> Secure & Private</li>
-                        <li class="flex items-center"><iconify-icon icon="mdi:lightning-bolt" width="16" height="16"
-                                class="mr-2"></iconify-icon> Low Latency</li>
-                    </ul>
+                    <p class="mb-6 opacity-90">Enter a Session ID to open its control panel on this server.</p>
+                    <p class="text-sm opacity-90">Sign in first to establish protected ownership for a new session.
+                        For an existing owned session, use the owner's or an authorized co-owner's account.
+                        Viewers should use the audience link shared by the organizer.</p>
                 </div>
                 <div class="md:w-1/2 p-10 flex flex-col justify-center">
                     <form id="create-form" class="space-y-6">
@@ -296,20 +201,25 @@
     </div>
 
     <!-- Open Source Section -->
-    <div class="bg-white border-t border-gray-200 py-16">
+    <section id="open-source" class="bg-white border-t border-gray-200 py-16">
         <div class="container mx-auto px-6 max-w-3xl text-center">
+            <h2 class="text-3xl font-bold mb-6 text-gray-800">Use, self-host, and contribute.</h2>
             <p class="text-gray-600 mb-6">
-                OpenTransLive is a free and open-source project. The source code is publicly available, and
-                contributions are welcome from anyone.
-                This project is developed and maintained under the <a href="https://g0v.tw" target="_blank"
-                    class="text-indigo-600 hover:underline">g0v</a> civic tech community, which promotes government
-                transparency and open collaboration.
+                OpenTransLive is free and open-source software, licensed under the GNU AGPL v3.0.
+                Explore the source, follow the setup guide, or contribute fixes and improvements.
+                Self-hosting lets you choose your infrastructure and AI providers.
+                The project is part of the <a href="https://g0v.tw" target="_blank" rel="noopener"
+                    class="text-indigo-600 hover:underline">g0v</a> civic tech community.
             </p>
             <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
                 <a href="{{ source_code_url }}" target="_blank" rel="noopener"
                     class="inline-flex items-center gap-2 border border-gray-300 text-gray-700 font-semibold py-2 px-6 rounded-full hover:bg-gray-100 transition duration-300">
                     <iconify-icon icon="mdi:github" width="20" height="20"></iconify-icon>
                     Source code
+                </a>
+                <a href="https://github.com/g0v/OpenTransLive/tree/HEAD/docs" target="_blank" rel="noopener"
+                    class="inline-flex items-center gap-2 border border-gray-300 text-gray-700 font-semibold py-2 px-6 rounded-full hover:bg-gray-100 transition duration-300">
+                    Documentation
                 </a>
                 <a href="https://g0v.tw" target="_blank"
                     class="inline-flex items-center gap-2 bg-gray-900 text-white font-semibold py-2 px-6 rounded-full hover:bg-gray-700 transition duration-300">
@@ -327,7 +237,28 @@
                 </a>
             </div>
         </div>
-    </div>
+    </section>
+
+    <!-- Technical Support -->
+    <section id="support" class="container mx-auto px-6 py-16 max-w-3xl text-center">
+        <h2 class="text-3xl font-bold mb-4 text-gray-800">Need technical support?</h2>
+        <p class="text-gray-600 mb-6">
+            For help with deployment, configuration, or integration, contact the maintainer.
+            Include your OpenTransLive version, environment, and the issue you are trying to resolve.
+            Do not send API keys or other credentials.
+        </p>
+        <a href="mailto:rrtw0627@gmail.com"
+            class="inline-flex items-center gap-2 text-indigo-600 font-semibold underline underline-offset-4 hover:text-indigo-800">
+            Sean Gau · rrtw0627@gmail.com
+        </a>
+        {% if professional_services_url %}
+        <p class="mt-4 text-sm text-gray-600">
+            For additional technical assistance:
+            <a href="{{ professional_services_url }}" target="_blank" rel="noopener"
+                class="text-indigo-600 underline underline-offset-4 hover:text-indigo-800">Contact the support provider</a>.
+        </p>
+        {% endif %}
+    </section>
 </div>
 {% endblock %}
 
