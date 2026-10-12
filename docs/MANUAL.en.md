@@ -59,7 +59,7 @@ Wait for the green **Connected** indicator before starting. Changes to panel set
 | **Engine** | Chooses **Server Default**, **ElevenLabs Scribe**, or **Gemini Transcribe**. |
 | **Detect Lang** | Sets the spoken language for the selected engine. Use **Auto Detect** when the source language is not fixed. Changing the engine resets this setting. |
 | **Keywords** | Adds names, jargon, and event-specific phrases. Pin important entries so automatic keyword rotation does not remove them. |
-| **Dictionary** | Manages a multilingual glossary and direct replacement rules. Use **Flow** replacements for the source transcript or select a language to replace translated output. |
+| **Dictionary** | Manages a multilingual glossary and direct replacement rules. Add a glossary term by hand with **Add term** (at least two spellings), or import a JSON file. Use **Flow** replacements for the source transcript or select a language to replace translated output. |
 | **Languages** | Selects target translation languages. Custom languages use BCP 47 codes such as `ja-JP`. |
 | **Tone** | Sets a fluent, formal, casual, literal, or custom translation style. |
 | **Co-owners** | Lets the primary owner add or remove collaborators who can operate the panel and edit settings. |

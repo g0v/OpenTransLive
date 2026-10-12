@@ -61,7 +61,7 @@ Panel 整合了 session 控制項、公開字幕預覽，以及目前的轉錄�
 | **Engine** | 選擇 **Server Default**、**ElevenLabs Scribe** 或 **Gemini Transcribe**。 |
 | **Detect Lang** | 設定所選引擎的語音語言。來源語言不固定時請用 **Auto Detect**。切換引擎會重設此設定。 |
 | **Keywords** | 加入人名、專有名詞與活動相關詞彙。重要詞彙請釘選（pin），避免被自動關鍵字輪替移除。 |
-| **Dictionary** | 管理多語詞彙表與直接取代規則。**Flow** 取代規則作用於原文轉錄；選擇特定語言則作用於該語言的翻譯結果。 |
+| **Dictionary** | 管理多語詞彙表與直接取代規則。可用 **Add term** 手動新增詞彙（至少兩種拼寫），或匯入 JSON 檔。**Flow** 取代規則作用於原文轉錄；選擇特定語言則作用於該語言的翻譯結果。 |
 | **Languages** | 選擇翻譯目標語言。自訂語言請使用 BCP 47 代碼，例如 `ja-JP`。 |
 | **Tone** | 設定翻譯風格：流暢（fluent）、正式（formal）、口語（casual）、直譯（literal）或自訂。 |
 | **Co-owners** | 主要擁有者可新增或移除協作者；協作者可以操作 panel 並修改設定。 |

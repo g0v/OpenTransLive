@@ -283,9 +283,11 @@
           languages; the wanted spelling is swapped in before translating.
         </p>
         <div id="gl-list" class="modal-list flex min-h-14 flex-1 basis-auto flex-col gap-1 overflow-y-auto pr-1 [scrollbar-color:#4d5d72_transparent] [scrollbar-width:thin] [&>div]:rounded-lg [&>label]:rounded-lg"></div>
+        <div id="gl-add-slot" class="hidden shrink-0"></div>
         <div class="modal-add-row flex shrink-0 gap-1 border-t border-[#2a3646] pt-3">
           <input id="gl-file-input" type="file" accept=".json,application/json" class="hidden">
-          <button id="gl-import-btn" type="button" class="panel-add-btn flex-1">Import JSON</button>
+          <button id="gl-add-btn" type="button" class="panel-add-btn flex-1">Add term</button>
+          <button id="gl-import-btn" type="button" class="panel-add-btn">Import JSON</button>
           <button id="gl-export-btn" type="button" class="panel-add-btn">Export</button>
           <button id="gl-clear-btn" type="button" class="panel-add-btn">Clear all</button>
         </div>
@@ -1495,9 +1497,13 @@
   let glossary = []
   let glossarySaveTimer = null
   const GLOSSARY_MAX = 200
+  const GLOSSARY_MAX_TERM_LEN = 200 // mirrors translation_service.GLOSSARY_MAX_TERM_LEN
   // Index of the row being edited in place (-1 = none). Only one at a time; the
   // edit row itself holds the pending values, in its inputs.
   let glossaryEditIndex = -1
+  // Makes each editor's datalist id unique: the edit row and the add form can
+  // both be in the DOM.
+  let glossaryEditorSeq = 0
 
   function updateDictLabel() {
     const label = document.getElementById('td-dropdown-label')
@@ -1534,7 +1540,22 @@
     const targets = new Set(selectedLanguages)
     glossary.forEach(function (entry, idx) {
       if (idx === glossaryEditIndex) {
-        list.appendChild(buildGlossaryEditRow(idx))
+        const editor = buildGlossaryEntryEditor(glossary[idx], {
+          submitLabel: 'Save',
+          onSave(edited) {
+            glossary[idx] = edited
+            glossaryEditIndex = -1
+            updateDictLabel()
+            renderGlossaryList()
+            debouncedSaveGlossary()
+          },
+          onCancel() {
+            glossaryEditIndex = -1
+            renderGlossaryList()
+          },
+        })
+        list.appendChild(editor)
+        editor.querySelector('input')?.focus()
         return
       }
       const row = document.createElement('div')
@@ -1562,6 +1583,7 @@
         </button>
       `
       row.querySelector('.gl-edit-btn').addEventListener('click', function () {
+        closeGlossaryAddForm()
         glossaryEditIndex = idx
         renderGlossaryList()
       })
@@ -1575,64 +1597,74 @@
     })
   }
 
-  // The in-place editor for one term: a spelling input per language, a row to
-  // add another language, and save/cancel. AI lookups and imports both land
-  // guesses in the glossary, so a wrong rendering has to be fixable without
-  // deleting the term and re-importing a hand-written file.
-  function buildGlossaryEditRow(idx) {
+  // Enter runs `action`, unless an IME is composing (Enter then confirms the
+  // candidate, not the form).
+  function onEnterKey(event, action) {
+    if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return
+    event.preventDefault()
+    action()
+  }
+
+  // The editor for one term, used both in place on a row and as the new-term
+  // form: a spelling input per language, a row to add another language, and
+  // cancel/submit. AI lookups and imports both land guesses in the glossary, so
+  // a wrong rendering has to be fixable without deleting the term and
+  // re-importing a hand-written file. `onSave` gets the trimmed entry, already
+  // checked to have at least two spellings.
+  function buildGlossaryEntryEditor(entry, { submitLabel, onSave, onCancel }) {
     const row = document.createElement('div')
     row.className = 'flex flex-col gap-1 px-2 py-2 rounded bg-gray-800 border border-gray-600'
-    const listId = `gl-lang-options-${idx}`
+    const listId = `gl-lang-options-${++glossaryEditorSeq}`
     row.innerHTML = `
       <div class="gl-edit-fields flex flex-col gap-1"></div>
       <div class="flex items-center gap-1">
-        <input class="gl-new-lang panel-input flex-none w-24 font-mono" placeholder="Code" list="${listId}">
+        <input class="gl-new-lang panel-input flex-none w-24 font-mono" placeholder="Code" list="${listId}" maxlength="${GLOSSARY_MAX_TERM_LEN}">
         <datalist id="${listId}">${selectedLanguages.map(c => `<option value="${escapeHtml(c)}"></option>`).join('')}</datalist>
-        <input class="gl-new-term panel-input font-mono" placeholder="Spelling">
-        <button class="gl-lang-add-btn panel-add-btn">Add</button>
+        <input class="gl-new-term panel-input font-mono" placeholder="Spelling" maxlength="${GLOSSARY_MAX_TERM_LEN}">
+        <button class="gl-lang-add-btn panel-add-btn">Add language</button>
       </div>
       <div class="flex justify-end gap-1">
         <button class="gl-cancel-btn panel-add-btn">Cancel</button>
-        <button class="gl-save-btn panel-add-btn">Save</button>
+        <button class="gl-save-btn panel-add-btn">${escapeHtml(submitLabel)}</button>
       </div>
     `
     // The fields are the edit state - no separate draft object to keep in step
     // with what the user has typed. Adding and removing a language touches only
     // this container, so the rest of the list (and the focused input) stays put.
     const fields = row.querySelector('.gl-edit-fields')
+    const langInput = row.querySelector('.gl-new-lang')
+    const termInput = row.querySelector('.gl-new-term')
 
     function addField(lang, term) {
       const field = document.createElement('div')
       field.className = 'flex items-center gap-1'
       field.innerHTML = `
         <span class="text-[10px] px-1 py-0.5 rounded bg-gray-700 text-gray-400 w-24 flex-shrink-0 truncate" title="${escapeHtml(langLabel(lang))}">${escapeHtml(lang)}</span>
-        <input class="gl-edit-input panel-input font-mono" data-lang="${escapeHtml(lang)}" value="${escapeHtml(term)}">
+        <input class="gl-edit-input panel-input font-mono" data-lang="${escapeHtml(lang)}" value="${escapeHtml(term)}" placeholder="${escapeHtml(langLabel(lang))}" maxlength="${GLOSSARY_MAX_TERM_LEN}">
         <button class="gl-lang-remove-btn text-gray-600 hover:text-red-400 transition-colors flex-shrink-0" title="Remove this language">
           <iconify-icon icon="ph:x" width="14" height="14"></iconify-icon>
         </button>
       `
+      field.querySelector('.gl-edit-input').addEventListener('keydown', event => onEnterKey(event, save))
       field.querySelector('.gl-lang-remove-btn').addEventListener('click', () => field.remove())
       fields.appendChild(field)
     }
 
-    Object.entries(glossary[idx]).forEach(([lang, term]) => addField(lang, term))
-
-    row.querySelector('.gl-lang-add-btn').addEventListener('click', function () {
-      const langInput = row.querySelector('.gl-new-lang')
-      const termInput = row.querySelector('.gl-new-term')
+    function addLanguage() {
       const lang = langInput.value.trim()
       const term = termInput.value.trim()
       if (!lang || !term) return
-      addField(lang, term)
+      // A code already listed gets its spelling updated, not a second field
+      // that would silently win or lose on save.
+      const existing = [...fields.querySelectorAll('.gl-edit-input')].find(input => input.dataset.lang === lang)
+      if (existing) existing.value = term
+      else addField(lang, term)
       langInput.value = ''
       termInput.value = ''
       langInput.focus()
-    })
-    row.querySelector('.gl-cancel-btn').addEventListener('click', function () {
-      glossaryEditIndex = -1
-      renderGlossaryList()
-    })
-    row.querySelector('.gl-save-btn').addEventListener('click', function () {
+    }
+
+    function save() {
       const edited = {}
       row.querySelectorAll('.gl-edit-input').forEach(function (input) {
         const term = input.value.trim()
@@ -1644,13 +1676,61 @@
         document.getElementById('settings-status').textContent = 'A term needs at least two spellings'
         return
       }
-      glossary[idx] = edited
-      glossaryEditIndex = -1
-      updateDictLabel()
-      renderGlossaryList()
-      debouncedSaveGlossary()
-    })
+      onSave(edited)
+    }
+
+    Object.entries(entry).forEach(([lang, term]) => addField(lang, term))
+
+    langInput.addEventListener('keydown', event => onEnterKey(event, addLanguage))
+    termInput.addEventListener('keydown', event => onEnterKey(event, addLanguage))
+    row.querySelector('.gl-lang-add-btn').addEventListener('click', addLanguage)
+    row.querySelector('.gl-cancel-btn').addEventListener('click', () => onCancel())
+    row.querySelector('.gl-save-btn').addEventListener('click', save)
     return row
+  }
+
+  // The new-term form, prefilled with a blank spelling per target language. It
+  // lives outside #gl-list, so list repaints don't wipe a half-typed draft.
+  // It and the row editor are exclusive: opening either closes the other.
+  function openGlossaryAddForm() {
+    glossaryEditIndex = -1
+    renderGlossaryList()
+    const slot = document.getElementById('gl-add-slot')
+    slot.innerHTML = ''
+    const editor = buildGlossaryEntryEditor(Object.fromEntries(selectedLanguages.map(c => [c, ''])), {
+      submitLabel: 'Add',
+      onSave(edited) {
+        if (addGlossaryEntry(edited)) closeGlossaryAddForm()
+      },
+      onCancel: closeGlossaryAddForm,
+    })
+    slot.appendChild(editor)
+    slot.classList.remove('hidden')
+    document.getElementById('gl-add-btn').disabled = true
+    editor.querySelector('input')?.focus()
+  }
+
+  function closeGlossaryAddForm() {
+    const slot = document.getElementById('gl-add-slot')
+    slot.innerHTML = ''
+    slot.classList.add('hidden')
+    document.getElementById('gl-add-btn').disabled = false
+  }
+
+  // Add a hand-written entry, merged like an import: one sharing a spelling for
+  // the same language replaces the existing entry. False if the list is full.
+  function addGlossaryEntry(entry) {
+    const merged = mergeGlossary(glossary, [entry])
+    if (merged.length > GLOSSARY_MAX) {
+      document.getElementById('settings-status').textContent = `Glossary is full (max ${GLOSSARY_MAX} terms)`
+      return false
+    }
+    glossary = merged
+    glossaryEditIndex = -1
+    updateDictLabel()
+    renderGlossaryList()
+    saveGlossary()
+    return true
   }
 
   async function loadGlossary() {
@@ -2245,6 +2325,7 @@
 
     // Import a glossary JSON file
     const glFileInput = document.getElementById('gl-file-input')
+    document.getElementById('gl-add-btn').addEventListener('click', openGlossaryAddForm)
     document.getElementById('gl-import-btn').addEventListener('click', () => glFileInput.click())
     glFileInput.addEventListener('change', function () {
       const file = this.files && this.files[0]
