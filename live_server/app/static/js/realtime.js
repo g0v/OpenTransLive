@@ -358,6 +358,7 @@ async function stopSession() {
     mediaStream = null;
   }
   if (audioProcessor) {
+    audioProcessor.port.onmessage = null;  // chunks the worklet already posted must not reach the socket after stop
     audioProcessor.disconnect();
     audioProcessor = null;
   }

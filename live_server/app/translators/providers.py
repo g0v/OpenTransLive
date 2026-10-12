@@ -159,6 +159,8 @@ class ChatCompletionTranslator(BaseTranslator):
     provider_key: str
     correct_params: dict
     translate_params: dict
+    correct_commit_params: dict
+    translate_commit_params: dict
     extract_params: dict
     glossary_params: dict | None = None
 
@@ -169,6 +171,11 @@ class ChatCompletionTranslator(BaseTranslator):
             cls.correct_params, cls.translate_params, cls.extract_params = (
                 p["correct"], p["translate"], p["extract"],
             )
+            # Optional overrides for commits and retranslations; a models.toml
+            # without the table keeps the partial params.
+            commit = p.get("commit", {})
+            cls.correct_commit_params = {**p["correct"], **commit}
+            cls.translate_commit_params = {**p["translate"], **commit}
             # Optional, and only meaningful for backends that can search the
             # web; absent in a models.toml predating the glossary feature.
             cls.glossary_params = p.get("glossary")
@@ -240,7 +247,7 @@ class ChatCompletionTranslator(BaseTranslator):
 
     async def correct(self, text: str, prev_corrected: str, keywords: str, commit: bool = False) -> str:
         body = {
-            **self.correct_params,
+            **(self.correct_commit_params if commit else self.correct_params),
             "messages": [
                 {
                     "role": self.system_role,
@@ -285,17 +292,21 @@ class ChatCompletionTranslator(BaseTranslator):
         # Carries its own leading space, so an empty source leaves the Task line
         # exactly as it reads without one.
         source_clause = f" from {source}" if source else ""
+        keyword_line = (
+            f"Keywords (spelling reference for terms in <translate_this>; never output this list): {keywords}\n"
+            if keywords else ""
+        )
         system_prompt = _TRANSLATE_PROMPT.format(
             language=language,
             source=source_clause,
             tone=tone_desc,
-            keywords=keywords,
+            keywords=keyword_line,
             prev_translation=prev_translation or _NO_PREV,
         )
         if guidance := _LANGUAGE_GUIDANCE.get(language):
             system_prompt = f"{system_prompt}\n\nTarget-language guidance:\n{guidance}"
         body = {
-            **self.translate_params,
+            **(self.translate_commit_params if commit else self.translate_params),
             "messages": [
                 {
                     "role": self.system_role,

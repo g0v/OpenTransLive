@@ -6,12 +6,12 @@ import asyncio
 import json
 import re
 from functools import lru_cache
-from .config import REALTIME_SETTINGS
+from .config import REALTIME_SETTINGS, SCRIBE_SETTINGS
 from .http_client import DURABLE_READ_TIMEOUT
 from .database import rooms_collection, users_collection
 from .logger_config import setup_logger, log_exception
 from .socket_schema import is_finite_number
-from .text_script import should_force_traditional, to_simplified, to_taiwan_traditional
+from .text_script import approx_word_count, should_force_traditional, to_simplified, to_taiwan_traditional
 from .translators import get_translator
 
 logger = setup_logger(__name__)
@@ -32,8 +32,8 @@ def _normalize_chinese_output(text: str, language: str) -> str:
         return to_simplified(text)
     return text
 
-_KEYWORD_CAP = 30          # max keywords sent in prompts
-_KEYWORD_STORE_CAP = _KEYWORD_CAP * 2  # store 2x so low-freq words can recover
+_KEYWORD_STORE_CAP = 60  # keywords kept in Redis; extra headroom so low-frequency words can recover
+_PARTIAL_MIN_WORDS = SCRIBE_SETTINGS["PARTIAL_MIN_WORDS"]
 # Skip translating a partial when its source text has grown by fewer than this
 # many chars since the last dispatched partial. Re-translating tiny extensions
 # wastes calls and is a major source of caption flicker; the LLM tends to
@@ -733,8 +733,6 @@ async def translate_transcription(
     translator = get_translator(provider)
 
     languages = await get_session_languages(redis_client, session_id)
-    if not languages:
-        return data
 
     authoritative_correction = corrected_override is not None
     partial = False if authoritative_correction else data.get("partial") is True
@@ -742,19 +740,34 @@ async def translate_transcription(
     if not text:
         return data
 
-    (current_keywords, locked_list), tone, text_dict, scribe_language, glossary = await asyncio.gather(
-        get_keywords_and_locked(redis_client, session_id),
-        get_session_translate_tone(redis_client, session_id),
-        get_text_dictionary(redis_client, session_id),
-        get_session_scribe_language(redis_client, session_id),
-        get_glossary(redis_client, session_id),
-    )
+    text_dict = await get_text_dictionary(redis_client, session_id)
     flow_map, lang_maps = split_text_dictionary(text_dict)
     if flow_map and not authoritative_correction:
         text = apply_text_dictionary(text, flow_map)
         data["text"] = text
-    ranked = rank_keywords(current_keywords, locked_list, _KEYWORD_CAP)
-    keywords_str = ', '.join(ranked)
+    # The flow dictionary applies even without target languages, so a
+    # transcription-only room stores the replaced source like every other.
+    if not languages:
+        return data
+
+    # Blank text (whitespace from STT, or a flow rule that removes the whole
+    # line) never reaches the LLM: with nothing to correct or translate, models
+    # answer with prompt content such as the keyword list. Very short partials do
+    # the same, so they wait for more text; a commit of any length is sent.
+    llm_input = corrected_override if authoritative_correction else text
+    if not llm_input.strip() or (partial and approx_word_count(text) < _PARTIAL_MIN_WORDS):
+        return data
+
+    (current_keywords, locked_list), tone, scribe_language, glossary = await asyncio.gather(
+        get_keywords_and_locked(redis_client, session_id),
+        get_session_translate_tone(redis_client, session_id),
+        get_session_scribe_language(redis_client, session_id),
+        get_glossary(redis_client, session_id),
+    )
+    # Only pinned keywords reach the corrector and translator: AI-extracted
+    # unpinned keywords may be wrong and would steer the output. A cap of 0 keeps
+    # every pinned keyword and no unpinned one.
+    ranked = rank_keywords(current_keywords, locked_list, 0)
     # Only the corrector gets the glossary spellings: by translation time the term
     # has already been swapped into the text, so repeating the other languages'
     # spellings there would just be prompt noise.
@@ -822,6 +835,10 @@ async def translate_transcription(
         # transcript (data["text"]) and the shared corrected line stay untouched,
         # so the flow panel and keyword reranking still see what was actually said.
         src_text = apply_glossary(result['corrected'], build_glossary_map(glossary, language))
+        # The translator only sees keywords the line mentions: a list unrelated to
+        # the input is what models echo back instead of translating it.
+        src_lower = src_text.lower()
+        mentioned = ", ".join(kw for kw in ranked if kw.lower() in src_lower)
         try:
             async with asyncio.timeout_at(llm_deadline):
                 out = await translator.translate(
@@ -829,7 +846,7 @@ async def translate_transcription(
                     language=language,
                     context=lang_context,
                     prev_translation=pt_trans,
-                    keywords=keywords_str,
+                    keywords=mentioned,
                     tone=tone,
                     commit=not partial,
                     source=scribe_language,

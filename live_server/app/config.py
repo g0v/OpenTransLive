@@ -128,4 +128,15 @@ for _key in ("RECONNECT_BASE_DELAY_SECS", "RECONNECT_MAX_DELAY_SECS"):
             f"scribe_settings.{_key} must be a finite number greater than zero"
         )
 
+_value = SCRIBE_SETTINGS["PARTIAL_MIN_WORDS"]
+if (
+    isinstance(_value, bool)
+    or not isinstance(_value, (int, float))
+    or not math.isfinite(_value)
+    or _value < 0
+):
+    raise RuntimeError(
+        "scribe_settings.PARTIAL_MIN_WORDS must be a finite number of at least zero"
+    )
+
 REDIS_URL: str = str(_apply_env("REDIS_URL", _CONFIG.get("redis_url", "redis://redis:6379")))

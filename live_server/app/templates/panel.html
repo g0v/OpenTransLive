@@ -661,12 +661,13 @@
 
   async function stopRecording() {
     setMicState('busy')
-    // The server drops its Scribe manager on mic_off; skipping it leaves one spinning
-    // until the idle watchdog notices.
+    // Stop capturing first: a chunk arriving after mic_off would start a new
+    // transcription session on the server. The server drops its Scribe manager on
+    // mic_off; skipping it leaves one spinning until the idle watchdog notices.
+    await stopSession()
     if (typeof socket !== 'undefined' && socket.connected) {
       socket.emit('mic_off', { session_id: sessionId })
     }
-    await stopSession()
     recording = false
     setMicState('off')
   }
@@ -2611,7 +2612,7 @@
         if (editPending) return
         editingStartTime = Number(row.dataset.startTime)
         if (!Number.isFinite(editingStartTime)) return
-        flowEditText.value = row.dataset.src || ''
+        flowEditText.value = applyFlowDict(row.dataset.src || '')
         flowEditStatus.textContent = ''
         flowEditModal.classList.remove('hidden')
         setTimeout(() => {

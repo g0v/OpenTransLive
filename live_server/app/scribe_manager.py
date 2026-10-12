@@ -17,6 +17,7 @@ transcription session since before there was a second provider — in Redis keys
 break those wire contracts for nothing, so it stays the generic term here.
 """
 import asyncio
+import base64
 import json
 import math
 import random
@@ -68,6 +69,11 @@ _HALLUCINATION_MAX_UNIT_CHARS = SCRIBE_SETTINGS["HALLUCINATION_MAX_UNIT_CHARS"]
 _AUDIO_SAMPLE_RATE_HZ = 16000
 _AUDIO_BYTES_PER_SAMPLE = 2
 AUDIO_BYTES_PER_SEC = _AUDIO_SAMPLE_RATE_HZ * _AUDIO_BYTES_PER_SAMPLE
+# How long finalize() gives the provider to answer speech already sent.
+FINALIZE_TIMEOUT_SECS = 5.0
+_FINALIZE_MARKER = object()
+# 100 ms of silence that carries the commit flag when finalizing.
+_FINALIZE_CHUNK = base64.b64encode(bytes(AUDIO_BYTES_PER_SEC // 10)).decode()
 
 
 class ScribeSessionManager:
@@ -107,6 +113,10 @@ class ScribeSessionManager:
     def _parse_message(self, data: dict) -> tuple[str, bool] | None:
         """Turn one decoded server message into (text, is_partial), or None when it
         carries no transcript. Providers log their own errors here."""
+        raise NotImplementedError
+
+    def _is_turn_complete(self, data: dict) -> bool:
+        """Whether this decoded server message closes the turn a commit asked for."""
         raise NotImplementedError
 
     def __init__(self, session_id, callback, language_code: str = "", partial_interval: float | None = None,
@@ -159,6 +169,11 @@ class ScribeSessionManager:
         # what has been persisted, including restored values.
         self._usage_flushed_bytes = 0
         self._usage_flushed_chunks = 0
+        # Set by finalize(): refuse new audio and let the provider answer what was sent.
+        self._finalizing = False
+        self._finalize_ws = None
+        self._finalize_sent = False
+        self._finalize_done = asyncio.Event()
 
     def restore_usage(self, audio_bytes: int, audio_chunks: int):
         """Restore usage counters from a previously saved DB value.
@@ -247,7 +262,7 @@ class ScribeSessionManager:
 
     async def push_audio(self, base64_audio: str):
         """Called by socket.io to push audio from the client"""
-        if self.is_running:
+        if self.is_running and not self._finalizing:
             self._last_audio_mono = time.monotonic()
             # base64: 4 chars encode 3 bytes
             decoded_bytes = len(base64_audio) * 3 // 4
@@ -386,6 +401,16 @@ class ScribeSessionManager:
                     self.audio_queue.task_done()
                     break
 
+                if base64_audio is _FINALIZE_MARKER:
+                    ws = self.ws
+                    if ws is not None and ws is self._finalize_ws:
+                        await self._send_audio(ws, _FINALIZE_CHUNK, True)
+                        self.should_commit = False
+                        self._finalize_sent = True
+                    else:
+                        self._finalize_done.set()  # the socket asked to finalize is gone
+                    self.audio_queue.task_done()
+                    continue
                 if self.ws:
                     await self._send_audio(self.ws, base64_audio, self.should_commit)
                     self.should_commit = False
@@ -428,9 +453,15 @@ class ScribeSessionManager:
                     continue
 
                 self.last_recv_mono = time.monotonic()
-                parsed = self._parse_message(json.loads(message))
+                # Snapshot before parsing: a final already in flight before the
+                # marker was sent cannot acknowledge it.
+                after_finalize = self._finalize_sent and self.ws is self._finalize_ws
+                data = json.loads(message)
+                parsed = self._parse_message(data)
                 if parsed is not None:
                     await self.handle_transcript(*parsed)
+                if after_finalize and self._is_turn_complete(data):
+                    self._finalize_done.set()
         except (asyncio.CancelledError, ConnectionClosed, ConnectionClosedOK):
             pass
         except Exception as e:
@@ -550,8 +581,11 @@ class ScribeSessionManager:
                 if partial:
                     self.last_partial_text = transcript
                 else:
-                    # Short commit: keep segment open and accumulate as prefix.
+                    # Short commit: keep segment open and accumulate as prefix. The
+                    # interim it finalizes is now part of that prefix, so stop() must
+                    # not append it again.
                     self.pending_commit_text = combined_text + " "
+                    self.last_partial_text = ""
                     if self._commit_timeout_task is None or self._commit_timeout_task.done():
                         self._commit_timeout_task = asyncio.create_task(self._commit_timeout_handler())
                 # Only the partial path can outgrow the cap; a committed segment is
@@ -562,6 +596,7 @@ class ScribeSessionManager:
             else:
                 transcription = self._build_transcription(combined_text, False, now)
                 self.pending_commit_text = ""
+                self.last_partial_text = ""
                 self.seg_start_time = None
                 self.should_commit = False
                 self._cancel_commit_timeout()
@@ -739,6 +774,11 @@ class ScribeSessionManager:
                     log_exception(logger, e, f"Scribe connection error for {self.session_id}")
                     self.ws = None
                     retry_count = self._next_retry_count(retry_count)
+                if self._finalizing:
+                    # A connection that ends while finalizing cannot answer the
+                    # marker; never reconnect for it.
+                    self._finalize_done.set()
+                    break
 
         finally:
             watchdog_task.cancel()
@@ -751,6 +791,23 @@ class ScribeSessionManager:
         self.ws = None
         await self._emit_status("stopped")
         logger.info(f"Scribe session ended for {self.session_id}")
+
+    async def finalize(self, timeout: float = FINALIZE_TIMEOUT_SECS) -> None:
+        """End the session without losing speech already sent: refuse new audio, send
+        every queued chunk, then the commit marker, and wait (bounded by `timeout`)
+        for the provider's final answer before stop() commits the open segment."""
+        self._finalizing = True
+        ws = self.ws if self.is_running else None
+        if ws is not None:
+            self._finalize_ws = ws
+            try:
+                async with asyncio.timeout(timeout):
+                    # put(), not put_nowait: the marker must not evict queued speech.
+                    await self.audio_queue.put(_FINALIZE_MARKER)
+                    await self._finalize_done.wait()
+            except TimeoutError:
+                logger.warning(f"Finalize timed out before the provider caught up for {self.session_id}")
+        await self.stop()
 
     async def stop(self):
         self.is_running = False
@@ -834,6 +891,9 @@ class ElevenLabsScribeManager(ScribeSessionManager):
             + str(commit).lower() + '}'
         )
 
+    def _is_turn_complete(self, data: dict) -> bool:
+        return data.get("message_type") == "committed_transcript"
+
     def _parse_message(self, data: dict):
         msg_type = data.get("message_type")
         if msg_type in ("partial_transcript", "committed_transcript"):
@@ -909,6 +969,10 @@ class GeminiScribeManager(ScribeSessionManager):
             # signal hybrid VAD sends on client-detected silence, so it is meant to
             # recur within a session and the stream continues with the next chunk.
             await ws.send(json.dumps({"realtimeInput": {"audioStreamEnd": True}}))
+
+    def _is_turn_complete(self, data: dict) -> bool:
+        content = data.get("serverContent") or {}
+        return "inputTranscription" in content or content.get("turnComplete") is True
 
     def _parse_message(self, data: dict):
         if "serverContent" in data:

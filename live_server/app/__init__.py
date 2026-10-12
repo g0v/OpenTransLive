@@ -1538,6 +1538,21 @@ async def _record_room_usage(room: dict, delta: dict, now: datetime) -> bool:
         return False
 
 
+async def _persist_final_usage(
+    room: dict, manager: ScribeSessionManager, *, write_absolutes: bool = True,
+) -> None:
+    """Bill a closing manager's pending delta to the room owner and, unless a
+    replacement owns them now, store its absolute counters on the room."""
+    now = datetime.now(timezone.utc)
+    delta = manager.flush_usage_delta()
+    if delta:
+        await _record_room_usage(room, delta, now)
+    if write_absolutes and manager.audio_bytes_total > 0:
+        await rooms_collection.update_one(
+            {"sid": room["sid"]}, {"$set": {**manager.get_usage_stats(), "updated_at": now}}
+        )
+
+
 async def _release_session_usage(sid: str, room: dict) -> None:
     """Close out a session's audio accounting before its ownership changes.
 
@@ -1551,16 +1566,29 @@ async def _release_session_usage(sid: str, room: dict) -> None:
         manager = active_scribe_managers.pop(sid, None)
         if manager is None:
             return
-        now = datetime.now(timezone.utc)
-        delta = manager.flush_usage_delta()
-        if delta:
-            await _record_room_usage(room, delta, now)
-        if manager.audio_bytes_total > 0:
-            await rooms_collection.update_one(
-                {"sid": sid}, {"$set": {**manager.get_usage_stats(), "updated_at": now}}
-            )
+        await _persist_final_usage(room, manager)
         manager.mark_superseded()
         asyncio.create_task(manager.stop())
+
+
+async def _finalize_scribe_on_mic_off(sid: str, manager: ScribeSessionManager) -> None:
+    """Let the provider answer speech already sent, then bill what the session used."""
+    try:
+        # The room reports "stopped" itself: the manager was marked superseded so a
+        # quick mic_on is not painted "stopped" by this outgoing session.
+        await _emit_scribe_status(sid, {"state": "stopped"})
+        await manager.finalize()
+        room = await rooms_collection.find_one({"sid": sid})
+        if not room:
+            return
+        async with _get_or_create_lock(_usage_flush_locks, sid):
+            # A replacement manager restored the room's absolutes and owns them now;
+            # only the rollup delta is still this manager's to bill.
+            await _persist_final_usage(
+                room, manager, write_absolutes=active_scribe_managers.get(sid) is None
+            )
+    except Exception as e:
+        log_exception(logger, e, "mic_off finalize failed")
 
 
 def _usage_secs(audio_bytes: float) -> float:
@@ -4008,7 +4036,7 @@ async def mic_on(socket_id, data):
 
 @sio.event
 async def mic_off(socket_id, data):
-    """Stop the scribe session immediately when the panel mic is turned off."""
+    """Finalize the scribe session in the background when the panel mic is turned off."""
     session = await sio.get_session(socket_id)
     if not await _check_socket_already_verified(socket_id, session, silent=True):
         return
@@ -4018,8 +4046,9 @@ async def mic_off(socket_id, data):
         return
     manager: ScribeSessionManager | None = active_scribe_managers.pop(session_id, None)
     if manager:
-        logger.info("mic_off stopping_scribe sid_hash=%s", _hash_token(session_id))
-        await manager.stop()
+        logger.info("mic_off finalizing_scribe sid_hash=%s", _hash_token(session_id))
+        manager.mark_superseded()
+        asyncio.create_task(_finalize_scribe_on_mic_off(session_id, manager))
 
 
 @sio.event
