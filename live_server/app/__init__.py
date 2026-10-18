@@ -1443,13 +1443,26 @@ async def _require_room_owner(request: Request, room: dict) -> None:
         raise HTTPException(status_code=403, detail="This session is owned by another user.")
 
 
+def _safe_next_path(value: str | None) -> str | None:
+    """The post-login return target, only when it is a same-origin path.
+
+    Browsers read `//host`, `/\\host` and paths with stripped control characters
+    (`/\\t/host`) as another origin, so all of those are refused."""
+    if not value or not value.startswith("/") or value.startswith("//"):
+        return None
+    if "\\" in value or any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
+        return None
+    return value
+
+
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
+    next_path = _safe_next_path(request.query_params.get("next"))
     email = _get_session_email(request)
     if email:
-        target = "/dashboard" if _is_admin_email(email) else "/user-dashboard"
+        target = next_path or ("/dashboard" if _is_admin_email(email) else "/user-dashboard")
         return RedirectResponse(url=target, status_code=302)
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse("login.html", {"request": request, "next_path": next_path})
 
 
 @app.get("/logout")
@@ -2153,7 +2166,11 @@ async def verify_otp_endpoint(request: Request):
     request.session["user_uid"] = user_uid
 
     is_admin = _is_admin_email(email)
-    return {"status": "ok", "is_admin": is_admin, "redirect": "/dashboard" if is_admin else "/user-dashboard"}
+    next_path = body.get("next")
+    redirect = (_safe_next_path(next_path) if isinstance(next_path, str) else None) or (
+        "/dashboard" if is_admin else "/user-dashboard"
+    )
+    return {"status": "ok", "is_admin": is_admin, "redirect": redirect}
 
 
 @app.post("/api/session/{sid}/viewers/clear", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
@@ -3428,9 +3445,12 @@ async def rt(request: Request, id: str):
         _hash_token(id),
         len(sliced_data["transcriptions"]),
     )
+    # Set by /panel/{sid} when it sent a signed-out visitor here; shown once.
+    owner_login = request.session.pop("panel_login_sid", None) == id
     return templates.TemplateResponse(
         "rt.html",
-        {"request": request, "id": id, "data": sliced_data, "language_maps": language_maps},
+        {"request": request, "id": id, "data": sliced_data, "language_maps": language_maps,
+         "owner_login": owner_login},
     )
   
 @app.get("/panel/{sid}", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
@@ -3444,24 +3464,54 @@ async def panel(request: Request, sid: str):
     now = datetime.now(timezone.utc)
     ADMIN_TIMEOUT = 30
 
-    # Find or create the room
+    current_email = _get_session_email(request)
     room = await rooms_collection.find_one({"sid": sid})
     if not room:
-        await rooms_collection.insert_one({
+        # Opening a missing room's panel creates it, so it needs a signed-in
+        # owner; the room is owned by its creator from the insert on.
+        if not current_email:
+            return RedirectResponse(url=f"/login?next={quote(f'/panel/{sid}')}", status_code=302)
+        from pymongo.errors import DuplicateKeyError
+        room = {
             "sid": sid,
             "secret_key": None,
             "admin_uid": None,
-            "admin_email": None,
+            "admin_email": current_email,
             "admin_last_heartbeat": None,
             "created_at": now,
-            "extra": {}
-        })
-        room = {"sid": sid, "secret_key": None, "admin_uid": None, "admin_email": None, "admin_last_heartbeat": None}
+            "extra": {},
+        }
+        try:
+            await rooms_collection.insert_one(dict(room))
+        except DuplicateKeyError:
+            # Another request created it first: ownership below, not who
+            # inserted first, decides whether this caller gets the panel.
+            room = await rooms_collection.find_one({"sid": sid})
+            if not room:
+                raise HTTPException(status_code=409, detail="Session changed, please retry.")
+        else:
+            await _invalidate_owner_override_cache(sid)
+
+    # The panel is for the room's owners (primary, co-owner, site admin) and, while
+    # it has no owner, for any signed-in user, who claims it by opening it. Anyone
+    # else followed a shared panel link and gets the audience view instead.
+    owner_email = await _get_room_owner_email(room)
+    if owner_email:
+        ident = await get_identity(request)
+        may_open = bool(ident) and await _owns_room(ident.email, room)
+    else:
+        may_open = bool(current_email)
+    if not may_open:
+        if not current_email:
+            # rt.html offers a sign-in link back here, once; kept out of the URL so
+            # it never leaks into a viewer link someone copies and shares.
+            request.session["panel_login_sid"] = sid
+        query = request.url.query
+        viewer_url = f"/rt/{quote(sid, safe='')}" + (f"?{query}" if query else "")
+        return RedirectResponse(url=viewer_url, status_code=302)
 
     admin_uid = room.get("admin_uid")
     admin_key = room.get("secret_key")
-
-    await _require_room_owner(request, room)
 
     if admin_uid and admin_key:
         last_heartbeat = room.get("admin_last_heartbeat")
@@ -3488,22 +3538,28 @@ async def panel(request: Request, sid: str):
                 {"$set": {"admin_last_heartbeat": now, "updated_at": now}}
             )
 
-    current_email = _get_session_email(request)
-
     if not admin_uid or not admin_key:
         session_secret_key = str(uuid.uuid4())
         # Only seed admin_email when the room has no primary owner yet — a
-        # co-owner reclaiming an expired lock must NOT overwrite the owner.
+        # co-owner reclaiming an expired lock must NOT overwrite the owner. A
+        # legacy room resolved through admin_uid keeps that owner, persisted
+        # before admin_uid is handed to this lock holder.
         update_fields: dict = {
             "secret_key": session_secret_key,
             "admin_uid": user_uid,
             "admin_last_heartbeat": now,
             "updated_at": now,
         }
+        room_filter: dict = {"sid": sid}
         if not room.get("admin_email"):
-            update_fields["admin_email"] = current_email
-        await rooms_collection.update_one({"sid": sid}, {"$set": update_fields})
+            update_fields["admin_email"] = owner_email or current_email
+            room_filter["admin_email"] = {"$in": [None, ""]}
+        result = await rooms_collection.update_one(room_filter, {"$set": update_fields})
         if "admin_email" in update_fields:
+            if not result.matched_count:
+                # Someone else claimed the unowned room since it was read; decide
+                # again against its new owner.
+                return await panel(request, sid)
             await _invalidate_owner_override_cache(sid)
         request.session["secret_key"] = session_secret_key
         user_secret_key = session_secret_key

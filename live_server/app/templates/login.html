@@ -60,6 +60,8 @@
   const otpHint = document.getElementById('otp-hint')
 
   let currentEmail = ''
+  // Where to land after signing in (e.g. back to a panel); validated server-side.
+  const nextPath = {{ next_path | tojson }}
 
   function showError(el, msg) {
     el.textContent = msg
@@ -121,7 +123,7 @@
       const res = await fetch('/auth/verify-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: currentEmail, otp })
+        body: JSON.stringify({ email: currentEmail, otp, next: nextPath })
       })
       if (!res.ok) {
         const data = await res.json()

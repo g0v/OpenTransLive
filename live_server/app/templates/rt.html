@@ -94,6 +94,15 @@
     <strong class="text-[0.95rem] font-bold text-[var(--rt-text)]">Waiting for transcript</strong>
     <span class="max-w-[28ch] text-[0.78rem]">New speech will appear here automatically.</span>
   </div>
+  {% if owner_login %}
+  <!-- Shown once to a signed-out visitor sent here from a shared panel link. -->
+  <div id="owner-login-notice" class="absolute top-12 left-1/2 z-20 flex max-w-[calc(100%-1rem)] -translate-x-1/2 items-center gap-1 rounded-full border border-[var(--rt-border)] bg-[var(--rt-surface)] py-0.5 ps-3 pe-0.5 text-sm shadow-[0_8px_28px_color-mix(in_srgb,var(--rt-canvas)_64%,transparent)] max-md:top-11">
+    <a href="/login?next={{ ('/panel/' ~ id) | urlencode }}" class="truncate font-semibold text-[var(--rt-accent)] underline-offset-2 hover:underline">Owner? Sign in to manage</a>
+    <button type="button" class="icon-btn icon-btn-sm" aria-label="Close" title="Close" onclick="this.parentElement.remove()">
+      <iconify-icon icon="ph:x" width="16" height="16"></iconify-icon>
+    </button>
+  </div>
+  {% endif %}
 
   <!-- Single Language View -->
   <div id="single-view" class="flex-1 overflow-hidden bg-[var(--rt-canvas)] p-1 max-md:p-0.5">
