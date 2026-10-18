@@ -81,6 +81,7 @@ Compose 會啟動 FastAPI server、MongoDB、Redis。
 | `ENVIRONMENT` | 設為 `production` 會開啟 Secure cookie 與嚴格的 Socket.IO CORS，並停止在 log 印出 OTP | `development` |
 | `SOURCE_CODE_URL` | 實際部署版本的完整對應原始碼網址；production 必填，建議指向固定 tag 或 commit | 開發環境使用上游 repository |
 | `PROFESSIONAL_SERVICES_URL` | 選填；首頁「技術支援」區塊的外部支援聯絡連結。未設定時不顯示此連結，但仍顯示專案維護者 email。首頁僅介紹開源工具、角色權限與支援聯絡，不展示商業方案 | 空（不顯示外部連結）|
+| `SITE_TEMPLATES_DIR` | 選填；部署專屬的 template 覆寫目錄（相對於 `live_server/`），優先於 `app/templates` 搜尋，同路徑檔案會取代預設版本。g0v 社群站使用 `app/sites/g0v`（覆寫首頁的 realtime 授權說明 `partials/realtime_access.html`）。設定了但目錄不存在時啟動失敗 | 空（只用預設 templates）|
 | `SOURCE_REPOSITORY_URL` | 建置來源 repository；`scripts/compose.sh` 會自動取得 | Git remote `origin` |
 | `SOURCE_REVISION` | 建置來源 commit SHA；`scripts/compose.sh` 會自動取得 | Git `HEAD` |
 | `SOCKET_CORS_ALLOWED_ORIGINS` | production 模式下的 Socket.IO 允許來源（逗號分隔）| 內建 localhost 清單 |

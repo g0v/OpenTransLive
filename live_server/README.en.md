@@ -84,6 +84,7 @@ Some runtime options still come from environment variables:
 | `ENVIRONMENT` | `production` enables Secure cookies and a strict Socket.IO CORS allowlist, and stops OTPs from being logged | `development` |
 | `SOURCE_CODE_URL` | Complete corresponding source URL for the deployed version; required in production, preferably pinned to a tag or commit | Upstream repository in development |
 | `PROFESSIONAL_SERVICES_URL` | Optional external contact link in the homepage's technical support section. When unset, only the maintainer's email is shown. The homepage introduces the open-source tool, roles and permissions, and support contacts, not commercial plans | Empty (external link hidden) |
+| `SITE_TEMPLATES_DIR` | Optional per-deployment template override directory (relative to `live_server/`), searched before `app/templates`; a file at the same relative path replaces the default. The g0v community instance uses `app/sites/g0v` (overrides the homepage realtime access notice, `partials/realtime_access.html`). Startup fails if set to a missing directory | Empty (default templates only) |
 | `SOURCE_REPOSITORY_URL` | Build source repository; derived by `scripts/compose.sh` | Git remote `origin` |
 | `SOURCE_REVISION` | Build source commit SHA; derived by `scripts/compose.sh` | Git `HEAD` |
 | `SOCKET_CORS_ALLOWED_ORIGINS` | Comma-separated Socket.IO allowlist in production | Built-in localhost allowlist |

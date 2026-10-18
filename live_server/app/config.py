@@ -41,6 +41,14 @@ if not SOURCE_CODE_URL:
 # presenting commercial plans or a sales pitch.
 PROFESSIONAL_SERVICES_URL = os.environ.get("PROFESSIONAL_SERVICES_URL", "").strip()
 
+# Optional directory of per-deployment template overrides, searched before
+# app/templates. A file there with the same relative path (e.g.
+# partials/realtime_access.html) replaces the default one, so a community
+# instance can carry its own wording without forking the shared templates.
+SITE_TEMPLATES_DIR = os.environ.get("SITE_TEMPLATES_DIR", "").strip()
+if SITE_TEMPLATES_DIR and not Path(SITE_TEMPLATES_DIR).is_dir():
+    raise RuntimeError(f"SITE_TEMPLATES_DIR is not a directory: {SITE_TEMPLATES_DIR}")
+
 
 def load_secret_toml(name: str, *, example_fallback: bool = False) -> dict:
     """Parse ``secret/<name>.toml`` into a dict.

@@ -38,6 +38,7 @@ services:
       # complete corresponding source (preferably an immutable tag or commit).
       SOURCE_CODE_URL: ${SOURCE_CODE_URL:-}
       PROFESSIONAL_SERVICES_URL: ${PROFESSIONAL_SERVICES_URL:-}
+      SITE_TEMPLATES_DIR: ${SITE_TEMPLATES_DIR:-}
       SOURCE_REPOSITORY_URL: ${SOURCE_REPOSITORY_URL:-}
       SOURCE_REVISION: ${SOURCE_REVISION:-}
     volumes:

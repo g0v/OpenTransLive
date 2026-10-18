@@ -35,7 +35,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 dotenv.load_dotenv(override=True)
 
-from .config import SETTINGS, REALTIME_SETTINGS, REDIS_URL, IS_PRODUCTION, SOURCE_CODE_URL, PROFESSIONAL_SERVICES_URL
+from .config import SETTINGS, REALTIME_SETTINGS, REDIS_URL, IS_PRODUCTION, SOURCE_CODE_URL, PROFESSIONAL_SERVICES_URL, SITE_TEMPLATES_DIR
 try:
     from .config import EMAIL_SETTINGS
 except ImportError:
@@ -605,7 +605,7 @@ app.add_middleware(
 
 # Setup templates
 timestamp = datetime.now(timezone.utc).timestamp()
-templates = Jinja2Templates(directory="app/templates")
+templates = Jinja2Templates(directory=[d for d in (SITE_TEMPLATES_DIR, "app/templates") if d])
 templates.env.globals["timestamp"] = timestamp
 templates.env.globals["source_code_url"] = SOURCE_CODE_URL
 templates.env.globals["professional_services_url"] = PROFESSIONAL_SERVICES_URL

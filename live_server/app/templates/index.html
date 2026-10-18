@@ -143,11 +143,11 @@
                 </dd>
             </div>
         </dl>
-        <div class="max-w-5xl mx-auto mt-8 space-y-4 text-sm text-gray-600 leading-relaxed">
+        <div class="max-w-5xl mx-auto mt-6 space-y-4 text-sm text-gray-600 leading-relaxed">
             <p>
                 <strong class="text-gray-800">Realtime transcription is a separate permission.</strong>
                 Using the panel's microphone or streaming audio to the server requires the operating account
-                to have realtime access granted by this instance's administrator.
+                to have realtime access granted by an administrator.
                 Owning a session or being a co-owner does not enable it automatically.
                 System administrators have realtime access by default.
             </p>
@@ -157,8 +157,8 @@
                 control after the 30-second heartbeat expires. Sign in before creating a session to protect
                 ownership. Audience pages remain public even when the session has an owner.
             </p>
-            <p>For account access on this instance, contact its server administrator.</p>
         </div>
+        {% include "partials/realtime_access.html" %}
     </section>
 
     <!-- Create Session Section -->
