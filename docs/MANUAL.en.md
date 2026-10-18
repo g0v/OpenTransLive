@@ -80,6 +80,13 @@ Wait for the green **Connected** indicator before starting. Changes to panel set
 
 The status bar shows the current viewer count and the amount of audio sent during the session.
 
+### Current Flow
+
+- Click a committed sentence to edit its source and retranslate it.
+- Scrolling up stops the flow from following new lines and keeps the sentence you are reading in place; select **Latest** or scroll back to the bottom to follow again.
+- The sentence still being recognized (gray italics) cannot be edited, since the next recognition update replaces it. Click it to open **Add source replacement rule**: select the misrecognized words in the frozen transcript, enter the correct wording, and add the rule. Like a **Flow** replacement in **Dictionary**, it applies to every later partial and committed sentence, and the lines already shown in Current Flow are redisplayed with it; saved segments and captions viewers already saw are not changed. Rules cannot be added until the dictionary has loaded, so existing rules are never overwritten.
+- When the speaker does not pause and the sentence being recognized keeps growing, select **Commit current sentence** while the mic is on and a sentence is being recognized, as soon as you hear the sentence end. It is cut where you pressed, committed when the transcription service answers, and translated, even when it is short. If the service has not answered after about 1.5 s, the sentence is committed as shown, and words still being recognized then go to the next sentence.
+
 ## 4. Share and customize the viewer
 
 The realtime viewer is public and updates automatically:

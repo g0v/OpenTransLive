@@ -368,6 +368,37 @@
       </div>
     </form>
   </div>
+  <!-- Flow (source) replacement rule from the live partial -->
+  <div id="flow-rule-modal" class="modal-overlay hidden fixed flex inset-0 z-[100] items-center justify-center bg-[rgba(3,7,13,0.72)] p-4 backdrop-blur-sm" role="dialog" aria-modal="true"
+    aria-labelledby="flow-rule-title">
+    <form id="flow-rule-form" class="modal-panel flex w-full max-w-[34rem] flex-col overflow-hidden rounded-xl border border-[#3b4a5d] bg-[#182230] shadow-[0_24px_72px_rgba(3,8,15,0.48)]">
+      <div class="modal-header flex min-h-[52px] shrink-0 items-center gap-2 border-b border-[#2a3646] px-4 py-3">
+        <h2 id="flow-rule-title" class="modal-title m-0 flex-1 text-base font-bold text-[#edf3fa]">Add source replacement rule</h2>
+        <button type="button" class="modal-close-btn inline-flex size-8 items-center justify-center rounded-lg text-[#8d9aae] transition-colors hover:bg-[#273548] hover:text-[#edf3fa]" data-flow-rule-close aria-label="Close">
+          <iconify-icon icon="ph:x" width="20" height="20"></iconify-icon>
+        </button>
+      </div>
+      <div class="modal-body flex flex-col gap-3 p-4">
+        <p class="text-[11px] leading-snug text-[#9eacbf]">
+          Select the misrecognized words in the transcript below and enter the correct wording. The rule applies to
+          every later partial and committed sentence; saved segments and captions viewers already saw are not changed.
+        </p>
+        <label for="flow-rule-snapshot" class="text-xs font-semibold text-[#d7e1ed]">Recognized text (as of opening)</label>
+        <textarea id="flow-rule-snapshot" rows="4" readonly
+          class="panel-input min-h-20 w-full resize-y leading-relaxed"></textarea>
+        <div class="flex items-center gap-1">
+          <input id="flow-rule-from" type="text" maxlength="200" placeholder="From" aria-label="From" class="panel-input min-w-0 flex-1">
+          <iconify-icon icon="ph:arrow-right" width="14" height="14" class="shrink-0 text-[#8d9aae]"></iconify-icon>
+          <input id="flow-rule-to" type="text" maxlength="200" placeholder="Replace with" aria-label="Replace with" class="panel-input min-w-0 flex-1">
+        </div>
+        <div id="flow-rule-hint" class="min-h-4 text-[11px] leading-snug text-[#aebed2]" role="status" aria-live="polite"></div>
+        <div class="flex justify-end gap-2 border-t border-[#2a3646] pt-3">
+          <button type="button" class="panel-add-btn" data-flow-rule-close>Cancel</button>
+          <button id="flow-rule-submit" type="submit" class="panel-add-btn min-w-24 disabled:cursor-not-allowed disabled:opacity-50">Add rule</button>
+        </div>
+      </div>
+    </form>
+  </div>
   <!-- Viewer URL parameters modal -->
   <div id="info-modal" class="modal-overlay hidden fixed inset-0 z-[100] flex items-center justify-center bg-[rgba(3,7,13,0.72)] p-4 backdrop-blur-sm" role="dialog" aria-modal="true"
     aria-labelledby="info-modal-title">
@@ -447,7 +478,7 @@
       <iframe id="viewer-frame" src="/rt/{{ sid }}?theme=dark&show=all" class="w-full h-full border-0" allow="autoplay; fullscreen"></iframe>
     </div>
     <!-- Flow panel (side column on desktop, bottom drawer on mobile) -->
-    <div id="flow-panel" class="mr-1 my-1 flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border border-[#2a3646] bg-[#111925] max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-40 max-md:m-0 max-md:grid max-md:max-h-[60vh] max-md:w-auto max-md:grid-rows-[auto_0fr] max-md:rounded-t-[10px] max-md:rounded-b-none max-md:border-x-0 max-md:border-b-0 max-md:shadow-[0_-4px_12px_rgba(0,0,0,0.4)] max-md:transition-[grid-template-rows] max-md:duration-200 max-md:[&.flow-open]:grid-rows-[auto_1fr]">
+    <div id="flow-panel" class="relative mr-1 my-1 flex w-72 shrink-0 flex-col overflow-hidden rounded-xl border border-[#2a3646] bg-[#111925] max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-40 max-md:m-0 max-md:grid max-md:max-h-[60vh] max-md:w-auto max-md:grid-rows-[auto_0fr_auto] max-md:rounded-t-[10px] max-md:rounded-b-none max-md:border-x-0 max-md:border-b-0 max-md:shadow-[0_-4px_12px_rgba(0,0,0,0.4)] max-md:transition-[grid-template-rows] max-md:duration-200 max-md:[&.flow-open]:grid-rows-[auto_1fr_auto]">
       <button id="flow-toggle" type="button" aria-expanded="false"
         class="flow-header flex min-h-10 w-full cursor-pointer items-center gap-2 border-b border-[#2a3646] bg-[#182230] px-3 py-1.5 text-left transition-colors hover:bg-[#1d2938] md:cursor-default md:hover:bg-[#182230] max-md:min-h-[42px] max-md:py-2">
         <span class="text-xs font-semibold text-gray-300">Current Flow</span>
@@ -455,7 +486,24 @@
         <iconify-icon id="flow-chevron" icon="ph:caret-up" width="16" height="16"
           class="hidden text-gray-500 transition-transform duration-200 max-md:inline-flex max-md:[.flow-open_&]:rotate-180"></iconify-icon>
       </button>
-      <div id="flow-content" class="flex-1 space-y-1 overflow-y-auto px-3 py-2 text-[0.78rem] leading-[1.55] max-md:min-h-0 max-md:overflow-hidden max-md:py-0 max-md:transition-[padding] max-md:duration-200 max-md:[.flow-open_&]:overflow-y-auto max-md:[.flow-open_&]:py-2"></div>
+      <div id="flow-content" class="flex-1 space-y-1 overflow-y-auto px-3 py-2 text-[0.78rem] leading-[1.55] [overflow-anchor:none] max-md:min-h-0 max-md:overflow-hidden max-md:py-0 max-md:transition-[padding] max-md:duration-200 max-md:[.flow-open_&]:overflow-y-auto max-md:[.flow-open_&]:py-2"></div>
+      <!-- Shown while the operator has scrolled up; the flow stops following until then. -->
+      <button id="flow-jump-latest" type="button" style="display:none" title="Jump to the latest line"
+        class="absolute left-1/2 {% if is_realtime_enabled %}bottom-[3.25rem]{% else %}bottom-1.5{% endif %} inline-flex h-6 -translate-x-1/2 items-center gap-0.5 rounded-full bg-[#2f6fd1] px-2 text-[10px] font-bold text-white shadow transition-colors hover:bg-[#3b7de0] max-md:invisible max-md:[.flow-open_&]:visible">
+        <iconify-icon icon="ph:arrow-down" width="10" height="10"></iconify-icon>
+        <span>Latest</span>
+      </button>
+      {% if is_realtime_enabled %}
+      <div class="border-t border-[#2a3646] px-2 py-1.5 max-md:hidden max-md:[.flow-open_&]:block">
+        <button id="flow-force-commit" type="button" disabled aria-busy="false"
+          title="Available while the microphone is on"
+          class="panel-add-btn flex w-full items-center justify-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-gray-700 disabled:hover:text-gray-300">
+          <iconify-icon id="flow-force-commit-icon" icon="ph:arrow-right" width="12" height="12"></iconify-icon>
+          <iconify-icon id="flow-force-commit-spinner" icon="ph:spinner-gap" width="12" height="12" class="hidden animate-spin"></iconify-icon>
+          <span id="flow-force-commit-label">Commit current sentence</span>
+        </button>
+      </div>
+      {% endif %}
     </div>
   </div>
 </div>
@@ -608,6 +656,9 @@
   const micBtn = document.getElementById('mic-toggle-btn')
   const micMobileBtn = document.getElementById('mic-mobile-btn')
   let recording = false
+  // Enables the flow panel's "Commit current sentence" button while the mic is
+  // on. Assigned by the flow panel IIFE, like reapplyFlowDict.
+  let onFlowMicStateChange = function () {}
 
   function setMicState(state) {
     if (!micBtn) return
@@ -638,6 +689,7 @@
     // Let the status indicator re-evaluate: a transcription-stopped alarm is only
     // meaningful while the mic is on. Defined in realtime.js, which loads after this.
     if (typeof onMicStateChange === 'function') onMicStateChange(state)
+    onFlowMicStateChange(state)
   }
 
   // The only two writers of `recording`. It lives here with setMicState(), while
@@ -1838,6 +1890,9 @@
   // ── Text mapping panel ───────────────────────────────────────────────────
   let textDictionary = []  // [{ from, to, target }] - target is 'flow' or a language code
   let textDictSaveTimer = null
+  // Every save sends the whole list, so nothing may be added before the stored
+  // rules have loaded: the save would replace them with the new rule alone.
+  let textDictionaryLoaded = false
   // Re-run the flow dictionary over on-screen flow lines. Assigned by the flow
   // panel IIFE; called whenever textDictionary changes so a rule added to fix a
   // mistake retro-fixes the committed lines already shown, not just future ones.
@@ -1914,6 +1969,7 @@
       if (res.ok) {
         const data = await res.json()
         textDictionary = Array.isArray(data.text_dictionary) ? data.text_dictionary : []
+        textDictionaryLoaded = true
         updateDictLabel()
         renderTextDictList()
         reapplyFlowDict()
@@ -1921,6 +1977,45 @@
     } catch (e) {
       console.error('Failed to load text dictionary:', e)
     }
+  }
+
+  // The server refuses the whole dictionary when any rule breaks these limits, so a
+  // rule that would is never added (see update_session_text_dictionary_endpoint).
+  const TEXT_RULE_MAX_CHARS = 200
+  const TEXT_DICT_MAX_RULES = 200
+
+  function findTextRule(from, target) {
+    return textDictionary.find(r => r.from === from && (r.target || 'flow') === (target || 'flow'))
+  }
+
+  // Why a rule cannot be added or updated right now, or '' when it can.
+  function textRuleProblem(rawFrom, to, target) {
+    const from = rawFrom.trim()
+    if (!textDictionaryLoaded) return 'The dictionary has not loaded yet, so rules cannot be added right now.'
+    if ([...from].length > TEXT_RULE_MAX_CHARS || [...to].length > TEXT_RULE_MAX_CHARS) {
+      return `Too long: at most ${TEXT_RULE_MAX_CHARS} characters on each side.`
+    }
+    if (from && !findTextRule(from, target) && textDictionary.length >= TEXT_DICT_MAX_RULES) {
+      return `The dictionary is full (${TEXT_DICT_MAX_RULES} rules).`
+    }
+    return ''
+  }
+
+  // Add a rule, or update the one with the same (from, target), and save. `from` is
+  // trimmed and required; `to` is kept verbatim (may be empty). Refused while
+  // textRuleProblem() names a problem.
+  function addTextRule(rawFrom, to, target) {
+    const from = rawFrom.trim()
+    if (!from || textRuleProblem(from, to, target)) return false
+    const resolvedTarget = target || 'flow'
+    const existing = findTextRule(from, resolvedTarget)
+    if (existing) existing.to = to
+    else textDictionary.push({ from, to, target: resolvedTarget })
+    updateDictLabel()
+    renderTextDictList()
+    reapplyFlowDict()
+    saveTextDictionary()
+    return true
   }
 
   function debouncedSaveTextDict() {
@@ -2386,18 +2481,14 @@
     document.getElementById('td-add-btn').addEventListener('click', function () {
       const fromInput = document.getElementById('td-from-input')
       const toInput = document.getElementById('td-to-input')
-      const from = fromInput.value.trim()
-      const to = toInput.value
-      const target = document.getElementById('td-target-select').value || 'flow'
-      if (!from) return
-      // Same (from, target) replaces in place; otherwise append a new rule.
-      const existing = textDictionary.find(r => r.from === from && (r.target || 'flow') === target)
-      if (existing) existing.to = to
-      else textDictionary.push({ from, to, target })
-      updateDictLabel()
-      renderTextDictList()
-      reapplyFlowDict()
-      saveTextDictionary()
+      if (!fromInput.value.trim()) return
+      const target = document.getElementById('td-target-select').value
+      const problem = textRuleProblem(fromInput.value, toInput.value, target)
+      if (problem) {
+        document.getElementById('settings-status').textContent = problem
+        return
+      }
+      addTextRule(fromInput.value, toInput.value, target)
       fromInput.value = ''
       toInput.value = ''
       fromInput.focus()
@@ -2517,6 +2608,10 @@
     // Flow panel - shows corrected transcriptions in real-time
     ; (function () {
       const MAX_FLOW_ITEMS = 150
+      // While the reader is scrolled up the oldest rows are kept up to this cap:
+      // trimming them from under a reader at the top would move the text being read.
+      // The extra rows go once following resumes.
+      const MAX_FLOW_ITEMS_PAUSED = 1000
       const flowContent = document.getElementById('flow-content')
       const flowCountEl = document.getElementById('flow-count')
       const flowEditModal = document.getElementById('flow-edit-modal')
@@ -2554,9 +2649,222 @@
           : segmentCount + (segmentCount === 1 ? ' segment' : ' segments')
       }
 
+      // ── Scroll lock ────────────────────────────────────────────────────────
+      // The flow follows the newest line until the operator scrolls up; then it
+      // keeps the row being read in place while old rows are trimmed above it or a
+      // backfilled commit is inserted, and offers "Latest". Only user-initiated
+      // scrolls flip the follow flag: programmatic ones fire scroll events too
+      // (same rule as the viewer cards in rt.html).
+      const jumpLatestBtn = document.getElementById('flow-jump-latest')
+      let following = true
+      let lastUserScrollAt = 0
+      // { row, offset }: the row kept in place while not following, and its offset
+      // from the scroller's top. Kept across updates because scrollTop is whole
+      // pixels: re-measuring after every restore would let the rounding drift
+      // commit after commit. Any user scroll input picks a new one.
+      let pinnedAnchor = null
+
+      function setFollowing(value) {
+        const resumed = value && !following
+        following = value
+        jumpLatestBtn.style.display = value ? 'none' : ''
+        if (resumed) {
+          trimFlow()
+          scrollToBottom()
+        }
+      }
+
+      // Remove the oldest rows to keep the DOM bounded. The partial is always the
+      // last row, so anything evicted is a committed row the Map still holds.
+      function trimFlow() {
+        const limit = following ? MAX_FLOW_ITEMS : MAX_FLOW_ITEMS_PAUSED
+        while (flowContent.children.length > limit) {
+          const oldest = flowContent.firstElementChild
+          if (oldest?.dataset.startTime) committedRows.delete(segmentKey(oldest.dataset.startTime))
+          oldest?.remove()
+        }
+      }
+
       function scrollToBottom() {
         flowContent.scrollTop = flowContent.scrollHeight
       }
+
+      // The first row visible at the top of the scroller and its offset from it.
+      function visibleAnchor() {
+        const top = flowContent.getBoundingClientRect().top
+        for (const row of flowContent.querySelectorAll('[data-start-time]')) {
+          const rect = row.getBoundingClientRect()
+          if (rect.bottom > top) return { row, offset: rect.top - top }
+        }
+        return null
+      }
+
+      // Call before changing the rows and hand the result to restoreScroll after.
+      function captureScroll() {
+        if (following) return null
+        const fallback = visibleAnchor()
+        if (!pinnedAnchor) pinnedAnchor = fallback
+        return fallback
+      }
+
+      function restoreScroll(fallback) {
+        if (following) {
+          pinnedAnchor = null
+          scrollToBottom()
+          return
+        }
+        if (!pinnedAnchor?.row.isConnected) pinnedAnchor = fallback
+        if (!pinnedAnchor?.row.isConnected) return
+        flowContent.scrollTop += pinnedAnchor.row.getBoundingClientRect().top
+          - flowContent.getBoundingClientRect().top - pinnedAnchor.offset
+      }
+
+      function markUserScroll() {
+        lastUserScrollAt = Date.now()
+        pinnedAnchor = null
+      }
+      flowContent.addEventListener('wheel', markUserScroll, { passive: true })
+      flowContent.addEventListener('touchstart', markUserScroll, { passive: true })
+      flowContent.addEventListener('pointerdown', markUserScroll)
+      flowContent.addEventListener('keydown', markUserScroll)
+      flowContent.addEventListener('scroll', function () {
+        if (Date.now() - lastUserScrollAt >= 1000) return
+        setFollowing(flowContent.scrollTop + flowContent.clientHeight >= flowContent.scrollHeight - 32)
+      })
+      jumpLatestBtn.addEventListener('click', function () {
+        setFollowing(true)
+      })
+
+      // ── Force commit ───────────────────────────────────────────────────────
+      // The sentence being recognized ends where the operator pressed instead of
+      // at the next pause. Its commit arrives as a normal transcription_update
+      // (within the server's 1.5 s provider wait) and clears the partial; the
+      // button stays busy until then, or a few seconds when the server had
+      // nothing open.
+      const COMMIT_PENDING_MS = 3000
+      const forceCommitBtn = document.getElementById('flow-force-commit')
+      const forceCommitIcon = document.getElementById('flow-force-commit-icon')
+      const forceCommitSpinner = document.getElementById('flow-force-commit-spinner')
+      const forceCommitLabel = document.getElementById('flow-force-commit-label')
+      let micOn = false
+      let commitPending = false
+      let commitTimer = null
+
+      function renderForceCommit() {
+        if (!forceCommitBtn) return
+        forceCommitBtn.disabled = !micOn || !partialEl || commitPending || !socket.connected
+        forceCommitBtn.setAttribute('aria-busy', commitPending ? 'true' : 'false')
+        forceCommitBtn.title = !socket.connected
+          ? 'Reconnecting to the server'
+          : micOn
+            ? 'Commit the sentence being recognized now, without waiting for a pause, and translate it'
+            : 'Available while the microphone is on'
+        forceCommitIcon.classList.toggle('hidden', commitPending)
+        forceCommitSpinner.classList.toggle('hidden', !commitPending)
+        forceCommitLabel.textContent = commitPending ? 'Committing…' : 'Commit current sentence'
+      }
+
+      function clearCommitPending() {
+        clearTimeout(commitTimer)
+        commitTimer = null
+        commitPending = false
+        renderForceCommit()
+      }
+
+      onFlowMicStateChange = function (state) {
+        micOn = state === 'on'
+        renderForceCommit()
+      }
+      // A press queued while disconnected would cut whatever sentence is open on
+      // reconnect, so it is not sent at all then.
+      socket.on('connect', renderForceCommit)
+      socket.on('disconnect', renderForceCommit)
+
+      forceCommitBtn?.addEventListener('click', function () {
+        if (forceCommitBtn.disabled || !socket.connected) return
+        commitPending = true
+        socket.emit('force_commit', { session_id: sessionId })
+        commitTimer = setTimeout(clearCommitPending, COMMIT_PENDING_MS)
+        renderForceCommit()
+      })
+
+      // ── Flow rule from the live partial ────────────────────────────────────
+      // A partial is replaced by the next STT update about once a second, so it is
+      // corrected with a flow (source) dictionary rule instead, which applies to
+      // every later partial and commit. The editor works on a frozen copy of the
+      // raw STT text so the selection survives new partials.
+      const flowRuleModal = document.getElementById('flow-rule-modal')
+      const flowRuleForm = document.getElementById('flow-rule-form')
+      const flowRuleSnapshot = document.getElementById('flow-rule-snapshot')
+      const flowRuleFrom = document.getElementById('flow-rule-from')
+      const flowRuleTo = document.getElementById('flow-rule-to')
+      const flowRuleHint = document.getElementById('flow-rule-hint')
+      const flowRuleSubmit = document.getElementById('flow-rule-submit')
+
+      function updateFlowRuleHint() {
+        const from = flowRuleFrom.value.trim()
+        const existing = from && findTextRule(from, 'flow')
+        const problem = textRuleProblem(from, flowRuleTo.value, 'flow')
+        flowRuleSubmit.disabled = !from || !!problem
+        flowRuleHint.textContent = problem
+          || ([...from].length === 1
+            ? 'Only one character: it will be replaced in other sentences too.'
+            : existing
+              ? `A rule for this text already exists (→ ${existing.to}); adding updates it.`
+              : '')
+      }
+
+      function openFlowRuleEditor(src) {
+        flowRuleSnapshot.value = src
+        flowRuleFrom.value = ''
+        flowRuleTo.value = ''
+        updateFlowRuleHint()
+        flowRuleModal.classList.remove('hidden')
+        setTimeout(() => flowRuleSnapshot.focus(), 0)
+      }
+
+      function closeFlowRuleEditor() {
+        flowRuleModal.classList.add('hidden')
+      }
+
+      // Selecting the misheard words fills both fields with them (or the existing
+      // rule's replacement). Returns whether anything is selected.
+      function takeSnapshotSelection() {
+        const { selectionStart, selectionEnd, value } = flowRuleSnapshot
+        const from = value.slice(selectionStart, selectionEnd).trim()
+        if (!from) return false
+        if (flowRuleFrom.value !== from) {
+          flowRuleFrom.value = from
+          flowRuleTo.value = findTextRule(from, 'flow')?.to ?? from
+          updateFlowRuleHint()
+        }
+        return true
+      }
+      // `select` does not fire for every keyboard selection change, hence keyup.
+      flowRuleSnapshot.addEventListener('select', takeSnapshotSelection)
+      flowRuleSnapshot.addEventListener('keyup', takeSnapshotSelection)
+      // A pointer selection then moves on to the replacement; a keyboard one keeps
+      // its focus so it can still be extended.
+      flowRuleSnapshot.addEventListener('pointerup', function () {
+        setTimeout(function () {
+          if (!takeSnapshotSelection()) return
+          flowRuleTo.focus()
+          flowRuleTo.select()
+        }, 0)
+      })
+      flowRuleFrom.addEventListener('input', updateFlowRuleHint)
+      flowRuleTo.addEventListener('input', updateFlowRuleHint)
+      flowRuleForm.addEventListener('submit', function (event) {
+        event.preventDefault()
+        if (addTextRule(flowRuleFrom.value, flowRuleTo.value, 'flow')) closeFlowRuleEditor()
+        else updateFlowRuleHint()
+      })
+      flowRuleModal.querySelectorAll('[data-flow-rule-close]').forEach(function (button) {
+        button.addEventListener('click', closeFlowRuleEditor)
+      })
+      flowRuleModal.addEventListener('mousedown', function (event) {
+        if (event.target === flowRuleModal) closeFlowRuleEditor()
+      })
 
       // Latency from the server-stamped end_time to now, corrected for client clock skew.
       function segmentLatency(segment) {
@@ -2584,6 +2892,8 @@
           const span = el.querySelector('.flex-1')
           if (span) span.textContent = applyFlowDict(el.dataset.src)
         })
+        // The rules (or whether they have loaded) changed under an open editor.
+        if (!flowRuleModal.classList.contains('hidden')) updateFlowRuleHint()
       }
 
       function segmentKey(startTime) {
@@ -2596,9 +2906,11 @@
         const row = committedRows.get(segmentKey(segment.start_time))
         const src = segment.result?.corrected || segment.text || ''
         if (!row || !src) return false
+        const anchor = captureScroll()
         row.dataset.src = src
         const textEl = row.querySelector('.flex-1')
         if (textEl) textEl.textContent = applyFlowDict(src)
+        restoreScroll(anchor)
         return true
       }
 
@@ -2608,14 +2920,12 @@
       function appendCommitted(segment, fresh) {
         const src = segment.result?.corrected || segment.text || ''
         if (!src) return
+        const anchor = captureScroll()
         // A join snapshot can arrive after a newer live partial. Keep that partial
         // and insert the older committed row immediately before it.
         const partialStartsAfter = partialEl && !fresh
           && Number(partialEl.dataset.startTime) > Number(segment.start_time)
-        if (partialEl && !partialStartsAfter) {
-          partialEl.remove(); partialEl = null; partialTextEl = null; partialLatencyEl = null
-          partialEndTime = 0
-        }
+        if (partialEl && !partialStartsAfter) removePartial()
         const row = document.createElement('button')
         row.type = 'button'
         row.className = 'flow-item group flex w-full items-start justify-between rounded-md px-[0.45rem] py-[0.32rem] text-left text-[#cbd6e4] transition-colors hover:bg-[#1d2938] hover:text-[#edf3fa] focus-visible:bg-[#1d2938] active:bg-[#273548]'
@@ -2631,21 +2941,20 @@
         else flowContent.appendChild(row)
         committedRows.set(segmentKey(segment.start_time), row)
         segmentCount++
-        // Remove oldest items to keep DOM size bounded. The partial is always the
-        // last row, so anything evicted here is a committed row the Map still holds.
-        while (flowContent.children.length > MAX_FLOW_ITEMS) {
-          const oldest = flowContent.firstElementChild
-          if (oldest?.dataset.startTime) committedRows.delete(segmentKey(oldest.dataset.startTime))
-          oldest?.remove()
-        }
+        trimFlow()
         updateCount()
-        scrollToBottom()
+        restoreScroll(anchor)
+      }
+
+      function removePartial() {
+        if (partialEl) { partialEl.remove(); partialEl = null; partialTextEl = null; partialLatencyEl = null }
+        partialEndTime = 0
+        clearCommitPending()
       }
 
       function updatePartial(segment) {
         if (!segment) {
-          if (partialEl) { partialEl.remove(); partialEl = null; partialTextEl = null; partialLatencyEl = null }
-          partialEndTime = 0
+          removePartial()
           return
         }
         // A translated partial is emitted after its LLM round trip, so it can land
@@ -2658,25 +2967,29 @@
         // corrected wording lands once, on commit.
         const src = segment.text || ''
         if (!src) {
-          if (partialEl) { partialEl.remove(); partialEl = null; partialTextEl = null; partialLatencyEl = null }
-          partialEndTime = 0
+          removePartial()
           return
         }
+        const anchor = captureScroll()
         partialEndTime = segment.end_time
         if (!partialEl) {
-          partialEl = document.createElement('p')
-          partialEl.className = 'flow-item-partial flex items-start justify-between rounded-md px-[0.4rem] py-[0.2rem] italic text-[#78869a]'
+          // A button: clicking the line opens the flow rule editor on its text.
+          partialEl = document.createElement('button')
+          partialEl.type = 'button'
+          partialEl.title = 'Add a source replacement rule from this sentence'
+          partialEl.className = 'flow-item-partial flex w-full items-start justify-between rounded-md px-[0.4rem] py-[0.2rem] text-left italic text-[#78869a] transition-colors hover:bg-[#1d2938] focus-visible:bg-[#1d2938]'
           partialEl.innerHTML = `<span class="flex-1"></span><iconify-icon icon="ph:spinner-gap" class="animate-spin text-gray-600 mt-0.5 ml-1" width="10"></iconify-icon><span class="text-[10px] text-gray-700 ml-1 tabular-nums"></span>`
           partialTextEl = partialEl.querySelector('.flex-1')
           partialLatencyEl = partialEl.lastElementChild
           flowContent.appendChild(partialEl)
+          renderForceCommit()
         }
         partialEl.dataset.src = src
         partialEl.dataset.startTime = segment.start_time
         const latency = segmentLatency(segment)
         partialTextEl.textContent = applyFlowDict(src)
         partialLatencyEl.textContent = latency.toFixed(2) + 's'
-        scrollToBottom()
+        restoreScroll(anchor)
       }
 
       function renderCommitted(segment, fresh) {
@@ -2725,8 +3038,10 @@
       }
 
       flowContent.addEventListener('click', function (event) {
-        const row = event.target.closest('button.flow-item')
-        if (row && flowContent.contains(row)) openFlowEditor(row)
+        const row = event.target.closest('button.flow-item, button.flow-item-partial')
+        if (!row || !flowContent.contains(row)) return
+        if (row === partialEl) openFlowRuleEditor(row.dataset.src || '')
+        else openFlowEditor(row)
       })
       flowEditCancel.addEventListener('click', closeFlowEditor)
       flowEditClose.addEventListener('click', closeFlowEditor)
