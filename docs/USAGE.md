@@ -147,6 +147,7 @@ Client to server：
 | `realtime_connect`    | 初始化即時轉錄管理器                                              |
 | `mic_on`              | 啟動即時轉錄                                                  |
 | `mic_off`             | 停止即時轉錄                                                  |
+| `force_commit`        | 立即送出目前句子：要求 STT 在最新收到的音訊處斷句並送出（不論長短）；1.5 秒內未回應則以目前 partial 送出，之後重複的開頭會被去除、遲到的定稿只保留新增部分併入下一句。無回應事件，結果以一般轉錄更新送達 |
 | `audio_buffer_append` | 傳送 base64 音訊片段                                          |
 | `leave_session`       | 離開 session room                                         |
 

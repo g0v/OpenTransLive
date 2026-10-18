@@ -140,6 +140,7 @@ Client to server:
 | `realtime_connect` | Initialize the realtime transcription manager |
 | `mic_on` | Start realtime transcription |
 | `mic_off` | Stop realtime transcription |
+| `force_commit` | Commit the current sentence now: the STT provider is asked to close its turn after the newest audio received, and its final is committed however short. Without an answer within 1.5 s the partial is committed as it stands; the head later transcripts repeat is stripped, and what the late final adds is held for the next sentence. No reply; the result arrives as a normal transcription update |
 | `audio_buffer_append` | Send a base64-encoded audio chunk |
 | `leave_session` | Leave the session room |
 

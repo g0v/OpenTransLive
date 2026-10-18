@@ -23,6 +23,7 @@ import math
 import random
 import re
 import time
+import unicodedata
 import tiktoken
 from urllib.parse import urlencode
 from websockets.asyncio.client import connect as ws_connect
@@ -74,6 +75,117 @@ FINALIZE_TIMEOUT_SECS = 5.0
 _FINALIZE_MARKER = object()
 # 100 ms of silence that carries the commit flag when finalizing.
 _FINALIZE_CHUNK = base64.b64encode(bytes(AUDIO_BYTES_PER_SEC // 10)).decode()
+# How long force_commit() gives the provider to answer its commit request before
+# the open segment is committed as it stands (a provider may ignore the request).
+_FORCE_COMMIT_WAIT_SECS = 1.5
+# A transcript repeating text force_commit() already committed is matched on a piece
+# of that text's end, this many characters long, tried from its last characters back
+# to this many characters before its end, and looked for in the transcript only
+# within that many characters of where it sits in the committed text, so a reworded
+# last word is skipped without matching the same words said again later.
+_FORCED_ANCHOR_CHARS = 6
+_FORCED_ANCHOR_SEARCH = 24
+
+
+def _is_punct(ch: str) -> bool:
+    return unicodedata.category(ch).startswith("P")
+
+
+def _is_wide(ch: str) -> bool:
+    """Chinese/Japanese text and full-width punctuation, which join without a space.
+    Hangul is not one: Korean is written with spaces between words."""
+    cp = ord(ch)
+    return (0x3400 <= cp <= 0x4DBF or 0x4E00 <= cp <= 0x9FFF or 0xF900 <= cp <= 0xFAFF
+            or 0x20000 <= cp <= 0x2FFFF          # Han
+            or 0x3040 <= cp <= 0x30FF or 0x31F0 <= cp <= 0x31FF  # kana
+            or 0x3000 <= cp <= 0x303F or 0xFF00 <= cp <= 0xFFEF)
+
+
+def _is_unspaced(ch: str) -> bool:
+    """Southeast Asian and Tibetan scripts, also written without spaces between words."""
+    cp = ord(ch)
+    return (0x0E00 <= cp <= 0x0EFF          # Thai, Lao
+            or 0x0F00 <= cp <= 0x0FFF       # Tibetan
+            or 0x1000 <= cp <= 0x109F       # Myanmar
+            or 0x1780 <= cp <= 0x17FF)      # Khmer
+
+
+def _is_word_char(ch: str) -> bool:
+    """A letter or digit of a script that separates words with spaces."""
+    return ch.isalnum() and not _is_wide(ch) and not _is_unspaced(ch)
+
+
+def _match_key(text: str) -> tuple[str, list[int]] | None:
+    """The comparable characters of `text` (no whitespace or punctuation, lower case,
+    Taiwan Traditional) and, for each, the index in `text` just after it. None when
+    script conversion changed the character count, which would break that mapping."""
+    ends = [i + 1 for i, ch in enumerate(text) if not ch.isspace() and not _is_punct(ch)]
+    key = "".join(ch.lower() for ch in to_taiwan_traditional(text)
+                  if not ch.isspace() and not _is_punct(ch))
+    return (key, ends) if len(key) == len(ends) else None
+
+
+def _committed_end(key: str, committed: str) -> int:
+    """Position in `key` just after the committed text it repeats: the first
+    occurrence, near where it sits in the committed text, of a piece of the committed
+    end, tried from the very end backwards. 0 when none is found."""
+    for back in range(min(_FORCED_ANCHOR_SEARCH, len(committed)) - _FORCED_ANCHOR_CHARS + 1):
+        end = len(committed) - back
+        start = end - _FORCED_ANCHOR_CHARS
+        p = key.find(committed[start:end], max(0, start - _FORCED_ANCHOR_SEARCH),
+                     end + _FORCED_ANCHOR_SEARCH)
+        if p >= 0:
+            return p + _FORCED_ANCHOR_CHARS
+    return 0
+
+
+def _word_start(text: str, i: int) -> int:
+    """Move a cut at `text[i]` that falls inside a word of a space-separated script
+    back to that word's start, so a fragment the committed text ended on ("to") is
+    repeated whole ("tomorrow") instead of leaving its rest ("morrow"). In scripts
+    written without spaces a word boundary is unknown, so the cut is kept."""
+    def inside(j: int) -> bool:
+        # An apostrophe joins a word only between letters ("don't").
+        if _is_word_char(text[j]):
+            return True
+        return (text[j] in "'’" and 0 < j < len(text) - 1
+                and _is_word_char(text[j - 1]) and _is_word_char(text[j + 1]))
+    if not (0 < i < len(text) and inside(i - 1) and inside(i)):
+        return i
+    j = i
+    while j > 0 and inside(j - 1):
+        j -= 1
+    return j
+
+
+def _tidy_transcript(text: str) -> str:
+    """Trim a transcript slice: separators at its start, spaces at both ends, and the
+    spaces providers put between CJK characters."""
+    i = 0
+    while i < len(text) and (text[i].isspace() or _is_punct(text[i])):
+        i += 1
+    text = text[i:].strip()
+    return "".join(
+        ch for i, ch in enumerate(text)
+        if not (ch == " " and 0 < i < len(text) - 1
+                and _is_wide(text[i - 1]) and _is_wide(text[i + 1]))
+    )
+
+
+def _strip_forced_head(transcript: str, forced_key: str) -> str:
+    """Drop the head of `transcript` that repeats text force_commit() already
+    committed (`forced_key` is its match key): an exact prefix, or else up to the last
+    piece of its end found in the transcript, which tolerates a reworded word. A
+    transcript that does not repeat it is returned as is."""
+    matched = _match_key(transcript)
+    if matched is None:
+        return transcript
+    key, ends = matched
+    cut = len(forced_key) if key.startswith(forced_key) else _committed_end(key, forced_key)
+    if cut == 0:
+        return transcript
+    return _tidy_transcript(transcript[_word_start(transcript, ends[cut - 1]):])
+
 
 
 class ScribeSessionManager:
@@ -159,6 +271,16 @@ class ScribeSessionManager:
         # Prepended to subsequent partials/commits so translation gets useful context.
         self.pending_commit_text = ""
         self._commit_timeout_task: asyncio.Task | None = None
+        # force_commit(): the fallback that commits the open segment if the provider
+        # does not answer in time, and the match key of the head of the provider's
+        # current turn that fallback already committed (stripped from what follows).
+        self._force_wait_task: asyncio.Task | None = None
+        self._forced_key: str | None = None
+        # Audio chunks that entered and left the queue (sent, dropped or drained), so
+        # force_commit() can put the commit flag on the newest chunk queued at the click.
+        self._audio_in = 0
+        self._audio_out = 0
+        self._commit_at_chunk: int | None = None
         # Usage tracking
         self.audio_bytes_total = 0
         self.audio_chunks = 0
@@ -280,7 +402,8 @@ class ScribeSessionManager:
                 )
             if self.audio_queue.full():
                 try:
-                    self.audio_queue.get_nowait()
+                    if isinstance(self.audio_queue.get_nowait(), str):
+                        self._audio_out += 1
                     self.audio_queue.task_done()
                 except asyncio.QueueEmpty:
                     pass
@@ -288,6 +411,7 @@ class ScribeSessionManager:
                     f"[audio_queue] queue full, dropped oldest chunk "
                     f"for session {self.session_id}"
                 )
+            self._audio_in += 1
             await self.audio_queue.put(base64_audio)
 
     @property
@@ -350,6 +474,8 @@ class ScribeSessionManager:
             try:
                 item = self.audio_queue.get_nowait()
                 self.audio_queue.task_done()
+                if isinstance(item, str):
+                    self._audio_out += 1
                 if item is not None:
                     drained += 1
             except asyncio.QueueEmpty:
@@ -368,6 +494,9 @@ class ScribeSessionManager:
         self.pending_commit_text = ""
         self.last_partial_text = ""
         self.should_commit = False
+        self._commit_at_chunk = None
+        self._forced_key = None
+        self._cancel_force_wait()
         self._cancel_commit_timeout()
 
     def _flush_pending(self, now: datetime, reason: str, cancel_timeout: bool = True):
@@ -411,6 +540,12 @@ class ScribeSessionManager:
                         self._finalize_done.set()  # the socket asked to finalize is gone
                     self.audio_queue.task_done()
                     continue
+                self._audio_out += 1
+                if self._commit_at_chunk is not None and self._audio_out >= self._commit_at_chunk:
+                    # The newest chunk queued when force_commit() was pressed (or a
+                    # later one, should that chunk have been dropped as the oldest).
+                    self._commit_at_chunk = None
+                    self.should_commit = True
                 if self.ws:
                     await self._send_audio(self.ws, base64_audio, self.should_commit)
                     self.should_commit = False
@@ -471,7 +606,8 @@ class ScribeSessionManager:
             try:
                 if self.audio_queue.full():
                     try:
-                        self.audio_queue.get_nowait()
+                        if isinstance(self.audio_queue.get_nowait(), str):
+                            self._audio_out += 1
                         self.audio_queue.task_done()
                     except asyncio.QueueEmpty:
                         pass
@@ -523,6 +659,26 @@ class ScribeSessionManager:
             # Strip trailing punctuation before deciding whether anything is left; a
             # lone "。" carries no content.
             transcript = transcript.rstrip(",.。，").strip()
+            # Any final while force_commit() waits is the provider's answer: it ends the
+            # sentence where the operator pressed the button, however short it is. It
+            # closes the turn even when dropped below as noise: the fallback must not
+            # later commit the stale partial of a finished turn, and a commit flag still
+            # queued would cut the next sentence instead.
+            forced = not partial and self._force_wait_task is not None
+            if forced:
+                self._cancel_force_wait()
+                self._commit_at_chunk = None
+                self.should_commit = False
+                self.last_partial_text = ""
+            # The final that closes a turn whose head force_commit() already committed
+            # (the provider answered too late) is held like a short commit, so it joins
+            # the next sentence instead of standing alone as a second cut.
+            closes_forced_turn = not partial and self._forced_key is not None
+            if self._forced_key is not None:
+                # The operator already committed the head of the provider's current turn.
+                transcript = _strip_forced_head(transcript, self._forced_key)
+                if not partial:
+                    self._forced_key = None  # the provider closed that turn
             if not transcript:
                 return
             # A minimum length only means something where a single character is not a
@@ -568,7 +724,8 @@ class ScribeSessionManager:
             combined_text = self.pending_commit_text + transcript
             # Judged on the buffered pending text plus this one, so it asks whether the
             # whole candidate segment says enough to stand alone.
-            emit_partial = partial or approx_word_count(combined_text) < _MIN_COMMIT_WORDS
+            emit_partial = partial or (not forced and (
+                closes_forced_turn or approx_word_count(combined_text) < _MIN_COMMIT_WORDS))
 
             if emit_partial:
                 transcription = self._build_transcription(combined_text, True, now)
@@ -619,6 +776,70 @@ class ScribeSessionManager:
             pass
         except Exception as e:
             log_exception(logger, e, "Error in commit timeout handler")
+
+    def force_commit(self) -> None:
+        """End the open segment where the operator pressed the button, which they do
+        on hearing the sentence end. The provider is asked to close its turn right
+        after the newest audio received, and its final is committed whatever its
+        length: unlike the partial on screen, it includes the last words still being
+        recognized. A buffered short commit with nothing heard after it is committed
+        at once."""
+        if (self._stop_event.is_set() or self._finalizing or self.seg_start_time is None
+                or self._force_wait_task is not None):
+            return  # nothing open, or the provider is already asked
+        if not self.last_partial_text:
+            if self.pending_commit_text.strip():
+                self._flush_pending(datetime.now(timezone.utc), "Commit requested")
+            return
+        if self._audio_in > self._audio_out:
+            self._commit_at_chunk = self._audio_in
+        else:
+            self.should_commit = True  # nothing queued: the next chunk carries it
+        self._force_wait_task = asyncio.create_task(self._force_commit_fallback())
+
+    async def _force_commit_fallback(self):
+        """Commit the open segment as it stands when the provider has not answered
+        force_commit() within _FORCE_COMMIT_WAIT_SECS. Its late transcripts repeat the
+        committed words: they are stripped until its final, and what that final adds
+        is held for the next sentence."""
+        try:
+            await asyncio.sleep(_FORCE_COMMIT_WAIT_SECS)
+        except asyncio.CancelledError:
+            return
+        self._force_wait_task = None
+        try:
+            if self._stop_event.is_set() or self.seg_start_time is None:
+                return
+            matched = _match_key(self.last_partial_text)
+            if matched and matched[0]:
+                # A turn already partly forced keeps its earlier head: the provider
+                # still repeats it, before the newly committed words.
+                self._forced_key = (self._forced_key or "") + matched[0]
+            self._commit_open_segment("Commit requested, provider did not answer in time")
+            self.last_partial_text = ""
+            # The open segment is committed; a flag not yet sent would cut the
+            # provider's turn partway into the next sentence.
+            self._commit_at_chunk = None
+            self.should_commit = False
+            self._cancel_commit_timeout()
+        except Exception as e:
+            log_exception(logger, e, "Error in force commit fallback")
+
+    def _cancel_force_wait(self):
+        if self._force_wait_task is not None:
+            self._force_wait_task.cancel()
+            self._force_wait_task = None
+
+    def _commit_open_segment(self, reason: str) -> None:
+        """Emit the buffered short commit plus the last partial as a committed segment."""
+        final_text = (self.pending_commit_text + self.last_partial_text).strip()
+        if not final_text or self.seg_start_time is None:
+            return
+        transcription = self._build_transcription(final_text, False, datetime.now(timezone.utc))
+        self.seg_start_time = None
+        self.pending_commit_text = ""
+        logger.info(f"{reason} for {self.session_id}: {repr(final_text)}")
+        self.callback(self.session_id, transcription)
 
     async def idle_watchdog_loop(self):
         """Watchdog: stop the session after _IDLE_TIMEOUT_SECS with no audio, and
@@ -813,6 +1034,7 @@ class ScribeSessionManager:
         self.is_running = False
         self._stop_event.set()
         self._cancel_commit_timeout()
+        self._cancel_force_wait()
         if self.ws:
             try:
                 await self.ws.close()
@@ -823,20 +1045,10 @@ class ScribeSessionManager:
 
         # Commit any pending partial / buffered short commit so they are not
         # lost on stop/mic-off.
-        final_text = (self.pending_commit_text + self.last_partial_text).strip()
-        if final_text and self.seg_start_time is not None:
-            try:
-                now = datetime.now(timezone.utc)
-                transcription = self._build_transcription(final_text, False, now)
-                self.seg_start_time = None
-                self.pending_commit_text = ""
-                logger.info(
-                    f"Committing last partial on stop for {self.session_id}: "
-                    f"{repr(final_text)}"
-                )
-                self.callback(self.session_id, transcription)
-            except Exception as e:
-                log_exception(logger, e, "Error committing last partial on stop")
+        try:
+            self._commit_open_segment("Committing last partial on stop")
+        except Exception as e:
+            log_exception(logger, e, "Error committing last partial on stop")
 
 
 class ElevenLabsScribeManager(ScribeSessionManager):

@@ -4113,6 +4113,23 @@ async def mic_off(socket_id, data):
 
 
 @sio.event
+async def force_commit(socket_id, data):
+    """End the room's open segment where the operator pressed (on hearing the sentence
+    end); see ScribeSessionManager.force_commit. No reply: the commit arrives as a
+    normal transcription update."""
+    if not _socket_limiter.check(socket_id, 'force_commit', 5, 1.0):
+        return
+    session = await sio.get_session(socket_id)
+    if not await _check_socket_already_verified(socket_id, session):
+        return
+    rooms = sio.rooms(socket_id)
+    session_id = next((r for r in rooms if r != socket_id), None)
+    manager: ScribeSessionManager | None = active_scribe_managers.get(session_id) if session_id else None
+    if manager:
+        manager.force_commit()
+
+
+@sio.event
 async def audio_buffer_append(socket_id, data):
     """Handle client audio buffer append events"""
     if not _socket_limiter.check(socket_id, 'audio_buffer_append', 30, 1.0):
