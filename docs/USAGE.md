@@ -172,7 +172,7 @@ Server to client：
 | -------- | -------------------------------------- | ------------------------------------------ |
 | `GET`    | `/api/session/{sid}/languages`         | 讀取翻譯語言                                     |
 | `POST`   | `/api/session/{sid}/languages`         | 更新翻譯語言                                     |
-| `GET`    | `/api/session/{sid}/keywords`          | 讀取 keywords 與 locked keywords              |
+| `GET`    | `/api/session/{sid}/keywords`          | 讀取 keywords、locked keywords 與 rerank 分數（`scores`） |
 | `POST`   | `/api/session/{sid}/keywords`          | 更新 keywords 與 locked keywords              |
 | `GET`    | `/api/session/{sid}/text-dictionary`   | 讀取文字字典                                     |
 | `POST`   | `/api/session/{sid}/text-dictionary`   | 更新文字字典                                     |

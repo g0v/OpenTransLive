@@ -161,7 +161,7 @@ Requires session management permission.
 |---|---|---|
 | `GET` | `/api/session/{sid}/languages` | Read translation languages |
 | `POST` | `/api/session/{sid}/languages` | Update translation languages |
-| `GET` | `/api/session/{sid}/keywords` | Read keywords and locked keywords |
+| `GET` | `/api/session/{sid}/keywords` | Read keywords, locked keywords, and rerank scores (`scores`) |
 | `POST` | `/api/session/{sid}/keywords` | Update keywords and locked keywords |
 | `GET` | `/api/session/{sid}/text-dictionary` | Read text dictionary |
 | `POST` | `/api/session/{sid}/text-dictionary` | Update text dictionary |

@@ -1167,6 +1167,7 @@
   // ── Keywords panel ────────────────────────────────────────────────────────
   let currentKeywords = []
   let lockedKeywords = new Set()  // keywords that survive auto-rerank/removal
+  let keywordScores = {}          // server rerank counters; always follows the server
   let keywordSavePending = false  // true while debouncing or saving; blocks sync
   let keywordSaveTimer = null     // debounce timer for saveKeywords
   let keywordGenerating = false
@@ -1199,7 +1200,11 @@
       return
     }
     const knownSpellings = new Set(glossary.flatMap(e => Object.values(e)))
-    currentKeywords.forEach(function (kw) {
+    // Pinned first, then by rerank score descending; ties keep list order.
+    // Display only: currentKeywords keeps its order for saves.
+    const sorted = currentKeywords.slice().sort((a, b) =>
+      Number(lockedKeywords.has(b)) - Number(lockedKeywords.has(a)) || keywordScore(b) - keywordScore(a))
+    sorted.forEach(function (kw) {
       const isLocked = lockedKeywords.has(kw)
       const row = document.createElement('div')
       row.className = 'flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300 group'
@@ -1207,6 +1212,7 @@
       const look = glossaryButtonLook(kw, knownSpellings)
       row.innerHTML = `
         <span class="flex-1 font-mono text-xs truncate ${isLocked ? 'text-yellow-300' : 'text-gray-300'}">${escapeHtml(kw)}</span>
+        <span class="flex-shrink-0 min-w-6 px-1 text-right font-mono text-[11px] tabular-nums text-gray-500" title="Mention count: +1 each line that mentions it, -1 when not mentioned and unpinned; auto-removed at -100" aria-label="Score ${keywordScore(kw)}">${keywordScore(kw)}</span>
         <button class="kw-glossary-btn inline-flex flex-shrink-0 items-center transition-colors ${look.cls}" title="${look.title}" ${glossaryGenerating || !selectedLanguages.length ? 'disabled' : ''}>
           <iconify-icon icon="${busy ? 'ph:spinner-gap' : 'ph:translate'}" width="14" height="14" class="${busy ? 'animate-spin' : ''}"></iconify-icon>
         </button>
@@ -1239,6 +1245,11 @@
       })
       list.appendChild(row)
     })
+  }
+
+  // Keywords the server hasn't scored yet (just added or pinned) count as 1, like the backend.
+  function keywordScore(kw) {
+    return Object.hasOwn(keywordScores, kw) ? keywordScores[kw] : 1
   }
 
   // Keyword being looked up right now. Held outside the DOM because
@@ -1317,6 +1328,7 @@
         const data = await res.json()
         currentKeywords = data.keywords
         lockedKeywords = new Set(data.locked_keywords || [])
+        keywordScores = data.scores || {}
         updateKeywordLabel()
         renderKeywordList()
       }
@@ -1338,9 +1350,12 @@
       if (!res.ok) return
       const data = await res.json()
       const serverKeywords = data.keywords
+      const prevScores = keywordScores
+      keywordScores = data.scores || {}
       const serverSet = new Set(serverKeywords)
       const currentSet = new Set(currentKeywords)
-      let changed = false
+      let changed = Object.keys(keywordScores).length !== Object.keys(prevScores).length ||
+        Object.keys(keywordScores).some(kw => prevScores[kw] !== keywordScores[kw])
       // Add new server-side keywords
       for (const kw of serverKeywords) {
         if (!currentSet.has(kw)) {

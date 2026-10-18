@@ -2237,14 +2237,19 @@ def _keyword_meets_storage_limits(keyword: str) -> bool:
 
 @app.get("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def get_session_keywords_endpoint(request: Request, sid: str):
-    """Get the current keywords and locked keywords for a session."""
+    """Get the current keywords, locked keywords, and rerank scores for a session.
+
+    `scores` is the rerank counter per keyword (+1 when a line mentions it, -1
+    when not and unpinned; dropped at -100). Pinned keywords not yet scored are
+    absent and count as 1, matching the backend default.
+    """
     sid = sanitize_query_param(sid, "session ID")
     await _require_session_owner(request, sid)
 
     from .translation_service import get_keywords_and_locked
     keywords, locked_keywords = await get_keywords_and_locked(redis_client, sid)
     sorted_keywords = sorted(keywords, key=lambda k: keywords[k], reverse=True)
-    return {"keywords": sorted_keywords, "locked_keywords": locked_keywords}
+    return {"keywords": sorted_keywords, "locked_keywords": locked_keywords, "scores": keywords}
 
 
 @app.post("/api/session/{sid}/keywords", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
