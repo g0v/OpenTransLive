@@ -1366,7 +1366,12 @@
   // Keep history as per-segment <span> nodes so we can trim individual
   // segments and report the exact height removed from the top. Callers
   // use that height to anchor the viewport when the user is reading
-  // scrolled-up history.
+  // scrolled-up history. Two strategies, cheapest wins:
+  // - trim: drop the fewest leading items so the rest is a prefix of
+  //   newItems, then append the remainder (window sliding as lines arrive);
+  // - patch: rewrite differing segments in place (edits, retranslations,
+  //   late translations filling a gap), so nothing above the viewport is
+  //   removed and the card doesn't rebuild and jump.
   function syncHistoryItems(historyEl, newItems) {
     const existing = historyEl._items || [];
 
@@ -1385,6 +1390,27 @@
       dropFromStart++;
     }
     if (dropFromStart > existing.length) dropFromStart = existing.length;
+
+    const trimCost = dropFromStart + Math.max(0, newItems.length - (existing.length - dropFromStart));
+    let patchCost = Math.abs(existing.length - newItems.length);
+    const overlap = Math.min(existing.length, newItems.length);
+    for (let i = 0; i < overlap && patchCost < trimCost; i++) {
+      if (existing[i] !== newItems[i]) patchCost++;
+    }
+    if (patchCost < trimCost) {
+      const segs = Array.from(historyEl.children);
+      for (let i = 0; i < overlap; i++) {
+        if (existing[i] !== newItems[i]) segs[i].textContent = newItems[i] + ' ';
+      }
+      for (let i = existing.length - 1; i >= newItems.length; i--) segs[i].remove();
+      for (let i = existing.length; i < newItems.length; i++) {
+        const seg = document.createElement('span');
+        seg.textContent = newItems[i] + ' ';
+        historyEl.appendChild(seg);
+      }
+      historyEl._items = newItems.slice();
+      return { changed: true, removedFromStartHeight: 0, removedFromStartLeft: 0 };
+    }
 
     // Use a retained node as an anchor and measure top-shift in sub-pixel
     // precision. This avoids cumulative rounding error from offsetHeight.
@@ -1506,8 +1532,10 @@
   }
 
   function makeContentContainer() {
+    // mt-auto inside the flex-column card: short content sits at the bottom
+    // (fresh session / after viewer clear); collapses to 0 once it overflows.
     const wrapper = document.createElement('div');
-    wrapper.className = 'contents';
+    wrapper.className = 'mt-auto';
     const history = document.createElement('span');
     const last = document.createElement('span');
     const partial = document.createElement('span');
@@ -1522,7 +1550,7 @@
 
   function makeLanguageCard(language) {
     const card = document.createElement('div');
-    card.className = 'language-card flex-1 overflow-x-hidden overflow-y-auto whitespace-normal p-2 leading-[1.62] text-[var(--rt-text)] [scrollbar-color:var(--rt-border-strong)_transparent] [scrollbar-gutter:stable] focus-visible:outline-2 focus-visible:-outline-offset-3 focus-visible:outline-[var(--rt-accent)] max-md:py-1.5 max-md:pr-1.5 max-md:pl-0.5';
+    card.className = 'language-card flex flex-1 flex-col overflow-x-hidden overflow-y-auto whitespace-normal p-2 leading-[1.62] text-[var(--rt-text)] [scrollbar-color:var(--rt-border-strong)_transparent] [scrollbar-gutter:stable] focus-visible:outline-2 focus-visible:-outline-offset-3 focus-visible:outline-[var(--rt-accent)] max-md:py-1.5 max-md:pr-1.5 max-md:pl-0.5';
     card.tabIndex = 0;
     card.setAttribute('role', 'region');
     card.setAttribute('aria-label', language + ' transcript');
