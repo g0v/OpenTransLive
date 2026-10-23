@@ -70,7 +70,7 @@
 
   /* ── Dropdown trigger button (panel dropdowns) ───────────────────────── */
   .dropdown-btn {
-    @apply flex items-center gap-1 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none truncate text-left;
+    @apply flex items-center gap-1 bg-gray-800 border border-gray-700 text-sm text-gray-300 px-3 py-1 rounded focus:ring-1 focus:ring-blue-500 outline-none truncate text-left hover:bg-gray-700 hover:border-gray-600 hover:text-white transition-colors;
   }
 
   /* ── Small dark input (inside panel dropdowns) ───────────────────────── */

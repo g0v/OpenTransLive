@@ -12,10 +12,13 @@
   <!-- Top Bar -->
   <div id="top-bar" class="top-bar flex min-h-10 shrink-0 items-center gap-2 border-b border-[var(--rt-border)] !bg-[var(--rt-surface)] px-2 shadow-[0_8px_28px_color-mix(in_srgb,var(--rt-canvas)_64%,transparent)] max-md:min-h-9 max-md:gap-1 max-md:px-1.5">
     <div class="viewer-brand flex min-w-0 items-center gap-1.5">
-      <span class="viewer-brand-mark inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-[#326fbd] text-[#f4f8fd] shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]" aria-hidden="true">
-        <iconify-icon icon="ph:waveform" width="15" height="15"></iconify-icon>
-      </span>
-      <span class="whitespace-nowrap text-xs font-bold tracking-[-0.015em] text-[var(--rt-text)] max-md:hidden">OpenTransLive</span>
+      <a href="/" target="_blank" rel="noopener" title="Run live captions for your own event"
+        class="viewer-brand-link flex min-w-0 items-center gap-1.5 hover:opacity-80">
+        <span class="viewer-brand-mark inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-[#326fbd] text-[#f4f8fd] shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]" aria-hidden="true">
+          <iconify-icon icon="ph:waveform" width="15" height="15"></iconify-icon>
+        </span>
+        <span class="whitespace-nowrap text-xs font-bold tracking-[-0.015em] text-[var(--rt-text)] max-md:sr-only">OpenTransLive</span>
+      </a>
       <span class="whitespace-nowrap border-l border-[var(--rt-border-strong)] pl-1.5 text-[0.65rem] text-[var(--rt-muted)] max-md:hidden">Live transcript</span>
       <span class="ml-0.5 flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[0.7rem] text-[var(--rt-muted)]">
         <span id="status-indicator" class="status-dot-sm bg-gray-400"></span>
@@ -171,7 +174,9 @@
 
   <!-- Footer -->
   <footer class="viewer-footer flex min-h-8 shrink-0 flex-wrap items-center justify-center gap-y-1 overflow-x-auto border-t border-[var(--rt-border)] bg-[var(--rt-surface)] px-4 text-xs text-[var(--rt-muted)] [scrollbar-width:none] max-md:flex-nowrap max-md:justify-start">
-    <span class="inline-flex min-h-[18px] items-center whitespace-nowrap px-3 text-[0.68rem]">OpenTransLive</span>
+    <span class="inline-flex min-h-[18px] items-center whitespace-nowrap px-3 text-[0.68rem] max-md:hidden">Run live captions for your own event</span>
+    <a href="/" target="_blank" rel="noopener" title="Run live captions for your own event"
+      class="inline-flex min-h-[18px] items-center whitespace-nowrap border-l border-[var(--rt-border)] px-3 text-[0.68rem] font-semibold underline-offset-2 hover:underline hover:text-[var(--rt-text)] max-md:border-l-0 max-[350px]:hidden">OpenTransLive</a>
     <a href="{{ source_code_url }}" target="_blank" rel="noopener"
       class="inline-flex min-h-[18px] items-center gap-1 whitespace-nowrap border-l border-[var(--rt-border)] px-3 text-[0.68rem]">
       <iconify-icon icon="ph:github-logo" width="12" height="12"></iconify-icon>Source code
