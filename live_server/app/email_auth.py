@@ -156,6 +156,17 @@ def _build_otp_email_html(otp: str) -> str:
 </html>"""
 
 
+_SMTP_IMPLICIT_TLS_PORT = 465  # SMTPS: TLS from the first byte, no STARTTLS
+
+
+def _smtp_tls_options(port: int, use_tls_setting: bool) -> dict:
+    """Port 465 speaks implicit TLS and is never upgraded with STARTTLS; other
+    ports upgrade via STARTTLS when SMTP_USE_TLS is set."""
+    if port == _SMTP_IMPLICIT_TLS_PORT:
+        return {"use_tls": True, "start_tls": False}
+    return {"use_tls": False, "start_tls": use_tls_setting}
+
+
 async def send_otp_email(email: str, otp: str, email_settings: dict) -> None:
     smtp_host = email_settings.get("SMTP_HOST", "")
     if not smtp_host:
@@ -191,14 +202,14 @@ async def send_otp_email(email: str, otp: str, email_settings: dict) -> None:
     msg.attach(MIMEText(_build_otp_email_text(otp), "plain", "utf-8"))
     msg.attach(MIMEText(_build_otp_email_html(otp), "html", "utf-8"))
 
+    port = int(email_settings.get("SMTP_PORT", 587))
     await aiosmtplib.send(
         msg,
         hostname=smtp_host,
-        port=email_settings.get("SMTP_PORT", 587),
+        port=port,
         username=email_settings.get("SMTP_USERNAME") or None,
         password=email_settings.get("SMTP_PASSWORD") or None,
-        use_tls=False,
-        start_tls=email_settings.get("SMTP_USE_TLS", True),
+        **_smtp_tls_options(port, bool(email_settings.get("SMTP_USE_TLS", True))),
     )
 
 
