@@ -1255,12 +1255,12 @@
       const isLocked = lockedKeywords.has(kw)
       const row = document.createElement('div')
       row.className = 'flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-700 text-sm text-gray-300 group'
-      const busy = glossaryGenerating === kw
+      const busy = glossaryGenerating.has(kw)
       const look = glossaryButtonLook(kw, knownSpellings)
       row.innerHTML = `
         <span class="flex-1 font-mono text-xs truncate ${isLocked ? 'text-yellow-300' : 'text-gray-300'}">${escapeHtml(kw)}</span>
         <span class="flex-shrink-0 min-w-6 px-1 text-right font-mono text-[11px] tabular-nums text-gray-500" title="Mention count: +1 each line that mentions it, -1 when not mentioned and unpinned; auto-removed at -100" aria-label="Score ${keywordScore(kw)}">${keywordScore(kw)}</span>
-        <button class="kw-glossary-btn inline-flex flex-shrink-0 items-center transition-colors ${look.cls}" title="${look.title}" ${glossaryGenerating || !selectedLanguages.length ? 'disabled' : ''}>
+        <button class="kw-glossary-btn inline-flex flex-shrink-0 items-center transition-colors ${look.cls}" title="${look.title}" ${busy || glossaryGenerating.size >= MAX_CONCURRENT_GLOSSARY_LOOKUPS || !selectedLanguages.length ? 'disabled' : ''}>
           <iconify-icon icon="${busy ? 'ph:spinner-gap' : 'ph:translate'}" width="14" height="14" class="${busy ? 'animate-spin' : ''}"></iconify-icon>
         </button>
         <button class="kw-lock-btn flex-shrink-0 transition-colors ${isLocked ? 'text-yellow-400 hover:text-yellow-200' : 'text-gray-600 hover:text-yellow-400'}" title="${isLocked ? 'Unpin keyword' : 'Pin keyword (preserve from auto-removal)'}" data-kw="${escapeHtml(kw)}">
@@ -1299,9 +1299,10 @@
     return Object.hasOwn(keywordScores, kw) ? keywordScores[kw] : 1
   }
 
-  // Keyword being looked up right now. Held outside the DOM because
+  // Keywords being looked up right now. Held outside the DOM because
   // syncKeywords repaints the whole list every 5s, which would wipe a spinner.
-  let glossaryGenerating = ''
+  const MAX_CONCURRENT_GLOSSARY_LOOKUPS = 3 // the generate endpoint allows 10 per minute per account
+  const glossaryGenerating = new Set() // keywords with a lookup in flight
 
   function showGlossaryStatus(message) {
     const status = document.getElementById('kw-lookup-status')
@@ -1313,8 +1314,10 @@
   // every spelling in the glossary, built once per repaint by the caller rather
   // than rescanned per row.
   function glossaryButtonLook(kw, known) {
-    if (glossaryGenerating === kw) return { cls: 'text-blue-400', title: 'Looking the term up…' }
-    if (glossaryGenerating) return { cls: 'text-gray-700', title: 'Wait for the current lookup to finish' }
+    if (glossaryGenerating.has(kw)) return { cls: 'text-blue-400', title: 'Looking the term up…' }
+    if (glossaryGenerating.size >= MAX_CONCURRENT_GLOSSARY_LOOKUPS) {
+      return { cls: 'text-gray-700', title: `Max ${MAX_CONCURRENT_GLOSSARY_LOOKUPS} lookups at once — wait for one to finish` }
+    }
     if (!selectedLanguages.length) return { cls: 'text-gray-700', title: 'Set target languages first' }
     if (known.has(kw)) return { cls: 'text-blue-400 hover:text-blue-200', title: 'Already in the glossary - look it up again' }
     return { cls: 'text-gray-600 hover:text-blue-400', title: 'Look this term up and add it to the glossary' }
@@ -1323,15 +1326,15 @@
   // Ask the server to find this term's spelling in each target language, then
   // merge it in the same way an imported file would be.
   async function generateGlossaryEntry(kw) {
-    if (glossaryGenerating || !selectedLanguages.length) return
+    if (glossaryGenerating.has(kw) || glossaryGenerating.size >= MAX_CONCURRENT_GLOSSARY_LOOKUPS || !selectedLanguages.length) return
     const statusEl = document.getElementById('settings-status')
-    if (glossary.length >= GLOSSARY_MAX) {
+    if (glossary.length + glossaryGenerating.size >= GLOSSARY_MAX) {
       const message = `Glossary is full (max ${GLOSSARY_MAX} terms)`
       statusEl.textContent = message
       showGlossaryStatus(message)
       return
     }
-    glossaryGenerating = kw
+    glossaryGenerating.add(kw)
     showGlossaryStatus(`Searching the web for \u201c${kw}\u201d\u2026 You can close this window while it runs.`)
     renderKeywordList()
     statusEl.textContent = `Searching for "${kw}"`
@@ -1362,7 +1365,7 @@
       statusEl.textContent = resultMessage
       console.error('Failed to generate glossary entry:', e)
     } finally {
-      glossaryGenerating = ''
+      glossaryGenerating.delete(kw)
       showGlossaryStatus(resultMessage)
       renderKeywordList()
     }
@@ -1558,6 +1561,9 @@
   // target language's one before translating.
   let glossary = []
   let glossarySaveTimer = null
+  let glossaryRevision = 0 // bumped by every local edit; a reload started earlier is stale
+  let glossarySaving = Promise.resolve()
+  let glossarySavesPending = 0
   const GLOSSARY_MAX = 200
   const GLOSSARY_MAX_TERM_LEN = 200 // mirrors translation_service.GLOSSARY_MAX_TERM_LEN
   // Index of the row being edited in place (-1 = none). Only one at a time; the
@@ -1796,10 +1802,12 @@
   }
 
   async function loadGlossary() {
+    const revision = glossaryRevision
     try {
       const res = await fetch(`/api/session/${sid}/glossary`, { credentials: 'same-origin' })
       if (res.ok) {
         const data = await res.json()
+        if (revision !== glossaryRevision) return
         glossary = Array.isArray(data.glossary) ? data.glossary : []
         // Row indices don't survive a reload, so an open editor can't either.
         // Syncing is suppressed while any modal is open, so this only fires
@@ -1814,13 +1822,25 @@
   }
 
   function debouncedSaveGlossary() {
+    glossaryRevision++
     document.getElementById('settings-status').textContent = 'Saving'
     clearTimeout(glossarySaveTimer)
     glossarySaveTimer = setTimeout(saveGlossary, 600)
   }
 
+  // Whole-list saves run in order so an older list never lands after a newer one.
+  // `glossary` is read when the queued save runs, so a later save sends the newest
+  // list; saveSessionField swallows errors, so the chain never rejects.
   function saveGlossary() {
-    return saveSessionField('glossary', { glossary }, 'settings-status')
+    clearTimeout(glossarySaveTimer)
+    glossarySaveTimer = null
+    glossaryRevision++
+    glossarySavesPending++
+    glossarySaving = glossarySaving.then(async () => {
+      try { await saveSessionField('glossary', { glossary }, 'settings-status') }
+      finally { glossarySavesPending-- }
+    })
+    return glossarySaving
   }
 
   // Parse an imported file into entries, or throw with a user-facing message.
@@ -2142,7 +2162,7 @@
     'languages':       { load: loadLanguages,      isInteracting: () => langSaveInFlight || !!langSaveTimer, polled: true },
     'keywords':        { load: loadKeywords,       isInteracting: () => keywordSavePending || keywordGenerating,     polled: false },
     'text-dictionary': { load: loadTextDictionary, isInteracting: () => !!textDictSaveTimer,                 polled: true },
-    'glossary':        { load: loadGlossary,       isInteracting: () => !!glossarySaveTimer,                 polled: true },
+    'glossary':        { load: loadGlossary,       isInteracting: () => !!glossarySaveTimer || glossarySavesPending > 0, polled: true },
     'stt-provider':    { load: loadEngineAndLanguage,
                                                    isInteracting: () => focused('stt-provider-select'),      polled: true },
     'scribe-language': { load: loadScribeLanguage, isInteracting: () => focused('scribe-lang-select'),       polled: true },
