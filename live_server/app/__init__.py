@@ -480,10 +480,12 @@ _PUBLIC_API_REQUEST_BODIES: dict[str, dict] = {
     "update_session_languages_endpoint": {
         "required": True,
         "schema": {"type": "object", "required": ["languages"], "properties": {
-            "languages": {"type": "array", "minItems": 1,
+            "languages": {"type": "array",
                           "items": {"type": "string", "maxLength": 32},
                           "description": "Target translation languages. At most the account's "
-                                         "`max_languages` (see GET; 0 = unlimited)."}}},
+                                         "`max_languages` (see GET; 0 = unlimited). An empty "
+                                         "list disables translation (it does not fall back to "
+                                         "the deployment default)."}}},
         "example": {"languages": ["en", "ja", "ko"]},
     },
     "update_session_keywords_endpoint": {
@@ -2205,8 +2207,8 @@ async def update_session_languages_endpoint(request: Request, sid: str):
 
     body = await request.json()
     languages = body.get("languages")
-    if not isinstance(languages, list) or not languages:
-        raise HTTPException(status_code=400, detail="languages must be a non-empty list")
+    if not isinstance(languages, list):
+        raise HTTPException(status_code=400, detail="languages must be a list")
     for lang in languages:
         if not isinstance(lang, str) or not lang.strip():
             raise HTTPException(status_code=400, detail="Each language must be a non-empty string")
@@ -3202,7 +3204,9 @@ async def _retranslate_committed_segment(
     start_time: float,
     corrected: str,
 ) -> dict:
-    """Retranslate and persist one committed segment as an all-language revision."""
+    """Retranslate and persist one committed segment as an all-language revision.
+
+    With no target languages the edited line is stored under `source`."""
     from .translation_service import get_session_languages, translate_transcription
 
     async def _translation_call(awaitable):
@@ -3214,13 +3218,7 @@ async def _retranslate_committed_segment(
             raise HTTPException(status_code=502, detail="Translation service failed") from e
 
     async with _get_or_create_lock(_segment_write_locks, _segment_lock_key(sid, start_time)):
-        # Checked before the segment read so a session with no targets changes nothing.
         languages = await _translation_call(get_session_languages(redis_client, sid))
-        if not languages:
-            raise HTTPException(
-                status_code=409,
-                detail="No translation languages configured",
-            )
 
         original, context = await _load_committed_segment_with_context(sid, start_time)
         if original is None:

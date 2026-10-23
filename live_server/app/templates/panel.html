@@ -1180,11 +1180,6 @@
       return
     }
     const statusEl = document.getElementById('settings-status')
-    if (!selectedLanguages.length) {
-      statusEl.textContent = 'Saving'
-      langSaveDirty = false
-      return
-    }
     langSaveInFlight = true
     langSaveDirty = false
     statusEl.textContent = 'Saving'

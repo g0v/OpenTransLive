@@ -36,15 +36,29 @@ class TranslateTranscriptionTest(unittest.IsolatedAsyncioTestCase):
             "room", data, {"transcriptions": []}, None, skip_correction=False
         )
 
-    async def test_flow_rules_apply_in_a_room_without_target_languages(self) -> None:
+    async def test_room_without_target_languages_delivers_corrected_line_as_source(self) -> None:
         self.rules = [{"from": "Shaun", "to": "Sean", "target": ts.FLOW_TARGET}]
 
         out = await self._run("Shaun speaks")
 
         self.assertEqual(out["text"], "Sean speaks")
+        self.assertEqual(out["result"]["translated"], {ts.SOURCE_LANGUAGE: "Sean speaks"})
+        self.translator.correct.assert_awaited_once()
+        self.translator.translate.assert_not_called()
+
+    async def test_source_carries_the_correction_output(self) -> None:
+        self.translator.correct = AsyncMock(side_effect=lambda **kw: "fixed " + kw["text"])
+
+        out = await self._run("line")
+
+        self.assertEqual(out["result"]["corrected"], "fixed line")
+        self.assertEqual(out["result"]["translated"], {ts.SOURCE_LANGUAGE: "fixed line"})
+
+    async def test_blank_text_without_target_languages_has_no_result(self) -> None:
+        out = await self._run("  \n\t")
+
         self.assertNotIn("result", out)
         self.translator.correct.assert_not_called()
-        self.translator.translate.assert_not_called()
 
     async def test_blank_text_never_reaches_the_llm(self) -> None:
         self.languages = ["en-US"]

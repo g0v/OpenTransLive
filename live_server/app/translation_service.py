@@ -116,8 +116,9 @@ async def _save_room_field_to_mongo(session_id: str, field: str, value):
 async def get_session_languages(redis_client, session_id) -> list[str]:
     """Return the session's effective translate languages.
 
-    Stored list falls back to MongoDB then config, and is capped to the owner's
-    per-session language limit (the first N win) so every consumer - translation,
+    Stored list (an empty list included) falls back to MongoDB, and only a
+    missing value falls back to config. It is capped to the owner's per-session
+    language limit (the first N win) so every consumer - translation,
     retranslation, glossary lookup, the panel - sees the same set.
     """
     languages = await _get_stored_session_languages(redis_client, session_id)
@@ -135,8 +136,8 @@ async def _get_stored_session_languages(redis_client, session_id) -> list[str]:
 
     try:
         room = await rooms_collection.find_one({"sid": session_id}, {"languages": 1})
-        if room and room.get("languages"):
-            langs = room["languages"]
+        langs = (room or {}).get("languages")
+        if isinstance(langs, list):
             await redis_client.set(f"languages:{session_id}", json.dumps(langs), ex=86400)
             return langs
     except Exception as e:
@@ -414,6 +415,8 @@ async def save_locked_keywords(redis_client, session_id, locked_keywords: list[s
 
 # Reserved target meaning "replace in the source transcript"; never a language code.
 FLOW_TARGET = "flow"
+# Carries the corrected line when the room has no target languages.
+SOURCE_LANGUAGE = "source"
 
 def normalize_text_dictionary(data) -> list[dict[str, str]]:
     """Normalize stored text-dictionary data into a rule list.
@@ -745,10 +748,6 @@ async def translate_transcription(
     if flow_map and not authoritative_correction:
         text = apply_text_dictionary(text, flow_map)
         data["text"] = text
-    # The flow dictionary applies even without target languages, so a
-    # transcription-only room stores the replaced source like every other.
-    if not languages:
-        return data
 
     # Blank text (whitespace from STT, or a flow rule that removes the whole
     # line) never reaches the LLM: with nothing to correct or translate, models
@@ -872,8 +871,12 @@ async def translate_transcription(
         translated[language] = out_text
 
     await asyncio.gather(*[_translation_worker(lang) for lang in languages])
+    if not languages:
+        # Transcription-only room: viewers, SRT export and the editor discover
+        # languages from the translated keys, so the corrected line rides along.
+        translated[SOURCE_LANGUAGE] = result["corrected"]
 
-    if not partial and languages and not authoritative_correction:
+    if not partial and not authoritative_correction:
         asyncio.create_task(
             rerank_keywords(redis_client, session_id, current_keywords, result["corrected"], provider)
         )

@@ -61,6 +61,44 @@ class SessionLanguageLimitTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, {"languages": ["en", "ja"], "max_languages": 2})
         save.assert_awaited_once()
 
+    async def _update(self, body):
+        save = AsyncMock()
+        with (
+            patch.object(app, "redis_client", _Redis({"max_languages:room": "2"})),
+            patch.object(app, "_require_session_owner", AsyncMock()),
+            patch.object(app, "_emit_session_settings_update", AsyncMock()),
+            patch.object(translation_service, "save_session_languages", save),
+        ):
+            result = await app.update_session_languages_endpoint(_Request(body), "room")
+        return result, save
+
+    async def test_update_accepts_an_empty_list(self) -> None:
+        result, save = await self._update({"languages": []})
+        self.assertEqual(result["languages"], [])
+        self.assertEqual(save.await_args.args[2], [])
+
+    async def test_update_rejects_a_non_list(self) -> None:
+        for body in ({"languages": "en"}, {}):
+            with self.subTest(body=body), self.assertRaises(HTTPException) as ctx:
+                await self._update(body)
+            self.assertEqual(ctx.exception.status_code, 400)
+
+    async def _stored_languages(self, room):
+        rooms = AsyncMock()
+        rooms.find_one = AsyncMock(return_value=room)
+        with (
+            patch.object(translation_service, "rooms_collection", rooms),
+            patch.object(translation_service, "_resolve_owner_overrides", AsyncMock(return_value={})),
+            patch.dict(translation_service.REALTIME_SETTINGS, {"TRANSLATE_LANGUAGES": "en,ja"}),
+        ):
+            return await translation_service.get_session_languages(_Redis(), "room")
+
+    async def test_stored_empty_list_survives_redis_expiry(self) -> None:
+        self.assertEqual(await self._stored_languages({"languages": []}), [])
+
+    async def test_missing_languages_fall_back_to_config(self) -> None:
+        self.assertEqual(await self._stored_languages({}), ["en", "ja"])
+
 
 class AdminLanguageLimitTest(unittest.IsolatedAsyncioTestCase):
     async def _set(self, body, stored=None):

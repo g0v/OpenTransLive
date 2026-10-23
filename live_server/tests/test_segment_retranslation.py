@@ -1,6 +1,7 @@
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
+from contextlib import ExitStack
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import app
 import app.translation_service as translation_service
@@ -98,6 +99,41 @@ class SegmentRetranslationTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(persisted, ["first", "second"])
         self.assertEqual(published, ["first", "second"])
+
+    async def test_retranslate_without_target_languages_stores_source(self) -> None:
+        original = {
+            "_id": "segment-id",
+            "text": "original",
+            "start_time": 10.0,
+            "end_time": 11.0,
+            "partial": False,
+            "result": {"corrected": "before", "translated": {"source": "before"}},
+        }
+        persist = AsyncMock()
+        publish = AsyncMock()
+        getters = {
+            "get_session_languages": AsyncMock(return_value=[]),
+            "get_session_ai_provider": AsyncMock(return_value=""),
+            "get_translator": MagicMock(return_value=MagicMock()),
+            "get_text_dictionary": AsyncMock(return_value=[]),
+            "get_keywords_and_locked": AsyncMock(return_value=({}, [])),
+            "get_session_translate_tone": AsyncMock(return_value=""),
+            "get_session_scribe_language": AsyncMock(return_value=""),
+            "get_glossary": AsyncMock(return_value=[]),
+        }
+        with ExitStack() as stack:
+            for name, mock in getters.items():
+                stack.enter_context(patch.object(translation_service, name, mock))
+            stack.enter_context(patch.object(
+                app, "_load_committed_segment_with_context", AsyncMock(return_value=(original, []))
+            ))
+            stack.enter_context(patch.object(app, "_persist_segment_revision", persist))
+            stack.enter_context(patch.object(app, "_publish_segment_updated", publish))
+            revised = await app._retranslate_committed_segment("room", 10.0, "edited")
+
+        self.assertEqual(revised["result"]["translated"], {"source": "edited"})
+        self.assertEqual(persist.await_args.args[2]["result"]["translated"], {"source": "edited"})
+        publish.assert_awaited_once()
 
     async def test_joined_session_backfills_recent_committed_segments(self) -> None:
         segments = [
