@@ -2959,15 +2959,10 @@ async def edit_transcriptions_page(request: Request, sid: str):
     return response
 
 
-@app.put("/api/session/{sid}/segments", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
-async def update_session_segment_endpoint(request: Request, sid: str):
-    """Update a saved committed segment's corrected text and/or per-language translations.
-    Identified by start_time. Owner-only. Refreshes the Redis cache so future viewers
-    see the edit; currently-connected viewers must reload."""
-    sid = sanitize_query_param(sid, "session ID")
-    await _require_session_owner(request, sid)
-
-    body = await request.json()
+def _parse_segment_update(body) -> tuple[float, str | None, dict | None]:
+    """Validate a segment edit body: start_time plus corrected and/or translated."""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be an object")
     start_time = body.get("start_time")
     if not isinstance(start_time, (int, float)) or isinstance(start_time, bool):
         raise HTTPException(status_code=400, detail="start_time must be a number")
@@ -2989,6 +2984,18 @@ async def update_session_segment_endpoint(request: Request, sid: str):
 
     if corrected is None and translated is None:
         raise HTTPException(status_code=400, detail="No fields to update")
+    return start_time, corrected, translated
+
+
+@app.put("/api/session/{sid}/segments", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def update_session_segment_endpoint(request: Request, sid: str):
+    """Update a saved committed segment's corrected text and/or per-language translations.
+    Identified by start_time. Owner-only. Refreshes the Redis cache so future viewers
+    see the edit; currently-connected viewers must reload."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _require_session_owner(request, sid)
+
+    start_time, corrected, translated = _parse_segment_update(await request.json())
 
     async with _get_or_create_lock(_segment_write_locks, _segment_lock_key(sid, start_time)):
         seg = await transcription_segments_collection.find_one(
@@ -3061,6 +3068,75 @@ async def retranslate_session_segment_endpoint(request: Request, sid: str):
         corrected,
     )
     return {"status": "ok", "segment": segment}
+
+
+@app.put("/api/session/{sid}/segments/live", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def update_live_segment_endpoint(request: Request, sid: str):
+    """Save a committed segment's source and/or translations as typed (no AI) and
+    push the revision to live viewers. Panel-lock-holder only, like retranslate.
+    Languages not in the body keep their stored text."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _verify_session_lock_holder(request, sid)
+    try:
+        body = await request.json()
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    start_time, corrected, translated = _parse_segment_update(body)
+    segment = await _update_committed_segment(sid, float(start_time), corrected, translated)
+    return {"status": "ok", "segment": segment}
+
+
+@app.post("/api/session/{sid}/segments/retranslate-language", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_identifier))])
+async def retranslate_segment_language_endpoint(request: Request, sid: str):
+    """Translate an edited committed line into one language and return the text.
+
+    Panel-lock-holder only. Persists and publishes nothing: the panel fills the
+    field and the operator saves it. The language may be one the session no
+    longer translates into."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _verify_session_lock_holder(request, sid)
+    try:
+        body = await request.json()
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be an object")
+
+    start_time = body.get("start_time")
+    ok, start_time_error = check_timestamp(start_time, "start_time")
+    if not ok:
+        raise HTTPException(status_code=400, detail=start_time_error)
+
+    corrected = body.get("corrected")
+    if not isinstance(corrected, str):
+        raise HTTPException(status_code=400, detail="Invalid corrected text")
+    corrected = corrected.strip()
+    if not corrected or len(corrected) > 5000:
+        raise HTTPException(status_code=400, detail="Invalid corrected text")
+
+    language = body.get("language")
+    if not isinstance(language, str):
+        raise HTTPException(status_code=400, detail="Invalid language code")
+    language = language.strip()
+    if not language or len(language) > 32 or "$" in language or "." in language:
+        raise HTTPException(status_code=400, detail="Invalid language code")
+
+    original, context = await _load_committed_segment_with_context(sid, float(start_time))
+    if original is None:
+        raise HTTPException(status_code=404, detail="Segment not found")
+
+    from . import translation_service
+    try:
+        text = await translation_service.translate_committed_language(
+            sid, corrected, language, [_segment_wire_shape(c) for c in context], redis_client
+        )
+    except Exception as e:
+        log_exception(logger, e, f"Single-language retranslation failed for {_hash_token(sid)}")
+        raise HTTPException(status_code=502, detail="Translation service failed") from e
+    if not isinstance(text, str) or not text.strip():
+        logger.warning("Single-language retranslation empty sid_hash=%s language=%s", _hash_token(sid), language)
+        raise HTTPException(status_code=502, detail="Translation service failed")
+    return {"translation": text}
 
 
 @app.delete("/api/session/{sid}/segments", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
@@ -3424,6 +3500,33 @@ async def _retranslate_committed_segment(
         await _persist_segment_revision(sid, original, canonical)
         await _publish_segment_updated(sid, canonical)
         return canonical
+
+
+async def _update_committed_segment(
+    sid: str,
+    start_time: float,
+    corrected: str | None,
+    translated: dict | None,
+) -> dict:
+    """Store an operator's typed edit of one committed segment and publish it.
+
+    Only the supplied fields change: an omitted `corrected` keeps the stored one
+    and `translated` merges over the stored languages."""
+    async with _get_or_create_lock(_segment_write_locks, _segment_lock_key(sid, start_time)):
+        original, _ = await _load_committed_segment_with_context(sid, start_time)
+        if original is None:
+            raise HTTPException(status_code=404, detail="Segment not found")
+
+        stored = original.get("result") or {}
+        revised = _segment_wire_shape(original)
+        revised["result"] = {
+            **stored,
+            "corrected": corrected if corrected is not None else (stored.get("corrected") or original.get("text") or ""),
+            "translated": {**(stored.get("translated") or {}), **(translated or {})},
+        }
+        await _persist_segment_revision(sid, original, revised)
+        await _publish_segment_updated(sid, revised)
+        return revised
 
 
 def _seconds_to_srt_timestamp(seconds: float) -> str:

@@ -287,20 +287,28 @@
     btn.addEventListener('click', async () => {
       const row = btn.closest('.segment-row');
       const startTime = parseFloat(row.dataset.startTime);
+      // Only fields that differ from their saved value, so an untouched language
+      // never overwrites a revision made elsewhere since the page loaded.
+      const changed = t => t.value !== (t.dataset.original || '');
       const correctedEl = row.querySelector('[data-field="corrected"]');
       const corrected = correctedEl ? correctedEl.value : null;
       const translated = {};
       row.querySelectorAll('[data-field="translated"]').forEach(t => {
-        translated[t.dataset.lang] = t.value;
+        if (changed(t)) translated[t.dataset.lang] = t.value;
       });
+      const payload = { start_time: startTime };
+      if (correctedEl && changed(correctedEl)) payload.corrected = corrected;
+      if (Object.keys(translated).length) payload.translated = translated;
+      if (!('corrected' in payload) && !payload.translated) {
+        setRowStatus(row, 'No changes', false);
+        return;
+      }
 
       btn.disabled = true;
       const prev = btn.textContent;
       btn.textContent = '...';
       setRowStatus(row, 'Saving…', false);
       try {
-        const payload = { start_time: startTime, corrected };
-        if (Object.keys(translated).length) payload.translated = translated;
         const res = await fetch(`/api/session/${encodeURIComponent(sid)}/segments`, {
           method: 'PUT',
           credentials: 'same-origin',

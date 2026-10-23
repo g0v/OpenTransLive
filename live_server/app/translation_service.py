@@ -719,6 +719,105 @@ async def rerank_keywords(redis_client, session_id, extraction_context: dict[str
 # Main translation entry point
 # ---------------------------------------------------------------------------
 
+async def translate_line(
+    translator,
+    *,
+    text: str,
+    language: str,
+    context: str,
+    prev_translation: str,
+    keywords,
+    tone: str,
+    scribe_language: str,
+    glossary: list,
+    lang_map: dict | None,
+    commit: bool,
+    deadline: float | None = None,
+) -> str | None:
+    """Translate one corrected line into `language`. Returns None on failure.
+
+    `keywords` are the ranked (pinned) keywords; only those the line mentions
+    reach the translator. `deadline` is an event-loop time (asyncio.timeout_at).
+    """
+    # Apply language-scoped replacements to the prior committed context and
+    # previous partial too, so the LLM sees consistent terms (and won't "undo"
+    # the replacement).
+    if lang_map:
+        prev_translation = apply_text_dictionary(prev_translation, lang_map)
+        context = apply_text_dictionary(context, lang_map)
+    # Glossary swaps happen only on the text handed to the LLM: the source
+    # transcript and the shared corrected line stay untouched, so the flow panel
+    # and keyword reranking still see what was actually said.
+    src_text = apply_glossary(text, build_glossary_map(glossary, language))
+    # The translator only sees keywords the line mentions: a list unrelated to
+    # the input is what models echo back instead of translating it.
+    src_lower = src_text.lower()
+    mentioned = ", ".join(kw for kw in keywords if kw.lower() in src_lower)
+    try:
+        async with asyncio.timeout_at(deadline):
+            out = await translator.translate(
+                text=src_text,
+                language=language,
+                context=context,
+                prev_translation=prev_translation,
+                keywords=mentioned,
+                tone=tone,
+                commit=commit,
+                source=scribe_language,
+            )
+    except Exception as e:
+        log_exception(logger, e, f"Translation error for {language}")
+        return None
+    if out is None:
+        return None
+    out_text = _normalize_chinese_output(out, language)
+    if lang_map:
+        out_text = apply_text_dictionary(out_text, lang_map)
+    return out_text
+
+
+async def translate_committed_language(
+    session_id: str,
+    corrected: str,
+    language: str,
+    context_segments: list[dict],
+    redis_client,
+) -> str | None:
+    """Translate an edited committed line into one language, which need not be
+    one of the session's active languages. Persists nothing and does not rerank
+    keywords; the caller decides what to do with the text."""
+    provider = await get_session_ai_provider(redis_client, session_id) or None
+    translator = get_translator(provider)
+    text_dict, (current_keywords, locked_list), tone, scribe_language, glossary = await asyncio.gather(
+        get_text_dictionary(redis_client, session_id),
+        get_keywords_and_locked(redis_client, session_id),
+        get_session_translate_tone(redis_client, session_id),
+        get_session_scribe_language(redis_client, session_id),
+        get_glossary(redis_client, session_id),
+    )
+    _, lang_maps = split_text_dictionary(text_dict)
+    # Earlier lines in this language only; a line without one adds nothing.
+    context = " ".join(
+        text
+        for seg in context_segments
+        if (text := ((seg.get("result") or {}).get("translated") or {}).get(language, ""))
+    ).strip()
+    return await translate_line(
+        translator,
+        text=corrected,
+        language=language,
+        context=context,
+        prev_translation="",
+        keywords=rank_keywords(current_keywords, locked_list, 0),
+        tone=tone,
+        scribe_language=scribe_language,
+        glossary=glossary,
+        lang_map=lang_maps.get(language),
+        commit=True,
+        deadline=asyncio.get_running_loop().time() + _COMMIT_LLM_BUDGET_SECS,
+    )
+
+
 async def translate_transcription(
     session_id,
     data: dict,
@@ -823,51 +922,35 @@ async def translate_transcription(
     async def _translation_worker(language):
         lang_map = lang_maps.get(language)
         pt_trans = partial_result.get("translated", {}).get(language, "")
-        lang_context = translated_context[language]
-        # Apply language-scoped replacements to the prior committed context and
-        # previous partial too, so the LLM sees consistent terms (and won't
-        # "undo" the replacement) and the fallback inherits the mapped text.
-        if lang_map:
-            pt_trans = apply_text_dictionary(pt_trans, lang_map)
-            lang_context = apply_text_dictionary(lang_context, lang_map)
-        # Glossary swaps happen only on the text handed to the LLM: the source
-        # transcript (data["text"]) and the shared corrected line stay untouched,
-        # so the flow panel and keyword reranking still see what was actually said.
-        src_text = apply_glossary(result['corrected'], build_glossary_map(glossary, language))
-        # The translator only sees keywords the line mentions: a list unrelated to
-        # the input is what models echo back instead of translating it.
-        src_lower = src_text.lower()
-        mentioned = ", ".join(kw for kw in ranked if kw.lower() in src_lower)
-        try:
-            async with asyncio.timeout_at(llm_deadline):
-                out = await translator.translate(
-                    text=src_text,
-                    language=language,
-                    context=lang_context,
-                    prev_translation=pt_trans,
-                    keywords=mentioned,
-                    tone=tone,
-                    commit=not partial,
-                    source=scribe_language,
-                )
-        except Exception as e:
-            log_exception(logger, e, f"Translation error for {language}")
-            out = None
-        if out is None:
+        out_text = await translate_line(
+            translator,
+            text=result["corrected"],
+            language=language,
+            context=translated_context[language],
+            prev_translation=pt_trans,
+            keywords=ranked,
+            tone=tone,
+            scribe_language=scribe_language,
+            glossary=glossary,
+            lang_map=lang_map,
+            commit=not partial,
+            deadline=llm_deadline,
+        )
+        if out_text is None:
             # Invariant: must not write source-language text into translated[language].
-            # Fall back to the last partial translation; for a committed segment with
-            # no prior partial this is empty, which the viewer renders as a gap marker
-            # rather than dropping the line entirely.
+            # Fall back to the last partial translation (with the language's
+            # replacements, so it inherits the mapped text); for a committed segment
+            # with no prior partial this is empty, which the viewer renders as a gap
+            # marker rather than dropping the line entirely.
             if not partial:
                 logger.warning(
                     "Commit translation unrecovered for %s (start=%s); storing last partial translation or empty",
                     language, data.get("start_time"),
                 )
+            if lang_map:
+                pt_trans = apply_text_dictionary(pt_trans, lang_map)
             translated[language] = pt_trans or ""
             return
-        out_text = _normalize_chinese_output(out, language)
-        if lang_map:
-            out_text = apply_text_dictionary(out_text, lang_map)
         translated[language] = out_text
 
     await asyncio.gather(*[_translation_worker(lang) for lang in languages])

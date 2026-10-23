@@ -337,32 +337,43 @@
   </div>
   {% endif %}
 
-  <!-- Committed flow source editor -->
+  <!-- Committed sentence editor: source plus every stored translation -->
   <div id="flow-edit-modal" class="modal-overlay hidden fixed flex inset-0 z-[100] items-center justify-center bg-[rgba(3,7,13,0.72)] p-4 backdrop-blur-sm" role="dialog" aria-modal="true"
     aria-labelledby="flow-edit-title">
-    <form id="flow-edit-form" class="modal-panel flex w-full max-w-[34rem] flex-col overflow-hidden rounded-xl border border-[#3b4a5d] bg-[#182230] shadow-[0_24px_72px_rgba(3,8,15,0.48)]">
+    <form id="flow-edit-form" class="modal-panel flex max-h-[90vh] w-full max-w-[38rem] flex-col overflow-hidden rounded-xl border border-[#3b4a5d] bg-[#182230] shadow-[0_24px_72px_rgba(3,8,15,0.48)]">
       <div class="modal-header flex min-h-[52px] shrink-0 items-center gap-2 border-b border-[#2a3646] px-4 py-3">
-        <h2 id="flow-edit-title" class="modal-title m-0 flex-1 text-base font-bold text-[#edf3fa]">Edit source</h2>
+        <h2 id="flow-edit-title" class="modal-title m-0 flex-1 text-base font-bold text-[#edf3fa]">Edit sentence</h2>
         <button id="flow-edit-close" type="button" class="modal-close-btn inline-flex size-8 items-center justify-center rounded-lg text-[#8d9aae] transition-colors hover:bg-[#273548] hover:text-[#edf3fa] disabled:cursor-wait disabled:opacity-50" aria-label="Close">
           <iconify-icon icon="ph:x" width="20" height="20"></iconify-icon>
         </button>
       </div>
-      <div class="modal-body flex flex-col gap-3 p-4">
+      <div class="modal-body flex min-h-0 flex-col gap-3 overflow-y-auto p-4">
         <p class="text-[11px] leading-snug text-[#9eacbf]">
-          Saving replaces the source and regenerates every configured translation.
+          Save writes the source and edited translations as typed (no AI) and updates viewers at once. Retranslate all regenerates every language from the source.
         </p>
         <label for="flow-edit-text" class="text-xs font-semibold text-[#d7e1ed]">Source text</label>
-        <textarea id="flow-edit-text" rows="6" maxlength="5000" required
-          class="panel-input min-h-32 w-full resize-y leading-relaxed disabled:cursor-wait disabled:opacity-60"></textarea>
+        <textarea id="flow-edit-text" rows="3" maxlength="5000"
+          class="panel-input w-full flex-none resize-y leading-relaxed disabled:cursor-wait disabled:opacity-60"></textarea>
+        <div id="flow-edit-active" class="flex flex-col gap-2"></div>
+        <details id="flow-edit-other-wrap" class="hidden">
+          <summary class="cursor-pointer text-xs font-semibold text-[#d7e1ed]">Other languages</summary>
+          <div id="flow-edit-other" class="mt-2 flex flex-col gap-2"></div>
+        </details>
+      </div>
+      <div class="flex shrink-0 flex-col gap-2 border-t border-[#2a3646] px-4 py-3">
         <div class="flex items-start justify-between gap-3">
           <div id="flow-edit-status" class="min-h-4 flex-1 text-[11px] leading-snug text-[#aebed2]" role="status" aria-live="polite"></div>
-          <span class="shrink-0 text-[11px] leading-snug text-[#7f8ea3]">Enter to save · Shift+Enter for newline</span>
+          <span class="shrink-0 text-[11px] leading-snug text-[#7f8ea3]">Enter to save · Shift+Enter for newline · Ctrl+Enter to retranslate all</span>
         </div>
-        <div class="flex justify-end gap-2 border-t border-[#2a3646] pt-3">
+        <div class="flex justify-end gap-2">
           <button id="flow-edit-cancel" type="button" class="panel-add-btn disabled:cursor-wait disabled:opacity-50">Cancel</button>
-          <button id="flow-edit-submit" type="submit" class="panel-add-btn inline-flex min-w-36 items-center justify-center gap-1.5 disabled:cursor-wait disabled:opacity-60">
+          <button id="flow-edit-retranslate-all" type="button" class="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded border border-gray-600 px-2 py-1 text-xs font-bold text-gray-300 transition-colors hover:bg-gray-700 hover:text-white disabled:cursor-wait disabled:opacity-50">
+            <iconify-icon id="flow-edit-retranslate-spinner" icon="ph:spinner-gap" width="15" height="15" class="hidden animate-spin"></iconify-icon>
+            <span id="flow-edit-retranslate-label">Retranslate all</span>
+          </button>
+          <button id="flow-edit-submit" type="submit" class="panel-add-btn inline-flex min-w-24 items-center justify-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50">
             <iconify-icon id="flow-edit-spinner" icon="ph:spinner-gap" width="15" height="15" class="hidden animate-spin"></iconify-icon>
-            <span id="flow-edit-submit-label">Save &amp; retranslate</span>
+            <span id="flow-edit-submit-label">Save</span>
           </button>
         </div>
       </div>
@@ -2638,6 +2649,12 @@
       const flowEditSpinner = document.getElementById('flow-edit-spinner')
       const flowEditCancel = document.getElementById('flow-edit-cancel')
       const flowEditClose = document.getElementById('flow-edit-close')
+      const flowEditRetranslateAll = document.getElementById('flow-edit-retranslate-all')
+      const flowEditRetranslateLabel = document.getElementById('flow-edit-retranslate-label')
+      const flowEditRetranslateSpinner = document.getElementById('flow-edit-retranslate-spinner')
+      const flowEditActive = document.getElementById('flow-edit-active')
+      const flowEditOther = document.getElementById('flow-edit-other')
+      const flowEditOtherWrap = document.getElementById('flow-edit-other-wrap')
       const committedRows = new Map()
       let latestCommittedStartTime = -Infinity
       let partialEl = null
@@ -2653,15 +2670,22 @@
       // lands after newer flow-only ones can't drag the line back to older text.
       let partialEndTime = 0
       let editingStartTime = null
-      let editPending = false
+      let editPending = false // false, 'save' or 'retranslate'
+      // Values the open editor started from; a field equal to its entry is unedited.
+      let editOriginal = null
+      let editGeneration = 0 // bumped on every open/close; drops stale translation replies
+      let languageFieldCount = 0
+      const languageRetranslatesPending = new Set()
       let awaitingJoinSnapshot = true
       const liveSegmentsSinceConnect = new Set()
 
       function updateCount() {
         if (!flowCountEl) return
-        flowCountEl.textContent = editPending
-          ? 'Retranslating…'
-          : segmentCount + (segmentCount === 1 ? ' segment' : ' segments')
+        flowCountEl.textContent = editPending === 'save'
+          ? 'Saving…'
+          : editPending
+            ? 'Retranslating…'
+            : segmentCount + (segmentCount === 1 ? ' segment' : ' segments')
       }
 
       // ── Scroll lock ────────────────────────────────────────────────────────
@@ -2923,6 +2947,7 @@
         if (!row || !src) return false
         const anchor = captureScroll()
         row.dataset.src = src
+        row._translated = segment.result?.translated || {}
         const textEl = row.querySelector('.flex-1')
         if (textEl) textEl.textContent = applyFlowDict(src)
         restoreScroll(anchor)
@@ -2946,6 +2971,7 @@
         row.className = 'flow-item group flex w-full items-start justify-between rounded-md px-[0.45rem] py-[0.32rem] text-left text-[#cbd6e4] transition-colors hover:bg-[#1d2938] hover:text-[#edf3fa] focus-visible:bg-[#1d2938] active:bg-[#273548]'
         row.dataset.startTime = String(segment.start_time)
         row.dataset.src = src
+        row._translated = segment.result?.translated || {}
 
         const latencyHtml = fresh
           ? `<span class="text-[10px] text-gray-600 ml-2 tabular-nums">${segmentLatency(segment).toFixed(2)}s</span>`
@@ -3019,24 +3045,130 @@
         appendCommitted(segment, fresh)
       }
 
+      function languageFields() {
+        return [...flowEditForm.querySelectorAll('textarea.flow-edit-lang')]
+      }
+
+      // Only what differs from the values the editor opened with is sent, so a
+      // field nobody touched never overwrites a concurrent revision of it.
+      function draftChanges() {
+        const changes = {}
+        if (!editOriginal) return changes
+        const source = flowEditText.value.trim()
+        if (source !== editOriginal.corrected.trim()) changes.corrected = source
+        const translated = {}
+        for (const field of languageFields()) {
+          const lang = field.dataset.lang
+          if (field.value !== (editOriginal.translated[lang] || '')) translated[lang] = field.value
+        }
+        if (Object.keys(translated).length) changes.translated = translated
+        return changes
+      }
+
+      function updateSaveState() {
+        flowEditSubmit.disabled = !!editPending || languageRetranslatesPending.size > 0
+          || !Object.keys(draftChanges()).length
+      }
+
+      // `pending` is false or the action in flight: 'save' or 'retranslate'.
       function setEditPending(pending) {
         editPending = pending
         flowEditModal.dataset.modalPending = pending ? 'true' : 'false'
         flowEditForm.setAttribute('aria-busy', pending ? 'true' : 'false')
-        for (const control of [flowEditText, flowEditSubmit, flowEditCancel, flowEditClose]) {
-          control.disabled = pending
+        for (const control of [flowEditText, flowEditRetranslateAll, flowEditCancel, flowEditClose, ...languageFields()]) {
+          control.disabled = !!pending
         }
-        flowEditSpinner.classList.toggle('hidden', !pending)
-        flowEditSubmitLabel.textContent = pending ? 'Retranslating…' : 'Save & retranslate'
-        if (pending) flowEditStatus.textContent = 'Retranslating…'
+        for (const button of flowEditForm.querySelectorAll('.flow-edit-lang-retranslate')) {
+          button.disabled = !!pending || languageRetranslatesPending.has(button.dataset.lang)
+        }
+        flowEditSpinner.classList.toggle('hidden', pending !== 'save')
+        flowEditSubmitLabel.textContent = pending === 'save' ? 'Saving…' : 'Save'
+        flowEditRetranslateSpinner.classList.toggle('hidden', pending !== 'retranslate')
+        flowEditRetranslateLabel.textContent = pending === 'retranslate' ? 'Retranslating…' : 'Retranslate all'
+        if (pending) flowEditStatus.textContent = pending === 'save' ? 'Saving…' : 'Retranslating…'
+        updateSaveState()
         updateCount()
+      }
+
+      function addLanguageField(lang, value) {
+        const n = ++languageFieldCount
+        const wrap = document.createElement('div')
+        wrap.className = 'flex flex-col gap-1'
+        wrap.innerHTML = `
+          <div class="flex items-center gap-2">
+            <label for="flow-edit-lang-${n}" class="flex-1 truncate text-xs font-semibold text-[#d7e1ed]"></label>
+            <button type="button" class="flow-edit-lang-retranslate inline-flex size-6 items-center justify-center rounded text-[#8d9aae] transition-colors hover:bg-[#273548] hover:text-[#edf3fa] disabled:cursor-wait disabled:opacity-50" title="Retranslate this language" aria-label="Retranslate this language">
+              <iconify-icon icon="ph:arrows-clockwise" width="14" height="14"></iconify-icon>
+            </button>
+          </div>
+          <textarea id="flow-edit-lang-${n}" rows="2" maxlength="5000" class="flow-edit-lang panel-input w-full flex-none resize-y leading-relaxed disabled:cursor-wait disabled:opacity-60"></textarea>`
+        const label = langLabel(lang)
+        wrap.querySelector('label').textContent = label === lang ? lang : `${label} (${lang})`
+        const field = wrap.querySelector('textarea')
+        field.dataset.lang = lang
+        field.value = value
+        const button = wrap.querySelector('button')
+        button.dataset.lang = lang
+        // The `source` key is the corrected line itself in a room without targets.
+        if (lang === 'source') button.classList.add('hidden')
+        else button.addEventListener('click', () => retranslateLanguage(field, button))
+        const active = selectedLanguages.includes(lang)
+        ;(active ? flowEditActive : flowEditOther).appendChild(wrap)
+        if (!active) flowEditOtherWrap.classList.remove('hidden')
+        return field
+      }
+
+      // Fill the editor from a stored segment: the active languages in panel
+      // order, then any other stored translation.
+      function fillEditor(src, translated) {
+        const displayed = applyFlowDict(src)
+        editOriginal = { corrected: displayed, translated: { ...translated } }
+        flowEditText.value = displayed
+        flowEditActive.replaceChildren()
+        flowEditOther.replaceChildren()
+        flowEditOtherWrap.classList.add('hidden')
+        for (const lang of selectedLanguages) addLanguageField(lang, translated[lang] || '')
+        for (const [lang, text] of Object.entries(translated)) {
+          if (!selectedLanguages.includes(lang)) addLanguageField(lang, text || '')
+        }
+        updateSaveState()
+      }
+
+      function isEditorOpenOn(startTime) {
+        return editingStartTime !== null && editOriginal !== null
+          && !flowEditModal.classList.contains('hidden')
+          && segmentKey(startTime) === segmentKey(editingStartTime)
+      }
+
+      // A revision pushed while the editor is open (another tab, or our own
+      // save) refreshes the fields still showing their opening value; fields
+      // the operator changed are left alone.
+      function refreshOpenEditor(segment) {
+        if (!isEditorOpenOn(segment.start_time)) return
+        const src = segment.result?.corrected || segment.text || ''
+        if (src) {
+          const displayed = applyFlowDict(src)
+          if (flowEditText.value === editOriginal.corrected) flowEditText.value = displayed
+          editOriginal.corrected = displayed
+        }
+        const translated = segment.result?.translated || {}
+        const fields = new Map(languageFields().map(field => [field.dataset.lang, field]))
+        for (const [lang, text] of Object.entries(translated)) {
+          const field = fields.get(lang) || addLanguageField(lang, '')
+          if (field.value === (editOriginal.translated[lang] || '')) field.value = text || ''
+          editOriginal.translated[lang] = text || ''
+        }
+        updateSaveState()
       }
 
       function openFlowEditor(row) {
         if (editPending) return
-        editingStartTime = Number(row.dataset.startTime)
-        if (!Number.isFinite(editingStartTime)) return
-        flowEditText.value = applyFlowDict(row.dataset.src || '')
+        const startTime = Number(row.dataset.startTime)
+        if (!Number.isFinite(startTime)) return
+        editingStartTime = startTime
+        editGeneration++
+        languageRetranslatesPending.clear()
+        fillEditor(row.dataset.src || '', row._translated || {})
         flowEditStatus.textContent = ''
         flowEditModal.classList.remove('hidden')
         setTimeout(() => {
@@ -3050,6 +3182,81 @@
         flowEditModal.classList.add('hidden')
         flowEditStatus.textContent = ''
         editingStartTime = null
+        editOriginal = null
+        editGeneration++
+        languageRetranslatesPending.clear()
+      }
+
+      async function postSegmentJson(path, method, body) {
+        const response = await fetch(`/api/session/${encodeURIComponent(sessionId)}/segments/${path}`, {
+          method,
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(payload.detail || `Request failed (${response.status})`)
+        return payload
+      }
+
+      function requireSource() {
+        const source = flowEditText.value.trim()
+        if (!source) {
+          flowEditStatus.textContent = 'Source text is required'
+          flowEditText.focus()
+        }
+        return source
+      }
+
+      async function retranslateAll() {
+        if (editPending || editingStartTime === null || languageRetranslatesPending.size) return
+        const corrected = requireSource()
+        if (!corrected) return
+        if (draftChanges().translated && !confirm('Discard edited translations and retranslate all?')) return
+        const startTime = editingStartTime
+        setEditPending('retranslate')
+        try {
+          const payload = await postSegmentJson('retranslate', 'POST', { start_time: startTime, corrected })
+          if (!payload.segment) throw new Error('Retranslation returned no segment.')
+          replaceCommitted(payload.segment)
+          setEditPending(false)
+          fillEditor(payload.segment.result?.corrected || payload.segment.text || '', payload.segment.result?.translated || {})
+          flowEditStatus.textContent = 'Retranslated'
+        } catch (error) {
+          setEditPending(false)
+          flowEditStatus.textContent = error.message || 'Retranslation failed.'
+        }
+      }
+
+      // Fills one field with a fresh translation of the current source; nothing is
+      // stored until Save.
+      async function retranslateLanguage(field, button) {
+        const lang = field.dataset.lang
+        if (editPending || editingStartTime === null || languageRetranslatesPending.has(lang)) return
+        const source = requireSource()
+        if (!source) return
+        if (field.value !== (editOriginal.translated[lang] || '') && !confirm('Replace your edit with a new translation?')) return
+        const generation = editGeneration
+        const startTime = editingStartTime
+        languageRetranslatesPending.add(lang)
+        button.disabled = true
+        updateSaveState()
+        flowEditStatus.textContent = `Translating ${lang}…`
+        try {
+          const payload = await postSegmentJson('retranslate-language', 'POST', { start_time: startTime, language: lang, corrected: source })
+          // Stale: the editor was reopened/closed or the source changed meanwhile.
+          if (generation !== editGeneration || flowEditText.value.trim() !== source) return
+          field.value = payload.translation || ''
+          flowEditStatus.textContent = ''
+        } catch (error) {
+          if (generation === editGeneration) flowEditStatus.textContent = error.message || 'Translation failed.'
+        } finally {
+          if (generation === editGeneration) {
+            languageRetranslatesPending.delete(lang)
+            button.disabled = !!editPending
+            updateSaveState()
+          }
+        }
       }
 
       flowContent.addEventListener('click', function (event) {
@@ -3060,60 +3267,41 @@
       })
       flowEditCancel.addEventListener('click', closeFlowEditor)
       flowEditClose.addEventListener('click', closeFlowEditor)
+      flowEditRetranslateAll.addEventListener('click', retranslateAll)
       flowEditModal.addEventListener('mousedown', function (event) {
         if (event.target === flowEditModal && !editPending) closeFlowEditor()
       })
-      // Enter submits; Shift/Ctrl/Cmd+Enter inserts a newline. Skip IME composition
-      // (keyCode 229 covers Safari) so confirming a CJK candidate never submits.
-      flowEditText.addEventListener('keydown', function (event) {
+      flowEditForm.addEventListener('input', updateSaveState)
+      // In any field: Enter saves, Shift+Enter inserts a newline, Ctrl/Cmd+Enter
+      // retranslates all. Skip IME composition (keyCode 229 covers Safari) so
+      // confirming a CJK candidate never submits.
+      flowEditForm.addEventListener('keydown', function (event) {
+        if (!(event.target instanceof HTMLTextAreaElement)) return
         if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229 || event.altKey) return
         if (event.shiftKey) return
         event.preventDefault()
-        if (event.ctrlKey || event.metaKey) {
-          if (flowEditText.value.length - (flowEditText.selectionEnd - flowEditText.selectionStart) >= flowEditText.maxLength) return
-          flowEditText.setRangeText('\n', flowEditText.selectionStart, flowEditText.selectionEnd, 'end')
-          return
-        }
-        flowEditForm.requestSubmit()
+        if (event.ctrlKey || event.metaKey) retranslateAll()
+        else flowEditForm.requestSubmit()
       })
 
       flowEditForm.addEventListener('submit', async function (event) {
         event.preventDefault()
-        if (editPending || editingStartTime === null) return
-        const submittedStartTime = editingStartTime
-        const corrected = flowEditText.value.trim()
-        if (!corrected) {
-          flowEditStatus.textContent = 'Source text is required.'
-          flowEditText.focus()
-          return
-        }
-
-        setEditPending(true)
-        flowEditModal.classList.add('hidden')
-        committedRows.get(segmentKey(submittedStartTime))?.focus()
+        if (editPending || editingStartTime === null || languageRetranslatesPending.size) return
+        if (!requireSource()) return
+        const changes = draftChanges()
+        if (!Object.keys(changes).length) return
+        const startTime = editingStartTime
+        setEditPending('save')
         try {
-          const response = await fetch(`/api/session/${encodeURIComponent(sessionId)}/segments/retranslate`, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              start_time: submittedStartTime,
-              corrected: corrected,
-            }),
-          })
-          const payload = await response.json().catch(() => ({}))
-          if (!response.ok) {
-            throw new Error(payload.detail || `Retranslation failed (${response.status})`)
-          }
-          if (!payload.segment) throw new Error('Retranslation returned no segment.')
+          const payload = await postSegmentJson('live', 'PUT', { start_time: startTime, ...changes })
+          if (!payload.segment) throw new Error('Save returned no segment.')
           replaceCommitted(payload.segment)
           setEditPending(false)
           closeFlowEditor()
+          committedRows.get(segmentKey(startTime))?.focus()
         } catch (error) {
           setEditPending(false)
-          flowEditStatus.textContent = error.message || 'Retranslation failed.'
-          flowEditModal.classList.remove('hidden')
-          flowEditText.focus()
+          flowEditStatus.textContent = error.message || 'Save failed.'
         }
       })
 
@@ -3138,6 +3326,7 @@
           liveSegmentsSinceConnect.add(segmentKey(data.segment.start_time))
         }
         replaceCommitted(data.segment)
+        refreshOpenEditor(data.segment)
       })
 
       // Reconcile every visible row after a reconnect. Live events can arrive while

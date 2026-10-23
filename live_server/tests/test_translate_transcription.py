@@ -99,6 +99,35 @@ class TranslateTranscriptionTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.translator.translate.call_args.kwargs["keywords"], "Sean Gau")
 
+    async def _committed(self, language="de", context=None):
+        return await ts.translate_committed_language(
+            "room", "line", language, context or [], None
+        )
+
+    async def test_committed_language_ignores_the_session_language_list(self) -> None:
+        context = [
+            {"result": {"translated": {"de": "eins", "en": "one"}}},
+            {"result": {"translated": {"en": "two"}}},
+            {"result": {"translated": {"de": "drei"}}},
+        ]
+        with patch.object(ts, "get_session_languages", AsyncMock(side_effect=RuntimeError("unused"))):
+            out = await self._committed("de", context)
+
+        self.assertEqual(out, "T:line")
+        kwargs = self.translator.translate.call_args.kwargs
+        self.assertTrue(kwargs["commit"])
+        self.assertEqual(kwargs["language"], "de")
+        self.assertEqual(kwargs["context"], "eins drei")
+        self.assertEqual(kwargs["prev_translation"], "")
+
+    async def test_committed_language_failure_returns_none(self) -> None:
+        self.translator.translate = AsyncMock(return_value=None)
+        self.assertIsNone(await self._committed())
+
+    async def test_committed_language_applies_the_language_dictionary(self) -> None:
+        self.rules = [{"from": "T:", "to": "DE:", "target": "de"}]
+        self.assertEqual(await self._committed("de"), "DE:line")
+
 
 if __name__ == "__main__":
     unittest.main()

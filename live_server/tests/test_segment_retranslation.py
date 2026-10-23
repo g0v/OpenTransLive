@@ -155,5 +155,56 @@ class SegmentRetranslationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(emit.await_args.kwargs, {"to": "socket"})
 
 
+class LiveSegmentUpdateTest(unittest.IsolatedAsyncioTestCase):
+    ORIGINAL = {
+        "_id": "segment-id",
+        "text": "raw",
+        "start_time": 10.0,
+        "end_time": 11.0,
+        "partial": False,
+        "result": {"corrected": "before", "translated": {"en": "old en", "ja": "old ja"}},
+    }
+
+    def setUp(self) -> None:
+        self.persist = AsyncMock()
+        self.publish = AsyncMock()
+        self.load = AsyncMock()
+        for name, mock in (
+            ("_load_committed_segment_with_context", self.load),
+            ("_persist_segment_revision", self.persist),
+            ("_publish_segment_updated", self.publish),
+        ):
+            patcher = patch.object(app, name, mock)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    async def _update(self, original, corrected, translated):
+        self.load.return_value = (original, [])
+        return await app._update_committed_segment("room", 10.0, corrected, translated)
+
+    async def test_translation_only_update_keeps_source_and_other_languages(self) -> None:
+        revised = await self._update(dict(self.ORIGINAL), None, {"en": "new en"})
+        self.assertEqual(revised["result"], {"corrected": "before", "translated": {"en": "new en", "ja": "old ja"}})
+        self.assertNotIn("_id", revised)
+        self.assertEqual(self.persist.await_args.args[2], revised)
+        self.publish.assert_awaited_once_with("room", revised)
+
+    async def test_source_only_update_keeps_translations(self) -> None:
+        revised = await self._update(dict(self.ORIGINAL), "after", None)
+        self.assertEqual(revised["result"], {"corrected": "after", "translated": {"en": "old en", "ja": "old ja"}})
+
+    async def test_segment_without_result_takes_corrected_from_text(self) -> None:
+        original = {key: value for key, value in self.ORIGINAL.items() if key != "result"}
+        revised = await self._update(original, None, {"en": "typed"})
+        self.assertEqual(revised["result"], {"corrected": "raw", "translated": {"en": "typed"}})
+
+    async def test_missing_segment_is_404_and_publishes_nothing(self) -> None:
+        with self.assertRaises(app.HTTPException) as ctx:
+            await self._update(None, "after", None)
+        self.assertEqual(ctx.exception.status_code, 404)
+        self.persist.assert_not_awaited()
+        self.publish.assert_not_awaited()
+
+
 if __name__ == "__main__":
     unittest.main()
