@@ -60,7 +60,7 @@ Wait for the green **Connected** indicator before starting. Changes to panel set
 | **Detect Lang** | Sets the spoken language for the selected engine. Use **Auto Detect** when the source language is not fixed. Changing the engine resets this setting. |
 | **Keywords** | Adds names, jargon, and event-specific phrases. Pin important entries so automatic keyword rotation does not remove them. |
 | **Dictionary** | Manages a multilingual glossary and direct replacement rules. Add a glossary term by hand with **Add term** (at least two spellings), or import a JSON file. Use **Flow** replacements for the source transcript or select a language to replace translated output. |
-| **Languages** | Selects target translation languages. Custom languages use BCP 47 codes such as `ja-JP`. |
+| **Languages** | Selects target translation languages. Custom languages use BCP 47 codes such as `ja-JP`. Clear every language for a transcription-only room: viewers and SRT export then get the corrected source under `source`. |
 | **Tone** | Sets a fluent, formal, casual, literal, or custom translation style. |
 | **Co-owners** | Lets the primary owner add or remove collaborators who can operate the panel and edit settings. |
 
@@ -82,7 +82,7 @@ The status bar shows the current viewer count and the amount of audio sent durin
 
 ### Current Flow
 
-- Click a committed sentence to edit its source and retranslate it.
+- Click a committed sentence to edit its source and every stored translation (active languages first, others under **Other languages**). **Save** (Enter) stores exactly what you typed, without AI, and updates viewers at once; only the fields you changed are sent. The arrow button next to a language fills that field with a fresh translation of the source without saving it. **Retranslate all** (Ctrl/Cmd+Enter) regenerates every active language from the source and saves.
 - Scrolling up stops the flow from following new lines and keeps the sentence you are reading in place; select **Latest** or scroll back to the bottom to follow again.
 - The sentence still being recognized (gray italics) cannot be edited, since the next recognition update replaces it. Click it to open **Add source replacement rule**: select the misrecognized words in the frozen transcript, enter the correct wording, and add the rule. Like a **Flow** replacement in **Dictionary**, it applies to every later partial and committed sentence, and the lines already shown in Current Flow are redisplayed with it; saved segments and captions viewers already saw are not changed. Rules cannot be added until the dictionary has loaded, so existing rules are never overwritten.
 - When the speaker does not pause and the sentence being recognized keeps growing, select **Commit current sentence** while the mic is on and a sentence is being recognized, as soon as you hear the sentence end. It is cut where you pressed, committed when the transcription service answers, and translated, even when it is short. If the service has not answered after about 1.5 s, the sentence is committed as shown, and words still being recognized then go to the next sentence.
