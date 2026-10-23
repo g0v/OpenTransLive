@@ -153,6 +153,14 @@ socket.on('disconnect', function () {
   console.log('WebSocket connection closed');
 });
 
+// A refused handshake (e.g. the server's connection caps) is not retried by the
+// client on its own; transport failures are (socket.active stays true).
+socket.on('connect_error', function (err) {
+  setSocketStatus('bg-red-500', 'Connection error: ' + ((err && err.message) || 'unknown'));
+  console.warn('WebSocket connect_error:', err);
+  if (!socket.active) setTimeout(function () { socket.connect(); }, 10000);
+});
+
 socket.on('connected', function (data) {
   console.log('WebSocket connected:', data);
 });

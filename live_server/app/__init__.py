@@ -4,9 +4,11 @@
 # See LICENSE for details.
 
 import asyncio
+import base64
 import collections
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -15,12 +17,14 @@ import uuid
 import weakref
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, AsyncIterator
 from urllib.parse import quote
 
 import anyio
 import dotenv
+import itsdangerous
 import redis.asyncio as redis
 import socketio
 from cachetools import TTLCache
@@ -60,9 +64,15 @@ from .socket_schema import (
     MAX_TRANSLATED_LANGS,
 )
 from .email_auth import (
+    OTP_CHALLENGE_COOKIE,
+    OTP_TTL,
     validate_email_format,
     generate_otp,
+    new_otp_challenge,
+    valid_otp_challenge,
+    client_network,
     store_otp,
+    discard_otp,
     verify_otp,
     send_otp_email,
     get_or_create_user,
@@ -139,6 +149,101 @@ class _SocketRateLimiter:
 
 
 _socket_limiter = _SocketRateLimiter()
+
+# Every Socket.IO client is an operator (panel, realtime/transcribe clients;
+# viewers use SSE), so these caps apply to every socket. Counts are in-memory,
+# which is correct with the single worker the deployment runs.
+_MAX_OPERATOR_SOCKETS = 5000
+_MAX_ANONYMOUS_OPERATOR_SOCKETS = 4000
+_MAX_OPERATOR_SOCKETS_PER_NETWORK = 50
+_MAX_OPERATOR_SOCKETS_PER_ACCOUNT = 50
+
+
+class _OperatorSocketLimiter:
+    """Concurrent-socket caps: total, per network, and per account (sockets
+    without an account share the anonymous cap instead)."""
+
+    def __init__(self):
+        self._total = 0
+        self._anonymous = 0
+        self._per_network: dict[str, int] = {}
+        self._per_account: dict[str, int] = {}
+
+    def acquire(self, network: str, account: str) -> bool:
+        if self._total >= _MAX_OPERATOR_SOCKETS:
+            return False
+        if self._per_network.get(network, 0) >= _MAX_OPERATOR_SOCKETS_PER_NETWORK:
+            return False
+        if account:
+            if self._per_account.get(account, 0) >= _MAX_OPERATOR_SOCKETS_PER_ACCOUNT:
+                return False
+            self._per_account[account] = self._per_account.get(account, 0) + 1
+        else:
+            if self._anonymous >= _MAX_ANONYMOUS_OPERATOR_SOCKETS:
+                return False
+            self._anonymous += 1
+        self._per_network[network] = self._per_network.get(network, 0) + 1
+        self._total += 1
+        return True
+
+    def release(self, network: str, account: str) -> None:
+        self._total = max(0, self._total - 1)
+        _decrement(self._per_network, network)
+        if account:
+            _decrement(self._per_account, account)
+        else:
+            self._anonymous = max(0, self._anonymous - 1)
+
+
+def _decrement(counts: dict[str, int], key: str) -> None:
+    remaining = counts.get(key, 0) - 1
+    if remaining > 0:
+        counts[key] = remaining
+    else:
+        counts.pop(key, None)
+
+
+class _NetworkRateLimiter:
+    """Sliding-window limiter keyed by client network. Separate from
+    _SocketRateLimiter, whose cleanup is per socket id and would leak these keys."""
+
+    def __init__(self, max_calls: int, window: float):
+        self._max_calls = max_calls
+        self._window = window
+        self._timestamps: dict[str, collections.deque] = {}
+        self._next_sweep = 0.0
+
+    @staticmethod
+    def _prune(stamps: collections.deque, cutoff: float) -> None:
+        while stamps and stamps[0] <= cutoff:
+            stamps.popleft()
+
+    def check(self, key: str) -> bool:
+        now = time.monotonic()
+        cutoff = now - self._window
+        # Once per window, drop networks that stopped connecting, so the map
+        # holds only recent ones without scanning it on every connect.
+        if now >= self._next_sweep:
+            self._next_sweep = now + self._window
+            for stale_key in list(self._timestamps):
+                stamps = self._timestamps[stale_key]
+                self._prune(stamps, cutoff)
+                if not stamps:
+                    del self._timestamps[stale_key]
+        stamps = self._timestamps.setdefault(key, collections.deque())
+        self._prune(stamps, cutoff)
+        if len(stamps) >= self._max_calls:
+            return False
+        stamps.append(now)
+        return True
+
+
+_operator_sockets = _OperatorSocketLimiter()
+_socket_slots: dict[str, tuple[str, str]] = {}  # socket id -> (network, account)
+_socket_upgrade_limiter = _NetworkRateLimiter(max_calls=120, window=60.0)
+# A socket that has not joined a session by then is disconnected.
+_JOIN_DEADLINE_SECS = 10.0
+_join_deadline_tasks: dict[str, asyncio.Task] = {}
 
 
 class _ManagerTTLCache(TTLCache):
@@ -1085,6 +1190,36 @@ async def _otp_email_identifier(request: Request) -> str:
         return f"otp:{email}:{func_name}"
     return await _identifier(request)
 
+def _request_network(request: Request) -> str:
+    return client_network(request.client.host if request.client else None)
+
+
+def _otp_cookie_challenge(request: Request) -> str:
+    value = request.cookies.get(OTP_CHALLENGE_COOKIE)
+    return value if valid_otp_challenge(value) else ""
+
+
+async def _otp_network_identifier(request: Request) -> str:
+    """Rate-limit OTP endpoints per client network (IPv4 address / IPv6 /64)."""
+    func_name = request.scope["route"].endpoint.__name__
+    return f"otp-net:{_request_network(request)}:{func_name}"
+
+
+async def _otp_email_network_identifier(request: Request) -> str:
+    """Rate-limit OTP sends per (email, network) so one client cannot spend the
+    whole per-email budget of an address it targets."""
+    try:
+        body = await request.json()
+        email = (body.get("email") or "").strip().lower()
+    except Exception:
+        email = ""
+    func_name = request.scope["route"].endpoint.__name__
+    network = _request_network(request)
+    if email and validate_email_format(email):
+        return f"otp:{email}:{network}:{func_name}"
+    return f"otp-net:{network}:{func_name}"
+
+
 def _user_has_realtime(user_doc: dict | None, email: str) -> bool:
     """The realtime tier rule: a site admin always qualifies, otherwise the
     user's stored `realtime_enabled` flag decides. Single source of truth for
@@ -1328,9 +1463,8 @@ async def _verify_socket_credentials(socket_id, session, secret_key, session_id,
 
     Re-checks verified sockets against the current room secret so rotating the
     room key immediately revokes stale co-owner sockets for sync events.
-    Used by handlers (e.g. `sync`) that can receive `secret_key`/`api_key` in the
-    event payload and should attempt to verify on the fly rather than require a
-    prior `join_session`.
+    Used by handlers that can receive `secret_key`/`api_key` in the event
+    payload. `sync` calls it only for the session the socket has joined.
     """
     # API-key sockets carry no room secret; authorize by key + room ownership.
     # (_authorize_api_key_socket does the `session['api_key']` fallback itself.)
@@ -2127,25 +2261,55 @@ async def admin_list_users(request: Request):
     return {"users": users}
 
 
-@app.post("/auth/send-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_otp_email_identifier))])
-async def send_otp(request: Request):
+@app.post("/auth/send-otp", dependencies=[
+    # Client-owned limits first, so a flood from one network never consumes the
+    # per-email budget of the address it targets.
+    Depends(RateLimiter(times=30, minutes=10, identifier=_otp_network_identifier)),
+    Depends(RateLimiter(times=100, hours=24, identifier=_otp_network_identifier)),
+    Depends(RateLimiter(times=5, hours=1, identifier=_otp_email_network_identifier)),
+    Depends(RateLimiter(times=10, hours=24, identifier=_otp_email_network_identifier)),
+    Depends(RateLimiter(times=10, seconds=60, identifier=_otp_email_identifier)),
+    Depends(RateLimiter(times=30, hours=24, identifier=_otp_email_identifier)),
+])
+async def send_otp(request: Request, response: Response):
     body = await request.json()
     email = body.get("email", "").strip()
     if not validate_email_format(email):
         raise HTTPException(status_code=400, detail="Invalid email address")
+    challenge = _otp_cookie_challenge(request) or new_otp_challenge()
     otp = generate_otp()
     logger.info("send_otp requested email=%s", _mask_email(email))
-    await store_otp(redis_client, email, otp)
+    wait = await store_otp(redis_client, email, otp, challenge=challenge, network=_request_network(request))
+    if wait > 0:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many incorrect codes. Please wait before requesting a new code.",
+            headers={"Retry-After": str(max(1, math.ceil(wait / 1000)))},
+        )
     try:
         await send_otp_email(email, otp, EMAIL_SETTINGS)
     except Exception as e:
         log_exception(logger, e, f"Failed to send OTP email to {_mask_email(email)}")
+        await discard_otp(redis_client, email, challenge)
         raise HTTPException(status_code=500, detail="Failed to send email")
+    # Binds the code to this browser: verifying needs the same cookie.
+    response.set_cookie(
+        OTP_CHALLENGE_COOKIE,
+        challenge,
+        max_age=OTP_TTL,
+        path="/auth",
+        httponly=True,
+        samesite="lax",
+        secure=IS_PRODUCTION,
+    )
     return {"status": "sent"}
 
 
-@app.post("/auth/verify-otp", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_otp_email_identifier))])
-async def verify_otp_endpoint(request: Request):
+@app.post("/auth/verify-otp", dependencies=[
+    Depends(RateLimiter(times=60, minutes=10, identifier=_otp_network_identifier)),
+    Depends(RateLimiter(times=10, seconds=60, identifier=_otp_email_identifier)),
+])
+async def verify_otp_endpoint(request: Request, response: Response):
     body = await request.json()
     email = body.get("email", "").strip()
     otp = body.get("otp", "").strip()
@@ -2153,9 +2317,13 @@ async def verify_otp_endpoint(request: Request):
         raise HTTPException(status_code=400, detail="Invalid email address")
     if not otp or not re.match(r'^\d{6}$', otp):
         raise HTTPException(status_code=400, detail="Invalid OTP format")
+    challenge = _otp_cookie_challenge(request)
+    if not challenge:
+        raise HTTPException(status_code=400, detail="Request a new sign-in code in this browser.")
 
-    if not await verify_otp(redis_client, email, otp):
+    if not await verify_otp(redis_client, email, otp, challenge=challenge, network=_request_network(request)):
         raise HTTPException(status_code=401, detail="Invalid or expired code")
+    response.delete_cookie(OTP_CHALLENGE_COOKIE, path="/auth")
 
     # Reuse existing user_uid from session or generate a new one. The DB will
     # only persist this on first creation; subsequent logins keep the existing
@@ -3716,6 +3884,64 @@ async def _auto_rejoin_from_auth(socket_id, auth) -> dict:
     return session_data
 
 
+_SESSION_COOKIE_MAX_AGE = 14 * 24 * 3600  # SessionMiddleware's default max_age
+
+
+async def _socket_account(environ, auth) -> str:
+    """The account behind a socket handshake, for the per-account cap: the
+    signed-in user from the Starlette session cookie (decoded the way
+    SessionMiddleware does), else the owner of an API key in `auth`. "" when
+    neither resolves, which counts toward the anonymous cap."""
+    try:
+        morsel = SimpleCookie(environ.get("HTTP_COOKIE", "")).get("session")
+        if morsel is not None:
+            signer = itsdangerous.TimestampSigner(str(SETTINGS["SECRET_KEY"]))
+            data = signer.unsign(morsel.value.encode("utf-8"), max_age=_SESSION_COOKIE_MAX_AGE)
+            uid = json.loads(base64.b64decode(data)).get("user_uid")
+            if isinstance(uid, str) and uid:
+                return uid
+    except Exception:
+        pass
+    try:
+        api_key = (auth or {}).get("api_key") if isinstance(auth, dict) else None
+        if looks_like_api_key(api_key):
+            user = await _user_from_api_key(api_key)
+            if user:
+                return str(user.get("user_uid") or user.get("email") or "")
+    except Exception as e:
+        log_exception(logger, e, "Socket account lookup failed")
+    return ""
+
+
+def _refuse_connection() -> None:
+    raise socketio.exceptions.ConnectionRefusedError(
+        "Too many connections, try again later", {"code": "rate_limited"}
+    )
+
+
+async def _enforce_join_deadline(socket_id: str) -> None:
+    """Disconnect a socket that has not joined a session in time, so idle
+    handshakes cannot pin connection slots."""
+    try:
+        await asyncio.sleep(_JOIN_DEADLINE_SECS)
+        try:
+            session = await sio.get_session(socket_id)
+        except KeyError:
+            return
+        if not session.get("session_id"):
+            logger.info("socket_join_deadline socket_hash=%s", _hash_token(socket_id))
+            await sio.disconnect(socket_id)
+    finally:
+        if _join_deadline_tasks.get(socket_id) is asyncio.current_task():
+            _join_deadline_tasks.pop(socket_id, None)
+
+
+def _cancel_join_deadline(socket_id: str) -> None:
+    task = _join_deadline_tasks.pop(socket_id, None)
+    if task is not None and task is not asyncio.current_task():
+        task.cancel()
+
+
 @sio.event
 async def connect(socket_id, environ, auth):
     """Handle client connection.
@@ -3723,16 +3949,37 @@ async def connect(socket_id, environ, auth):
     If `auth` includes a valid {session_id, secret_key}, the socket is
     pre-verified and joined to its room before any other event can arrive.
     The frontend still emits `join_session` as the canonical handshake
-    (it's idempotent and triggers the joined_session UI update).
+    (it's idempotent and triggers the joined_session UI update). A socket
+    that has not joined within _JOIN_DEADLINE_SECS is disconnected.
     """
-    session_data = await _auto_rejoin_from_auth(socket_id, auth)
-    await sio.save_session(socket_id, session_data)
-    logger.info(
-        "client_connected socket_hash=%s verified=%s",
-        _hash_token(socket_id),
-        session_data['verified'],
-    )
-    await sio.emit('connected', {'status': 'connected', 'client_id': socket_id}, to=socket_id)
+    # engineio fills REMOTE_ADDR with a constant; the ASGI scope has the real
+    # (proxy-resolved) client.
+    network = client_network(((environ.get("asgi.scope") or {}).get("client") or [None])[0])
+    if not _socket_upgrade_limiter.check(network):
+        logger.warning("connect rate_limited network_hash=%s", _hash_token(network))
+        _refuse_connection()
+    account = await _socket_account(environ, auth)
+    if not _operator_sockets.acquire(network, account):
+        logger.warning("connect socket_cap network_hash=%s", _hash_token(network))
+        _refuse_connection()
+    _socket_slots[socket_id] = (network, account)
+    try:
+        session_data = await _auto_rejoin_from_auth(socket_id, auth)
+        await sio.save_session(socket_id, session_data)
+        logger.info(
+            "client_connected socket_hash=%s verified=%s",
+            _hash_token(socket_id),
+            session_data['verified'],
+        )
+        await sio.emit('connected', {'status': 'connected', 'client_id': socket_id}, to=socket_id)
+        if not session_data.get('session_id'):
+            _join_deadline_tasks[socket_id] = asyncio.create_task(_enforce_join_deadline(socket_id))
+    except BaseException:
+        # A failed connect never gets a disconnect event, so free the slot here.
+        _operator_sockets.release(network, account)
+        _socket_slots.pop(socket_id, None)
+        _cancel_join_deadline(socket_id)
+        raise
 
 @sio.event
 async def time_sync(socket_id, data):
@@ -3750,6 +3997,10 @@ async def time_sync(socket_id, data):
 async def disconnect(socket_id):
     """Handle client disconnection"""
     _socket_limiter.cleanup(socket_id)
+    slot = _socket_slots.pop(socket_id, None)
+    if slot is not None:
+        _operator_sockets.release(*slot)
+    _cancel_join_deadline(socket_id)
     logger.info("client_disconnected socket_hash=%s", _hash_token(socket_id))
     # Admin lock is NOT cleared here: socket disconnect fires on page refresh
     # and transient network blips, not only on true tab-close. An abandoned lock is
@@ -3957,6 +4208,12 @@ async def sync(socket_id, data):
         await _emit_socket_error(socket_id, 'invalid_payload', error_msg)
         return
 
+    # Only the session this socket joined; credentials in the payload cannot
+    # open a second room.
+    if session.get('session_id') != session_id:
+        await _emit_unauthorized(socket_id)
+        return
+
     secret_key = data.get('secret_key') or session.get('secret_key')
     if not await _verify_socket_credentials(socket_id, session, secret_key, session_id, api_key=data.get('api_key')):
         return
@@ -3998,6 +4255,7 @@ async def join_session(socket_id, data):
         viewer_count = await _viewer_presence_op(session_id, label="viewer count")
         await _emit_joined_session(socket_id, session_id, viewer_count)
         await _emit_viewer_count(session_id, viewer_count)
+        _cancel_join_deadline(socket_id)
         # After joined_session, which repaints the client's indicator from scratch.
         await _replay_scribe_status(socket_id, session_id)
         logger.info(
@@ -4035,6 +4293,7 @@ async def join_session(socket_id, data):
     viewer_count = await _viewer_presence_op(session_id, label="viewer count")
     await _emit_joined_session(socket_id, session_id, viewer_count)
     await _emit_viewer_count(session_id, viewer_count)
+    _cancel_join_deadline(socket_id)
     # After joined_session, which repaints the client's indicator from scratch.
     await _replay_scribe_status(socket_id, session_id)
 
@@ -4048,6 +4307,11 @@ async def leave_session(socket_id, data):
             await _emit_socket_error(socket_id, 'invalid_payload', error_msg)
             return
         await sio.leave_room(socket_id, session_id)
+        session = await sio.get_session(socket_id)
+        if session.get('session_id') == session_id:
+            session.pop('session_id', None)
+            session.pop('verified', None)
+            await sio.save_session(socket_id, session)
         await sio.emit('left_session', {'session_id': session_id}, to=socket_id)
         logger.info(
             "leave_session sid_hash=%s socket_hash=%s",

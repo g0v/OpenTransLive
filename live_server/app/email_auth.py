@@ -3,6 +3,9 @@
 # Licensed under the GNU AGPL v3.0
 # See LICENSE for details.
 
+import hashlib
+import hmac
+import ipaddress
 import re
 import secrets
 from datetime import datetime, timezone
@@ -18,6 +21,11 @@ _EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
 
 OTP_TTL = 600  # seconds (10 minutes)
 OTP_MAX_ATTEMPTS = 5
+OTP_CHALLENGE_COOKIE = "otl_otp"  # matches the otl_ API-key prefix
+OTP_COOLDOWN_BASE = 60  # seconds; doubles per burn
+OTP_COOLDOWN_MAX = 900  # seconds
+OTP_BURN_WINDOW = 86400  # seconds; attempt and burn counters live this long
+_CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 
 def _mask_email(email: str | None) -> str:
@@ -44,41 +52,98 @@ def generate_otp() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
 
-def _otp_keys(email: str) -> tuple[str, str]:
-    key_email = email.lower()
-    return f"auth:otp:{key_email}", f"auth:otp:{key_email}:attempts"
+def new_otp_challenge() -> str:
+    return secrets.token_urlsafe(32)
 
 
-async def store_otp(redis_client, email: str, otp: str) -> None:
-    otp_key, attempts_key = _otp_keys(email)
-    pipe = redis_client.pipeline()
-    pipe.setex(otp_key, OTP_TTL, otp)
-    pipe.delete(attempts_key)
-    await pipe.execute()
+def valid_otp_challenge(value) -> bool:
+    return isinstance(value, str) and bool(_CHALLENGE_RE.match(value))
 
 
-async def verify_otp(redis_client, email: str, otp: str) -> bool:
-    """Verify OTP. Burns the code after OTP_MAX_ATTEMPTS wrong guesses so an
-    attacker cannot brute-force the 10-minute TTL across concurrent connections."""
-    otp_key, attempts_key = _otp_keys(email)
-    stored = await redis_client.get(otp_key)
+def client_network(host: str | None) -> str:
+    """Network key for per-client limits: an IPv4 address as is, an IPv6 address
+    as its /64 (one subscriber usually owns the whole prefix). IPv4-mapped IPv6
+    is unmapped and a zone is stripped; a non-IP host is returned verbatim and
+    an empty one as "unknown"."""
+    if not host:
+        return "unknown"
+    raw = host.split("%", 1)[0]
+    try:
+        addr = ipaddress.ip_address(raw)
+    except ValueError:
+        return host
+    if isinstance(addr, ipaddress.IPv6Address):
+        if addr.ipv4_mapped is not None:
+            return str(addr.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{addr}/64", strict=False))
+    return str(addr)
+
+
+def _otp_key(prefix: str, email: str, part: str) -> str:
+    digest = hashlib.sha256(f"{email.lower()}\x00{part}".encode("utf-8")).hexdigest()
+    return prefix + digest
+
+
+def _otp_keys(email: str, challenge: str, network: str) -> tuple[str, str, str, str]:
+    """(code, attempts, burns, cooldown). The code is bound to the browser that
+    requested it; guesses and cooldowns are counted per (email, network), so a
+    stranger who knows the address can neither burn nor lock out its code."""
+    return (
+        _otp_key("auth:otp:", email, challenge),
+        _otp_key("auth:otp-attempts:", email, network),
+        _otp_key("auth:otp-burns:", email, network),
+        _otp_key("auth:otp-cooldown:", email, network),
+    )
+
+
+async def store_otp(redis_client, email: str, otp: str, *, challenge: str, network: str) -> int:
+    """Store a code for this browser's challenge. Returns 0 when stored, else the
+    milliseconds of cooldown left (nothing stored). Never resets the attempt
+    counter, so resending does not grant fresh guesses."""
+    code_key, _, _, cooldown_key = _otp_keys(email, challenge, network)
+    wait = await redis_client.pttl(cooldown_key)
+    if wait is not None and wait > 0:
+        return wait
+    await redis_client.set(code_key, otp, px=OTP_TTL * 1000)
+    return 0
+
+
+async def discard_otp(redis_client, email: str, challenge: str) -> None:
+    await redis_client.delete(_otp_key("auth:otp:", email, challenge))
+
+
+async def verify_otp(redis_client, email: str, otp: str, *, challenge: str, network: str) -> bool:
+    """Verify the code stored for this browser's challenge. OTP_MAX_ATTEMPTS wrong
+    guesses from one network burn the code and start a cooldown that doubles per
+    burn (OTP_COOLDOWN_BASE up to OTP_COOLDOWN_MAX)."""
+    code_key, attempts_key, burns_key, cooldown_key = _otp_keys(email, challenge, network)
+    stored = await redis_client.get(code_key)
     if stored is None:
         return False
-    if stored != otp:
-        attempts = await redis_client.incr(attempts_key)
-        if attempts == 1:
-            await redis_client.expire(attempts_key, OTP_TTL)
-        if attempts >= OTP_MAX_ATTEMPTS:
-            pipe = redis_client.pipeline()
-            pipe.delete(otp_key)
-            pipe.delete(attempts_key)
-            await pipe.execute()
-        return False
+    if isinstance(stored, bytes):
+        stored = stored.decode("utf-8")
+
     pipe = redis_client.pipeline()
-    pipe.delete(otp_key)
-    pipe.delete(attempts_key)
-    await pipe.execute()
-    return True
+    pipe.incr(attempts_key)
+    pipe.pexpire(attempts_key, OTP_BURN_WINDOW * 1000)
+    attempts, _ = await pipe.execute()
+    if attempts > OTP_MAX_ATTEMPTS:
+        return False
+
+    if hmac.compare_digest(stored, otp):
+        # Only the request that actually deletes the code wins a concurrent race.
+        if await redis_client.delete(code_key) == 1:
+            await redis_client.delete(attempts_key, burns_key, cooldown_key)
+            return True
+        return False
+
+    if attempts >= OTP_MAX_ATTEMPTS:
+        await redis_client.delete(code_key, attempts_key)
+        burns = await redis_client.incr(burns_key)
+        await redis_client.pexpire(burns_key, OTP_BURN_WINDOW * 1000)
+        cooldown = min(OTP_COOLDOWN_BASE * 2 ** (burns - 1), OTP_COOLDOWN_MAX)
+        await redis_client.set(cooldown_key, "1", px=cooldown * 1000)
+    return False
 
 
 def _build_otp_email_text(otp: str) -> str:
