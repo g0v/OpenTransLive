@@ -271,6 +271,22 @@ class OtpRouteTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status_code, 500)
         self.assertEqual(self.redis.data, {})
 
+    def test_send_route_limits_are_ordered_client_first(self) -> None:
+        # Direct endpoint calls bypass the dependencies, so only this guards the
+        # order: per-network limits must reject a flood before it reaches the
+        # per-email budgets it would otherwise exhaust for the targeted address.
+        route = next(r for r in app.app.routes if getattr(r, "path", "") == "/auth/send-otp")
+        limits = [(d.dependency.times, d.dependency.milliseconds, d.dependency.identifier) for d in route.dependencies]
+        minute, hour, day = 60_000, 3_600_000, 86_400_000
+        self.assertEqual(limits, [
+            (30, 10 * minute, app._otp_network_identifier),
+            (100, day, app._otp_network_identifier),
+            (5, hour, app._otp_email_network_identifier),
+            (10, day, app._otp_email_network_identifier),
+            (10, minute, app._otp_email_identifier),
+            (30, day, app._otp_email_identifier),
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()
