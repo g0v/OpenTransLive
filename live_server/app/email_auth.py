@@ -102,7 +102,7 @@ async def store_otp(redis_client, email: str, otp: str, *, challenge: str, netwo
     counter, so resending does not grant fresh guesses."""
     code_key, _, _, cooldown_key = _otp_keys(email, challenge, network)
     wait = await redis_client.pttl(cooldown_key)
-    if wait is not None and wait > 0:
+    if wait > 0:
         return wait
     await redis_client.set(code_key, otp, px=OTP_TTL * 1000)
     return 0

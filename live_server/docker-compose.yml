@@ -41,11 +41,8 @@ services:
       SITE_TEMPLATES_DIR: ${SITE_TEMPLATES_DIR:-}
       SOURCE_REPOSITORY_URL: ${SOURCE_REPOSITORY_URL:-}
       SOURCE_REVISION: ${SOURCE_REVISION:-}
-      # Set to the reverse proxy's address (as seen from inside the container;
-      # through the published port that is usually the Docker bridge gateway)
-      # so per-network limits see real client IPs; the proxy must overwrite
-      # X-Forwarded-For. Left untrusted, every client behind the proxy shares
-      # one network key for the sign-in limits and socket caps.
+      # The reverse proxy's address as seen from the container (it must overwrite
+      # X-Forwarded-For); otherwise all proxied clients share one rate-limit network.
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
     volumes:
       - ./app:/app/app

@@ -187,12 +187,12 @@ class _OperatorSocketLimiter:
         return True
 
     def release(self, network: str, account: str) -> None:
-        self._total = max(0, self._total - 1)
+        self._total -= 1
         _decrement(self._per_network, network)
         if account:
             _decrement(self._per_account, account)
         else:
-            self._anonymous = max(0, self._anonymous - 1)
+            self._anonymous -= 1
 
 
 def _decrement(counts: dict[str, int], key: str) -> None:
@@ -1180,15 +1180,22 @@ async def _identifier(request: Request) -> str:
 async def _otp_email_identifier(request: Request) -> str:
     """Rate-limit OTP endpoints by submitted email so an attacker cannot
     multiply their quota by opening many connections / rotating cookies."""
+    email = await _otp_body_email(request)
+    func_name = request.scope["route"].endpoint.__name__
+    if email:
+        return f"otp:{email}:{func_name}"
+    return await _identifier(request)
+
+
+async def _otp_body_email(request: Request) -> str:
+    """The submitted email, lowercased, or "" when missing or malformed."""
     try:
         body = await request.json()
         email = (body.get("email") or "").strip().lower()
     except Exception:
-        email = ""
-    func_name = request.scope["route"].endpoint.__name__
-    if email and validate_email_format(email):
-        return f"otp:{email}:{func_name}"
-    return await _identifier(request)
+        return ""
+    return email if validate_email_format(email) else ""
+
 
 def _request_network(request: Request) -> str:
     return client_network(request.client.host if request.client else None)
@@ -1208,14 +1215,10 @@ async def _otp_network_identifier(request: Request) -> str:
 async def _otp_email_network_identifier(request: Request) -> str:
     """Rate-limit OTP sends per (email, network) so one client cannot spend the
     whole per-email budget of an address it targets."""
-    try:
-        body = await request.json()
-        email = (body.get("email") or "").strip().lower()
-    except Exception:
-        email = ""
+    email = await _otp_body_email(request)
     func_name = request.scope["route"].endpoint.__name__
     network = _request_network(request)
-    if email and validate_email_format(email):
+    if email:
         return f"otp:{email}:{network}:{func_name}"
     return f"otp-net:{network}:{func_name}"
 
@@ -3031,6 +3034,23 @@ async def update_session_segment_endpoint(request: Request, sid: str):
     return {"status": "ok", "segment": new_seg}
 
 
+def _parse_retranslate_source(body) -> tuple[float, str]:
+    """Validate the start_time and edited source line of a retranslate body."""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be an object")
+    start_time = body.get("start_time")
+    ok, start_time_error = check_timestamp(start_time, "start_time")
+    if not ok:
+        raise HTTPException(status_code=400, detail=start_time_error)
+    corrected = body.get("corrected")
+    if not isinstance(corrected, str):
+        raise HTTPException(status_code=400, detail="Invalid corrected text")
+    corrected = corrected.strip()
+    if not corrected or len(corrected) > 5000:
+        raise HTTPException(status_code=400, detail="Invalid corrected text")
+    return float(start_time), corrected
+
+
 @app.post("/api/session/{sid}/segments/retranslate", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_identifier))])
 async def retranslate_session_segment_endpoint(request: Request, sid: str):
     """Retranslate one committed segment and fan the revision out to live viewers.
@@ -3045,28 +3065,11 @@ async def retranslate_session_segment_endpoint(request: Request, sid: str):
         body = await request.json()
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Request body must be an object")
-    if "translated" in body:
+    if isinstance(body, dict) and "translated" in body:
         raise HTTPException(status_code=400, detail="translated is not accepted")
+    start_time, corrected = _parse_retranslate_source(body)
 
-    start_time = body.get("start_time")
-    ok, start_time_error = check_timestamp(start_time, "start_time")
-    if not ok:
-        raise HTTPException(status_code=400, detail=start_time_error)
-
-    corrected = body.get("corrected")
-    if not isinstance(corrected, str):
-        raise HTTPException(status_code=400, detail="Invalid corrected text")
-    corrected = corrected.strip()
-    if not corrected or len(corrected) > 5000:
-        raise HTTPException(status_code=400, detail="Invalid corrected text")
-
-    segment = await _retranslate_committed_segment(
-        sid,
-        float(start_time),
-        corrected,
-    )
+    segment = await _retranslate_committed_segment(sid, start_time, corrected)
     return {"status": "ok", "segment": segment}
 
 
@@ -3099,20 +3102,7 @@ async def retranslate_segment_language_endpoint(request: Request, sid: str):
         body = await request.json()
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=400, detail="Request body must be an object")
-
-    start_time = body.get("start_time")
-    ok, start_time_error = check_timestamp(start_time, "start_time")
-    if not ok:
-        raise HTTPException(status_code=400, detail=start_time_error)
-
-    corrected = body.get("corrected")
-    if not isinstance(corrected, str):
-        raise HTTPException(status_code=400, detail="Invalid corrected text")
-    corrected = corrected.strip()
-    if not corrected or len(corrected) > 5000:
-        raise HTTPException(status_code=400, detail="Invalid corrected text")
+    start_time, corrected = _parse_retranslate_source(body)
 
     language = body.get("language")
     if not isinstance(language, str):
@@ -3121,7 +3111,7 @@ async def retranslate_segment_language_endpoint(request: Request, sid: str):
     if not language or len(language) > 32 or "$" in language or "." in language:
         raise HTTPException(status_code=400, detail="Invalid language code")
 
-    original, context = await _load_committed_segment_with_context(sid, float(start_time))
+    original, context = await _load_committed_segment_with_context(sid, start_time)
     if original is None:
         raise HTTPException(status_code=404, detail="Segment not found")
 
@@ -3133,7 +3123,7 @@ async def retranslate_segment_language_endpoint(request: Request, sid: str):
     except Exception as e:
         log_exception(logger, e, f"Single-language retranslation failed for {_hash_token(sid)}")
         raise HTTPException(status_code=502, detail="Translation service failed") from e
-    if not isinstance(text, str) or not text.strip():
+    if not text or not text.strip():
         logger.warning("Single-language retranslation empty sid_hash=%s language=%s", _hash_token(sid), language)
         raise HTTPException(status_code=502, detail="Translation service failed")
     return {"translation": text}
@@ -4006,7 +3996,7 @@ async def _socket_account(environ, auth) -> str:
     except Exception:
         pass
     try:
-        api_key = (auth or {}).get("api_key") if isinstance(auth, dict) else None
+        api_key = auth.get("api_key") if isinstance(auth, dict) else None
         if looks_like_api_key(api_key):
             user = await _user_from_api_key(api_key)
             if user:
@@ -4025,23 +4015,21 @@ def _refuse_connection() -> None:
 async def _enforce_join_deadline(socket_id: str) -> None:
     """Disconnect a socket that has not joined a session in time, so idle
     handshakes cannot pin connection slots."""
+    await asyncio.sleep(_JOIN_DEADLINE_SECS)
+    # Unregistered first, so the disconnect handler below never cancels this task.
+    _join_deadline_tasks.pop(socket_id, None)
     try:
-        await asyncio.sleep(_JOIN_DEADLINE_SECS)
-        try:
-            session = await sio.get_session(socket_id)
-        except KeyError:
-            return
-        if not session.get("session_id"):
-            logger.info("socket_join_deadline socket_hash=%s", _hash_token(socket_id))
-            await sio.disconnect(socket_id)
-    finally:
-        if _join_deadline_tasks.get(socket_id) is asyncio.current_task():
-            _join_deadline_tasks.pop(socket_id, None)
+        session = await sio.get_session(socket_id)
+    except KeyError:
+        return
+    if not session.get("session_id"):
+        logger.info("socket_join_deadline socket_hash=%s", _hash_token(socket_id))
+        await sio.disconnect(socket_id)
 
 
 def _cancel_join_deadline(socket_id: str) -> None:
     task = _join_deadline_tasks.pop(socket_id, None)
-    if task is not None and task is not asyncio.current_task():
+    if task is not None:
         task.cancel()
 
 
@@ -4081,7 +4069,6 @@ async def connect(socket_id, environ, auth):
         # A failed connect never gets a disconnect event, so free the slot here.
         _operator_sockets.release(network, account)
         _socket_slots.pop(socket_id, None)
-        _cancel_join_deadline(socket_id)
         raise
 
 @sio.event
