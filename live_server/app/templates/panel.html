@@ -349,7 +349,7 @@
       </div>
       <div class="modal-body flex min-h-0 flex-col gap-3 overflow-y-auto p-4">
         <p class="text-[11px] leading-snug text-[#9eacbf]">
-          Save writes the source and edited translations as typed (no AI) and updates viewers at once. Retranslate all regenerates every language from the source.
+          Save writes the source and edited translations as typed (no AI) and updates viewers at once. Retranslate all regenerates every language from the source. Delete removes the sentence for everyone.
         </p>
         <label for="flow-edit-text" class="text-xs font-semibold text-[#d7e1ed]">Source text</label>
         <textarea id="flow-edit-text" rows="3" maxlength="5000"
@@ -366,6 +366,10 @@
           <span class="shrink-0 text-[11px] leading-snug text-[#7f8ea3]">Enter to save · Shift+Enter for newline · Ctrl+Enter to retranslate all</span>
         </div>
         <div class="flex justify-end gap-2">
+          <button id="flow-edit-delete" type="button" class="mr-auto inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded border border-red-900 px-2 py-1 text-xs font-bold text-red-300 transition-colors hover:bg-red-950 hover:text-red-100 disabled:cursor-wait disabled:opacity-50">
+            <iconify-icon id="flow-edit-delete-spinner" icon="ph:spinner-gap" width="15" height="15" class="hidden animate-spin"></iconify-icon>
+            <span id="flow-edit-delete-label">Delete</span>
+          </button>
           <button id="flow-edit-cancel" type="button" class="panel-add-btn disabled:cursor-wait disabled:opacity-50">Cancel</button>
           <button id="flow-edit-retranslate-all" type="button" class="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded border border-gray-600 px-2 py-1 text-xs font-bold text-gray-300 transition-colors hover:bg-gray-700 hover:text-white disabled:cursor-wait disabled:opacity-50">
             <iconify-icon id="flow-edit-retranslate-spinner" icon="ph:spinner-gap" width="15" height="15" class="hidden animate-spin"></iconify-icon>
@@ -2661,6 +2665,9 @@
       const flowEditRetranslateAll = document.getElementById('flow-edit-retranslate-all')
       const flowEditRetranslateLabel = document.getElementById('flow-edit-retranslate-label')
       const flowEditRetranslateSpinner = document.getElementById('flow-edit-retranslate-spinner')
+      const flowEditDelete = document.getElementById('flow-edit-delete')
+      const flowEditDeleteLabel = document.getElementById('flow-edit-delete-label')
+      const flowEditDeleteSpinner = document.getElementById('flow-edit-delete-spinner')
       const flowEditActive = document.getElementById('flow-edit-active')
       const flowEditOther = document.getElementById('flow-edit-other')
       const flowEditOtherWrap = document.getElementById('flow-edit-other-wrap')
@@ -2679,7 +2686,7 @@
       // lands after newer flow-only ones can't drag the line back to older text.
       let partialEndTime = 0
       let editingStartTime = null
-      let editPending = false // false, 'save' or 'retranslate'
+      let editPending = false // false, 'save', 'retranslate' or 'delete'
       // Values the open editor started from; a field equal to its entry is unedited.
       let editOriginal = null
       let editGeneration = 0 // bumped on every open/close; drops stale translation replies
@@ -2692,9 +2699,11 @@
         if (!flowCountEl) return
         flowCountEl.textContent = editPending === 'save'
           ? 'Saving…'
-          : editPending
-            ? 'Retranslating…'
-            : segmentCount + (segmentCount === 1 ? ' segment' : ' segments')
+          : editPending === 'delete'
+            ? 'Deleting…'
+            : editPending
+              ? 'Retranslating…'
+              : segmentCount + (segmentCount === 1 ? ' segment' : ' segments')
       }
 
       // ── Scroll lock ────────────────────────────────────────────────────────
@@ -2963,6 +2972,21 @@
         return true
       }
 
+      // Drop a deleted line; an editor open on it closes since there is nothing left to edit.
+      function removeCommitted(startTime) {
+        const key = segmentKey(startTime)
+        const row = committedRows.get(key)
+        if (row) {
+          const anchor = captureScroll()
+          row.remove()
+          committedRows.delete(key)
+          segmentCount = Math.max(0, segmentCount - 1)
+          updateCount()
+          restoreScroll(anchor)
+        }
+        if (isEditorOpenOn(startTime) && !editPending) closeFlowEditor()
+      }
+
       // `fresh` marks a segment that arrived as its own live event. A segment
       // backfilled when the panel joins may be minutes old, so rendering latency
       // for that snapshot would produce a meaningless number.
@@ -3079,12 +3103,12 @@
           || !Object.keys(draftChanges()).length
       }
 
-      // `pending` is false or the action in flight: 'save' or 'retranslate'.
+      // `pending` is false or the action in flight: 'save', 'retranslate' or 'delete'.
       function setEditPending(pending) {
         editPending = pending
         flowEditModal.dataset.modalPending = pending ? 'true' : 'false'
         flowEditForm.setAttribute('aria-busy', pending ? 'true' : 'false')
-        for (const control of [flowEditText, flowEditRetranslateAll, flowEditCancel, flowEditClose, ...languageFields()]) {
+        for (const control of [flowEditText, flowEditRetranslateAll, flowEditDelete, flowEditCancel, flowEditClose, ...languageFields()]) {
           control.disabled = !!pending
         }
         for (const button of flowEditForm.querySelectorAll('.flow-edit-lang-retranslate')) {
@@ -3094,7 +3118,9 @@
         flowEditSubmitLabel.textContent = pending === 'save' ? 'Saving…' : 'Save'
         flowEditRetranslateSpinner.classList.toggle('hidden', pending !== 'retranslate')
         flowEditRetranslateLabel.textContent = pending === 'retranslate' ? 'Retranslating…' : 'Retranslate all'
-        if (pending) flowEditStatus.textContent = pending === 'save' ? 'Saving…' : 'Retranslating…'
+        flowEditDeleteSpinner.classList.toggle('hidden', pending !== 'delete')
+        flowEditDeleteLabel.textContent = pending === 'delete' ? 'Deleting…' : 'Delete'
+        if (pending) flowEditStatus.textContent = { save: 'Saving…', retranslate: 'Retranslating…', delete: 'Deleting…' }[pending]
         updateSaveState()
         updateCount()
       }
@@ -3266,6 +3292,21 @@
         }
       }
 
+      async function deleteSegment() {
+        if (editPending || editingStartTime === null) return
+        if (!confirm('Delete this sentence for everyone? This cannot be undone.')) return
+        const startTime = editingStartTime
+        setEditPending('delete')
+        try {
+          await postSegmentJson('live', 'DELETE', { start_time: startTime })
+          setEditPending(false)
+          removeCommitted(startTime)
+        } catch (error) {
+          setEditPending(false)
+          flowEditStatus.textContent = error.message || 'Delete failed.'
+        }
+      }
+
       flowContent.addEventListener('click', function (event) {
         const row = event.target.closest('button.flow-item, button.flow-item-partial')
         if (!row || !flowContent.contains(row)) return
@@ -3275,6 +3316,7 @@
       flowEditCancel.addEventListener('click', closeFlowEditor)
       flowEditClose.addEventListener('click', closeFlowEditor)
       flowEditRetranslateAll.addEventListener('click', retranslateAll)
+      flowEditDelete.addEventListener('click', deleteSegment)
       flowEditModal.addEventListener('mousedown', function (event) {
         if (event.target === flowEditModal && !editPending) closeFlowEditor()
       })
@@ -3334,6 +3376,11 @@
         }
         replaceCommitted(data.segment)
         refreshOpenEditor(data.segment)
+      })
+
+      socket.on('segment_deleted', function (data) {
+        if (!data || data.session_id !== sessionId) return
+        removeCommitted(data.start_time)
       })
 
       // Reconcile every visible row after a reconnect. Live events can arrive while

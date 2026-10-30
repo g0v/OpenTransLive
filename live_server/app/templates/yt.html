@@ -759,6 +759,15 @@
       return true;
     }
 
+    function removeCommittedSegment(startTime) {
+      const list = transcriptionsData.transcriptions;
+      const index = list.findIndex(item => item.start_time === startTime);
+      if (index !== -1) list.splice(index, 1);
+      const key = segmentKey(startTime);
+      displayedSubtitleSpans.get(key)?.remove();
+      displayedSubtitleSpans.delete(key);
+    }
+
     function handleTranscriptionUpdate(event) {
       if (event.lastEventId) lastEventId = event.lastEventId;
       const data = JSON.parse(event.data);
@@ -799,6 +808,11 @@
         const data = JSON.parse(event.data);
         if (!data?.segment || !replaceCommittedSegment(data.segment)) return;
         populateLanguageSelect();
+      });
+      stream.addEventListener('segment_deleted', function (event) {
+        const data = JSON.parse(event.data);
+        if (data?.start_time == null) return;
+        removeCommittedSegment(data.start_time);
       });
       stream.addEventListener('segment_snapshot', function (event) {
         const data = JSON.parse(event.data);

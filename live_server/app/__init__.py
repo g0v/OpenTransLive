@@ -297,6 +297,10 @@ _partial_last_emit_started: TTLCache = TTLCache(
 _partial_rmw_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 # Per-segment locks serialize the queued initial write and every later revision.
 _segment_write_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
+# Segments deleted from the panel, keyed like _segment_write_locks. A deleted
+# line's initial write can still be waiting in segment_write_queue; this stops it
+# from re-creating the document. The TTL comfortably outlasts the queue.
+_deleted_segments: TTLCache = TTLCache(maxsize=10_000, ttl=600)
 # Per-session locks to prevent concurrent _get_or_create_scribe_manager calls from racing.
 # WeakValueDictionary so entries vanish once no caller is holding / waiting on the lock;
 # otherwise every session_id ever seen would leak an asyncio.Lock for the life of the process.
@@ -894,7 +898,9 @@ def _transcription_event_id(payload: dict) -> str:
 
 
 def _format_sse(payload: dict, *, event: str = "transcription_update") -> str:
-    event_id = _transcription_event_id(payload)
+    # Only transcription updates carry an id: Last-Event-ID replay resumes them,
+    # and another event's start_time must not move the client's resume point.
+    event_id = _transcription_event_id(payload) if event == "transcription_update" else ""
     data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     lines = [f"event: {event}", f"data: {data}"]
     if event_id:
@@ -922,6 +928,19 @@ async def _publish_segment_updated(sid: str, segment: dict) -> None:
     await _publish_transcription_update(
         sid,
         {"__sse_event": "segment_updated", "segment": segment},
+    )
+
+
+async def _publish_segment_deleted(sid: str, start_time: float) -> None:
+    """Tell panels and viewers to drop one committed segment."""
+    await sio.emit(
+        "segment_deleted",
+        {"session_id": sid, "start_time": start_time},
+        room=sid,
+    )
+    await _publish_transcription_update(
+        sid,
+        {"__sse_event": "segment_deleted", "start_time": start_time},
     )
 
 
@@ -1084,6 +1103,13 @@ async def _session_sse_stream(
                 yield _format_sse(
                     {"segment": payload.get("segment") or {}},
                     event="segment_updated",
+                )
+                continue
+
+            if payload.get("__sse_event") == "segment_deleted":
+                yield _format_sse(
+                    {"start_time": payload.get("start_time")},
+                    event="segment_deleted",
                 )
                 continue
 
@@ -3073,6 +3099,24 @@ async def retranslate_session_segment_endpoint(request: Request, sid: str):
     return {"status": "ok", "segment": segment}
 
 
+@app.delete("/api/session/{sid}/segments/live", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def delete_live_segment_endpoint(request: Request, sid: str):
+    """Delete a committed segment and drop it from live viewers and panels.
+    Panel-lock-holder only, like the other live segment edits."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _verify_session_lock_holder(request, sid)
+    try:
+        body = await request.json()
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+    start_time = body.get("start_time") if isinstance(body, dict) else None
+    ok, start_time_error = check_timestamp(start_time, "start_time")
+    if not ok:
+        raise HTTPException(status_code=400, detail=start_time_error)
+    await _delete_committed_segment(sid, float(start_time))
+    return {"status": "deleted"}
+
+
 @app.put("/api/session/{sid}/segments/live", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def update_live_segment_endpoint(request: Request, sid: str):
     """Save a committed segment's source and/or translations as typed (no AI) and
@@ -3132,20 +3176,10 @@ async def retranslate_segment_language_endpoint(request: Request, sid: str):
 @app.delete("/api/session/{sid}/segments", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def delete_session_segment_endpoint(request: Request, sid: str, start_time: float):
     """Delete a saved committed segment identified by start_time. Owner-only.
-    Also removes the segment from the Redis cache if present."""
+    Removes it from the Redis cache and from connected viewers and panels."""
     sid = sanitize_query_param(sid, "session ID")
     await _require_session_owner(request, sid)
-
-    result = await transcription_segments_collection.delete_one(
-        {"sid": sid, "start_time": start_time, "partial": {"$ne": True}}
-    )
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Segment not found")
-
-    zset_key = f"transcription:{sid}:list"
-    if await redis_client.exists(zset_key):
-        await redis_client.zremrangebyscore(zset_key, start_time, start_time)
-
+    await _delete_committed_segment(sid, start_time)
     return {"status": "deleted"}
 
 
@@ -3519,6 +3553,22 @@ async def _update_committed_segment(
         return revised
 
 
+async def _delete_committed_segment(sid: str, start_time: float) -> None:
+    """Delete one committed segment from Mongo and the Redis cache, then publish it."""
+    key = _segment_lock_key(sid, start_time)
+    async with _get_or_create_lock(_segment_write_locks, key):
+        result = await transcription_segments_collection.delete_one(
+            {"sid": sid, "start_time": start_time, "partial": {"$ne": True}}
+        )
+        # A just-committed line may exist only in the cache, its initial write
+        # still queued; the tombstone makes that write a no-op.
+        removed = await redis_client.zremrangebyscore(f"transcription:{sid}:list", start_time, start_time)
+        if not result.deleted_count and not removed:
+            raise HTTPException(status_code=404, detail="Segment not found")
+        _deleted_segments[key] = True
+    await _publish_segment_deleted(sid, start_time)
+
+
 def _seconds_to_srt_timestamp(seconds: float) -> str:
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
@@ -3562,6 +3612,8 @@ async def _save_segment_to_mongo(sid, segment, stream_start_time):
     """Insert one committed segment once and refresh session metadata."""
     start_time = float(segment["start_time"])
     async with _get_or_create_lock(_segment_write_locks, _segment_lock_key(sid, start_time)):
+        if _segment_lock_key(sid, start_time) in _deleted_segments:
+            return
         now = datetime.now(timezone.utc)
         await transcription_segments_collection.update_one(
             {"sid": sid, "start_time": start_time},

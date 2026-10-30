@@ -1761,6 +1761,13 @@
       return true;
     }
 
+    function removeLoadedSegment(startTime) {
+      const i = findLoadedSegmentIndex(startTime);
+      if (i === -1) return false;
+      transcriptionsData["transcriptions"].splice(i, 1);
+      return true;
+    }
+
     function upsertSegment(seg, provisional) {
       const list = transcriptionsData["transcriptions"];
       const i = findLoadedSegmentIndex(seg.start_time);
@@ -1841,6 +1848,11 @@
         const data = JSON.parse(event.data);
         if (!data?.segment || !replaceLoadedSegment(data.segment)) return;
         syncLanguagesFromData();
+        refreshView();
+      });
+      stream.addEventListener('segment_deleted', function (event) {
+        const data = JSON.parse(event.data);
+        if (!removeLoadedSegment(data?.start_time)) return;
         refreshView();
       });
       stream.addEventListener('segment_snapshot', function (event) {
