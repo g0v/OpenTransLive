@@ -20,7 +20,7 @@ Language: English ([繁體中文](README.md))
 - **Edit history**: `/edit/{session_id}` to revise or delete committed segments and all translations
 - **Viewer broadcast**: Viewer pages (`/rt`, `/yt`) receive subtitles over SSE — no login, no audience cap
 - **YouTube sync**: `/yt/{session_id}` aligns subtitles with a YouTube live stream or VOD
-- **Export**: Full JSON and per-language SRT
+- **Export**: Full JSON, per-language SRT, and a zip of per-language plain-text TXT
 - **Storage**: MongoDB persistence with Redis for caching and multi-server scaling
 
 ## Project Structure

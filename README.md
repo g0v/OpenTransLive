@@ -20,7 +20,7 @@ OpenTransLive 是一套**為活動舉辦方（event organizers）打造的廣播
 - **歷史字幕編輯**：`/edit/{session_id}` 可修改 / 刪除已儲存片段並更新所有翻譯
 - **觀眾廣播**：觀眾頁 (`/rt`、`/yt`) 透過 SSE 接收字幕，免登入、無人數上限
 - **YouTube 整合**：`/yt/{session_id}` 可與 YouTube 直播或影片時間軸同步
-- **匯出**：JSON 全紀錄與單一語言 SRT 匯出
+- **匯出**：JSON 全紀錄、單一語言 SRT，以及各語言純文字 TXT（zip）匯出
 - **資料庫**：MongoDB 持久化，Redis 提供快取與多伺服器擴展
 
 ## 專案結構

@@ -31,7 +31,7 @@ Under **Start New Session**, enter a session ID and select **Start Session**.
 
 ![My Sessions page with the Start Session button highlighted](orca-paste-1788172278888-e2d150d5-3226-46cc-b6ea-ba2f9ab361ad.png)
 
-The session ID becomes part of the public viewer URL, so use a short, recognizable value without private information. Starting a new ID creates the session and opens its panel.
+The session ID becomes part of the public viewer URL, so use a short, recognizable value without private information. Starting a new ID creates the session and opens its panel. If another account already uses the ID, the form flags it and stays on the page; choose a different one.
 
 Existing sessions appear below the form:
 
@@ -55,7 +55,7 @@ Wait for the green **Connected** indicator before starting. Changes to panel set
 |---|---|
 | **Key** | Copies the session key used by external broadcast clients. Do not include it in a public viewer link. |
 | **Mic** | Starts or stops browser-microphone transcription. While active, the level meter shows the incoming signal. |
-| **Audio device** | Selects the microphone, mixer, or virtual audio cable to send. |
+| **Audio device** | Selects the microphone, mixer, or virtual audio cable to send. Desktop Chrome and Edge also offer **Tab or system audio**: turning the mic on opens the share picker; pick a tab (or the entire screen for system audio) and turn on audio sharing. A share without audio leaves the mic off with a notice; stopping the share turns the mic off and does not reopen the picker. |
 | **Engine** | Chooses **Server Default**, **ElevenLabs Scribe**, or **Gemini Transcribe**. |
 | **Detect Lang** | Sets the spoken language for the selected engine. Use **Auto Detect** when the source language is not fixed. Changing the engine resets this setting. |
 | **Keywords** | Adds names, jargon, and event-specific phrases. Pin important entries so automatic keyword rotation does not remove them. |
@@ -82,7 +82,7 @@ The status bar shows the current viewer count and the amount of audio sent durin
 
 ### Current Flow
 
-- Click a committed sentence to edit its source and every stored translation (active languages first, others under **Other languages**). **Save** (Enter) stores exactly what you typed, without AI, and updates viewers at once; only the fields you changed are sent. The arrow button next to a language fills that field with a fresh translation of the source without saving it. **Retranslate all** (Ctrl/Cmd+Enter) regenerates every active language from the source and saves.
+- Click a committed sentence to edit its source and every stored translation (active languages first, others under **Other languages**). **Save** (Enter in a translation, or Ctrl/Cmd+Enter in any field) stores exactly what you typed, without AI, and updates viewers at once; only the fields you changed are sent. The arrow button next to a language fills that field with a fresh translation of the source without saving it. **Retranslate all** (Enter in the source) regenerates every active language from the source and saves. **Delete** permanently removes the sentence after you confirm, and panels and viewers drop it at once.
 - Scrolling up stops the flow from following new lines and keeps the sentence you are reading in place; select **Latest** or scroll back to the bottom to follow again.
 - The sentence still being recognized (gray italics) cannot be edited, since the next recognition update replaces it. Click it to open **Add source replacement rule**: select the misrecognized words in the frozen transcript, enter the correct wording, and add the rule. Like a **Flow** replacement in **Dictionary**, it applies to every later partial and committed sentence, and the lines already shown in Current Flow are redisplayed with it; saved segments and captions viewers already saw are not changed. Rules cannot be added until the dictionary has loaded, so existing rules are never overwritten.
 - When the speaker does not pause and the sentence being recognized keeps growing, select **Commit current sentence** while the mic is on and a sentence is being recognized, as soon as you hear the sentence end. It is cut where you pressed, committed when the transcription service answers, and translated, even when it is short. If the service has not answered after about 1.5 s, the sentence is committed as shown, and words still being recognized then go to the next sentence.
@@ -150,10 +150,10 @@ Use the **Offset** control on that page if the subtitles lead or lag behind the 
 
 1. Return to **My Sessions**.
 2. Select **Edit** beside the session.
-3. Correct translated text or delete unwanted segments. Saved edits persist to the database; reload an open viewer to display them.
-4. Select **Download JSON** for the full session, or an **SRT** button for one language.
+3. Correct translated text or delete unwanted segments. Saved edits persist to the database; reload an open viewer to display them. Deletions leave open viewers at once.
+4. Select **Download JSON** for the full session, **TXT · all languages** for a plain-text zip (`{id}.source.txt` plus `{id}.{lang}.txt` per language, one line per segment), or an **SRT** button for one language.
 
-An SRT export contains only segments that have output for the selected language.
+SRT exports and per-language TXT files contain only segments that have output for that language.
 
 ## Troubleshooting
 

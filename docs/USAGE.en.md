@@ -64,6 +64,7 @@ The owner or a co-owner can open `/edit/{session_id}` to:
 
 - Full JSON export: `/download/{session_id}`
 - Single-language SRT export: `/download/{session_id}/srt/{lang}`
+- Per-language plain-text export (zip, one line per segment): `/download/{session_id}/txt`
 
 Examples:
 
@@ -93,6 +94,7 @@ Constraints:
 | `/edit/{session_id}` | Historical subtitle editor | Owner or co-owner |
 | `/download/{session_id}` | JSON export | Per session policy |
 | `/download/{session_id}/srt/{lang}` | SRT export | Per session policy |
+| `/download/{session_id}/txt` | TXT zip export | Per session policy |
 
 ## 4. Panel Settings
 
@@ -179,7 +181,7 @@ Requires session management permission.
 | `POST` | `/api/session/{sid}/co-owners` | Add a co-owner |
 | `DELETE` | `/api/session/{sid}/co-owners/{email}` | Remove a co-owner |
 | `PUT` | `/api/session/{sid}/segments` | Update stored subtitle segments |
-| `DELETE` | `/api/session/{sid}/segments` | Delete stored subtitle segments |
+| `DELETE` | `/api/session/{sid}/segments` | Delete stored subtitle segments and drop them from open panels and viewers |
 
 ### 5.4 Admin API
 
@@ -268,6 +270,7 @@ Key management API:
 
 - `/download/{session_id}` returns JSON.
 - `/download/{session_id}/srt/{lang}` returns SRT.
+- `/download/{session_id}/txt` returns a zip with `{id}.source.txt` and `{id}.{lang}.txt` per language.
 - SRT timing starts at the first segment.
 - Unknown languages return 404.
 

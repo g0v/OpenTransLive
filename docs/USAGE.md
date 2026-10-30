@@ -66,6 +66,7 @@ Session 擁有者或 co-owner 可開啟 `/edit/{session_id}`：
 
 - 匯出整份 JSON：`/download/{session_id}`
 - 匯出單一語言 SRT：`/download/{session_id}/srt/{lang}`
+- 匯出各語言純文字 TXT（zip，一句一行）：`/download/{session_id}/txt`
 
 範例：
 
@@ -96,6 +97,7 @@ Session 擁有者或 co-owner 可開啟 `/edit/{session_id}`：
 | `/edit/{session_id}`                | 歷史字幕編輯頁        | 擁有者或 co-owner  |
 | `/download/{session_id}`            | 匯出 JSON        | 視 session 權限而定 |
 | `/download/{session_id}/srt/{lang}` | 匯出單語言 SRT      | 視 session 權限而定 |
+| `/download/{session_id}/txt`        | 匯出各語言 TXT zip  | 視 session 權限而定 |
 
 
 ## 4. Panel 可調整項目
@@ -190,7 +192,7 @@ Server to client：
 | `POST`   | `/api/session/{sid}/co-owners`         | 新增 co-owner                                |
 | `DELETE` | `/api/session/{sid}/co-owners/{email}` | 移除 co-owner                                |
 | `PUT`    | `/api/session/{sid}/segments`          | 更新已儲存字幕片段                                  |
-| `DELETE` | `/api/session/{sid}/segments`          | 刪除已儲存字幕片段                                  |
+| `DELETE` | `/api/session/{sid}/segments`          | 刪除已儲存字幕片段，並從已開啟的 panel 與觀眾頁移除       |
 
 
 ### 5.4 管理員 API
@@ -286,6 +288,7 @@ Key 管理 API：
 
 - `/download/{session_id}` 可輸出 JSON。
 - `/download/{session_id}/srt/{lang}` 可輸出 SRT。
+- `/download/{session_id}/txt` 可輸出含 `{id}.source.txt` 與各語言 `{id}.{lang}.txt` 的 zip。
 - SRT 時間軸從第一段字幕開始計算。
 - 指定不存在的語言時會回傳 404。
 
