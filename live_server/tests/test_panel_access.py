@@ -193,6 +193,33 @@ class PanelAccessTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rooms.docs["room1"]["admin_uid"], f"uid-{CO_OWNER}")
 
 
+class RoomAvailableTest(unittest.IsolatedAsyncioTestCase):
+    """The dashboard's pre-check must agree with who /panel/{sid} lets in."""
+
+    async def _available(self, rooms: _Rooms, email: str, sid: str = "room1") -> bool:
+        users = AsyncMock()
+        users.find_one.side_effect = lambda q: {"email": q["email"]} if "email" in q else None
+        with (
+            patch.object(app, "rooms_collection", rooms),
+            patch.object(app, "users_collection", users),
+            patch.dict(app.EMAIL_SETTINGS, {"ADMIN_EMAILS": [ADMIN]}),
+        ):
+            return (await app.room_available(_request(email), sid))["available"]
+
+    async def test_owners_and_admins_may_use_their_room(self) -> None:
+        for email in (OWNER, CO_OWNER, ADMIN):
+            with self.subTest(email=email):
+                self.assertTrue(await self._available(_Rooms(_owned_room()), email))
+
+    async def test_another_users_room_is_taken(self) -> None:
+        self.assertFalse(await self._available(_Rooms(_owned_room()), STRANGER))
+
+    async def test_new_and_unclaimed_rooms_are_available(self) -> None:
+        self.assertTrue(await self._available(_Rooms(), STRANGER))
+        unclaimed = _owned_room(admin_email=None, admin_uid=None)
+        self.assertTrue(await self._available(_Rooms(unclaimed), STRANGER))
+
+
 class LoginNextTest(unittest.IsolatedAsyncioTestCase):
     def test_only_same_origin_paths_are_accepted(self) -> None:
         self.assertEqual(app._safe_next_path("/panel/room1"), "/panel/room1")

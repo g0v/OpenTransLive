@@ -94,8 +94,8 @@
             title="Use only letters, numbers, hyphens, and underscores (4-64 characters)">
           <p id="session-id-error" class="mt-1 text-xs text-red-400 hidden"></p>
         </div>
-        <button type="submit"
-          class="px-6 py-2 bg-indigo-700 hover:bg-indigo-600 text-indigo-100 font-semibold rounded transition-colors text-sm whitespace-nowrap">
+        <button type="submit" id="create-submit"
+          class="px-6 py-2 bg-indigo-700 hover:bg-indigo-600 text-indigo-100 font-semibold rounded transition-colors text-sm whitespace-nowrap disabled:cursor-wait disabled:opacity-60">
           Start Session
         </button>
       </form>
@@ -311,21 +311,47 @@
     })
   }
 
+  function showSessionIdError(message) {
+    errorDisplay.textContent = message
+    errorDisplay.classList.remove('hidden')
+    sessionIdInput.classList.add('border-red-500')
+    sessionIdInput.focus()
+  }
+
+  // Another user's room would open as the audience view, so flag it here instead.
+  // A failed check still navigates: the panel enforces access either way.
+  async function isSessionIdTaken(sid) {
+    try {
+      const response = await fetch(`/api/rooms/${encodeURIComponent(sid)}/available`, { credentials: 'same-origin' })
+      if (!response.ok) return false
+      const data = await response.json()
+      return data.available === false
+    } catch {
+      return false
+    }
+  }
+
   const createForm = document.getElementById('create-form')
+  const createSubmit = document.getElementById('create-submit')
   if (createForm) {
-    createForm.addEventListener('submit', function (e) {
+    createForm.addEventListener('submit', async function (e) {
       e.preventDefault()
+      if (createSubmit.disabled) return
       const sid = sessionIdInput.value.trim()
       const result = validateSessionId(sid)
 
       if (!result.valid) {
-        if (errorDisplay && sessionIdInput) {
-          errorDisplay.textContent = result.error
-          errorDisplay.classList.remove('hidden')
-          sessionIdInput.classList.add('border-red-500')
-          sessionIdInput.focus()
-        }
+        if (errorDisplay && sessionIdInput) showSessionIdError(result.error)
         return
+      }
+      createSubmit.disabled = true
+      try {
+        if (await isSessionIdTaken(sid)) {
+          showSessionIdError('This Session ID is already used by another account. Choose a different one.')
+          return
+        }
+      } finally {
+        createSubmit.disabled = false
       }
       window.location.href = `/panel/${encodeURIComponent(sid)}`
     })

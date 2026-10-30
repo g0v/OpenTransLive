@@ -1592,6 +1592,17 @@ async def _get_room_owner_email(room: dict) -> str | None:
     return email
 
 
+async def _may_open_panel(request: Request, room: dict, owner_email: str | None) -> bool:
+    """The panel is for the room's owners (primary, co-owner, site admin) and, while
+    it has no owner (`owner_email`, from _get_room_owner_email), for any signed-in
+    user, who claims it by opening it. Anyone else followed a shared panel link and
+    gets the audience view instead."""
+    if owner_email:
+        ident = await get_identity(request)
+        return bool(ident) and await _owns_room(ident.email, room)
+    return bool(_get_session_email(request))
+
+
 def _get_room_co_owner_emails(room: dict) -> list[str]:
     """Return the lowercased co-owner email list for a room (empty if unset)."""
     raw = room.get("co_owner_emails") or []
@@ -2236,6 +2247,20 @@ async def list_rooms(request: Request):
         owner = r.get("admin_email")
         r["is_owner"] = bool(owner and owner.lower() == ident.email)
     return {"rooms": rooms}
+
+
+@app.get("/api/rooms/{sid}/available", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def room_available(request: Request, sid: str):
+    """Whether the signed-in caller can open /panel/{sid}: the room is new, their
+    own, or unclaimed. False means another user's room, whose panel link would
+    only show the audience view."""
+    if not _get_session_email(request):
+        raise HTTPException(status_code=401, detail="Not logged in")
+    sid = sanitize_query_param(sid, "session ID")
+    room = await rooms_collection.find_one({"sid": sid})
+    if room is None:
+        return {"available": True}
+    return {"available": await _may_open_panel(request, room, await _get_room_owner_email(room))}
 
 
 # ---------------------------------------------------------------------------
@@ -3808,16 +3833,8 @@ async def panel(request: Request, sid: str):
         else:
             await _invalidate_owner_override_cache(sid)
 
-    # The panel is for the room's owners (primary, co-owner, site admin) and, while
-    # it has no owner, for any signed-in user, who claims it by opening it. Anyone
-    # else followed a shared panel link and gets the audience view instead.
     owner_email = await _get_room_owner_email(room)
-    if owner_email:
-        ident = await get_identity(request)
-        may_open = bool(ident) and await _owns_room(ident.email, room)
-    else:
-        may_open = bool(current_email)
-    if not may_open:
+    if not await _may_open_panel(request, room, owner_email):
         if not current_email:
             # rt.html offers a sign-in link back here, once; kept out of the URL so
             # it never leaks into a viewer link someone copies and shares.
