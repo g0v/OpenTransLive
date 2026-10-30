@@ -53,14 +53,14 @@ function onMicStateChange(state) {
 let transientNotice = null;
 let transientNoticeTimer = null;
 
-function showTransientNotice(text) {
+function showTransientNotice(text, durationMs = 5000) {
   const unchanged = text === transientNotice;
   transientNotice = text;
   clearTimeout(transientNoticeTimer);
   transientNoticeTimer = setTimeout(function () {
     transientNotice = null;
     renderStatus();
-  }, 5000);
+  }, durationMs);
   // A payload the server keeps rejecting produces one error per audio chunk; repainting
   // identical text dozens of times a second buys nothing. Extending the timer does.
   if (!unchanged) renderStatus();
@@ -212,39 +212,94 @@ socket.on('error', function (data) {
     : 'Server rejected a message — still streaming');
 });
 
-// Returns false when nothing ended up streaming (denied permission, dead socket), so
-// startRecording() can keep the mic button in step. Swallows its own errors, which is
-// why this is a return value and not a throw.
+// Device-selector value for browser tab or system audio (getDisplayMedia) instead of
+// a microphone. Mobile browsers have no getDisplayMedia; desktop Firefox and Safari
+// have it but never share audio, which startSession reports as 'no-tab-audio'.
+const TAB_AUDIO_SOURCE = 'tab-audio';
+const tabAudioSupported = !!(navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === 'function');
+
+function usingTabAudio() {
+  return selectedDeviceId === TAB_AUDIO_SOURCE;
+}
+
+class NoTabAudioError extends Error {}
+
+async function openTabAudio() {
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    // Chromium rejects audio-only requests; the video track is stopped right away.
+    video: true,
+    // Speech processing tuned for microphones damages already-mixed program audio.
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    // Chromium-only hints; other browsers ignore them. The panel tab itself carries
+    // no program audio, switching lets the operator move the share to another tab
+    // without stopping capture, and whole-screen shares offer system audio where
+    // the OS allows it (Windows, ChromeOS).
+    selfBrowserSurface: 'exclude',
+    surfaceSwitching: 'include',
+    systemAudio: 'include',
+    monitorTypeSurfaces: 'include',
+  });
+  stream.getVideoTracks().forEach(track => track.stop());
+  if (!stream.getAudioTracks().length) {
+    stream.getTracks().forEach(track => track.stop());
+    throw new NoTabAudioError('The share has no audio track');
+  }
+  return stream;
+}
+
+function openMicrophone() {
+  const audioConstraints = {
+    channelCount: 1,
+    sampleRate: 16000,
+    autoGainControl: true,
+    noiseSuppression: true,
+    echoCancellation: true
+  };
+  if (selectedDeviceId) {
+    audioConstraints.deviceId = { exact: selectedDeviceId };
+  }
+  return navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+}
+
+// Resolves 'started' when audio is streaming, 'no-tab-audio' when the share picker
+// returned no audio (sharing audio not ticked, or a browser that never shares it),
+// or 'failed' otherwise (denied or cancelled permission, dead socket), so
+// startRecording() can keep the mic button in step. Swallows its own errors, which
+// is why this is a return value and not a throw. With tab audio it must run from a
+// user gesture: the share picker opens.
 async function startSession() {
   try {
     audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    // Open the input before any other await: the share picker needs the click's
+    // transient activation.
+    const stream = usingTabAudio() ? await openTabAudio() : await openMicrophone();
+    mediaStream = stream;
     await audioContext.audioWorklet.addModule('/static/js/audio-processor.js');
 
-    const audioConstraints = {
-      channelCount: 1,
-      sampleRate: 16000,
-      autoGainControl: true,
-      noiseSuppression: true,
-      echoCancellation: true
-    };
-
-    if (selectedDeviceId) {
-      audioConstraints.deviceId = { exact: selectedDeviceId };
-    }
-
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
     if (!socket.connected) {
       await stopSession();  // tears down the AudioContext the manual track-stop left open
-      return false;
+      return 'failed';
     }
-    const source = audioContext.createMediaStreamSource(mediaStream);
+    // The input died on its own (device unplugged, permission revoked, or "Stop
+    // sharing"): turn the mic off rather than leave it claiming MIC ON. A stopped
+    // share is not reopened, since that needs the picker again. stopSession()'s own
+    // track.stop() fires no `ended`.
+    stream.getAudioTracks().forEach(track => track.addEventListener('ended', function () {
+      if (mediaStream === stream && recording) stopRecording();
+    }));
+    const source = audioContext.createMediaStreamSource(stream);
 
     // Analyser node for level metering (after gain, before worklet)
     analyserNode = audioContext.createAnalyser();
     analyserNode.fftSize = 256;
     analyserNode.smoothingTimeConstant = 0.5;
 
-    audioProcessor = new AudioWorkletNode(audioContext, 'audio-processor');
+    // The worklet reads channel 0 only; down-mix stereo tab audio instead of
+    // dropping the right channel.
+    audioProcessor = new AudioWorkletNode(audioContext, 'audio-processor', {
+      channelCount: 1,
+      channelCountMode: 'explicit',
+    });
 
     // Audio graph: source -> analyser -> worklet -> destination
     source.connect(analyserNode);
@@ -279,11 +334,11 @@ async function startSession() {
       });
     };
 
-    return true;
+    return 'started';
   } catch (error) {
-    console.error('Error accessing microphone:', error);
+    console.error('Error starting audio capture:', error);
     await stopSession();
-    return false;
+    return error instanceof NoTabAudioError ? 'no-tab-audio' : 'failed';
   }
 }
 
@@ -382,40 +437,42 @@ async function stopSession() {
 
 // startSession / stopSession are called by the mic toggle in panel.html
 
-// Enumerate and populate microphone devices
+// Enumerate and populate audio sources: microphones, then tab or system audio
 async function enumerateDevices() {
+  if (!micDeviceSelector) return;
+  let audioInputs = [];
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
-    const audioInputs = devices.filter(device => device.kind === 'audioinput');
-
-    if (!micDeviceSelector || audioInputs.length === 0) {
-      return;
-    }
-
-    // Clear existing options except the first one
-    micDeviceSelector.innerHTML = '<option value="">Default Microphone</option>';
-
-    // Add all audio input devices
-    audioInputs.forEach(device => {
-      const option = document.createElement('option');
-      option.value = device.deviceId;
-      option.textContent = device.label || `Microphone ${micDeviceSelector.options.length}`;
-      micDeviceSelector.appendChild(option);
-    });
-
-    // Show the selector if there are devices available
-    if (audioInputs.length > 0) {
-      micDeviceSelector.style.display = '';
-    }
-
-    // Restore previously selected device
-    const savedDeviceId = localStorage.getItem('selectedMicDeviceId');
-    if (savedDeviceId) {
-      micDeviceSelector.value = savedDeviceId;
-      selectedDeviceId = savedDeviceId;
-    }
+    // Without microphone permission the browser lists a placeholder with no id.
+    audioInputs = devices.filter(device => device.kind === 'audioinput' && device.deviceId);
   } catch (error) {
     console.error('Error enumerating devices:', error);
+  }
+  if (audioInputs.length === 0 && !tabAudioSupported) return;
+
+  // Clear existing options except the first one
+  micDeviceSelector.innerHTML = '<option value="">Default Microphone</option>';
+
+  // Add all audio input devices
+  audioInputs.forEach(device => {
+    const option = document.createElement('option');
+    option.value = device.deviceId;
+    option.textContent = device.label || `Microphone ${micDeviceSelector.options.length}`;
+    micDeviceSelector.appendChild(option);
+  });
+  if (tabAudioSupported) {
+    const option = document.createElement('option');
+    option.value = TAB_AUDIO_SOURCE;
+    option.textContent = 'Tab or system audio';
+    micDeviceSelector.appendChild(option);
+  }
+  micDeviceSelector.style.display = '';
+
+  // Restore previously selected device
+  const savedDeviceId = localStorage.getItem('selectedMicDeviceId');
+  if (savedDeviceId && (savedDeviceId !== TAB_AUDIO_SOURCE || tabAudioSupported)) {
+    micDeviceSelector.value = savedDeviceId;
+    selectedDeviceId = savedDeviceId;
   }
 }
 
@@ -447,10 +504,11 @@ document.addEventListener('DOMContentLoaded', async function () {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach(track => track.stop());
-        await enumerateDevices();
       } catch (error) {
         console.warn('Microphone permission not granted:', error);
       }
+      // Tab or system audio needs no microphone permission, so list sources either way.
+      await enumerateDevices();
 
       // Listen for device changes
       micDeviceSelector.addEventListener('change', handleDeviceChange);

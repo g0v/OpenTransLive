@@ -603,6 +603,12 @@
     animation: none;
   }
 
+  /* Starting: waiting on the browser (Chrome takes seconds to settle the share
+     picker, even on cancel), not refusing input. */
+  .mic-btn.mic-busy.mic-starting {
+    cursor: progress;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     #studio-root *,
     #studio-root *::before,
@@ -671,26 +677,25 @@
   // on. Assigned by the flow panel IIFE, like reapplyFlowDict.
   let onFlowMicStateChange = function () {}
 
-  function setMicState(state) {
+  // state: 'off' | 'on' | 'busy'. `startingLabel` marks a busy state that is
+  // starting capture rather than stopping it.
+  function setMicState(state, startingLabel) {
     if (!micBtn) return
-    // state: 'off' | 'on' | 'busy'
-    micBtn.classList.remove('mic-on', 'mic-off', 'mic-busy')
-    micBtn.classList.add('mic-' + state)
-    micBtn.setAttribute('aria-pressed', state === 'on' ? 'true' : 'false')
-    micBtn.disabled = (state === 'busy')
-
-    if (micMobileBtn) {
-      micMobileBtn.classList.remove('mic-on', 'mic-off', 'mic-busy')
-      micMobileBtn.classList.add('mic-' + state)
-      micMobileBtn.disabled = (state === 'busy')
-      micMobileBtn.setAttribute('aria-pressed', state === 'on' ? 'true' : 'false')
+    const starting = state === 'busy' && !!startingLabel
+    for (const btn of [micBtn, micMobileBtn]) {
+      if (!btn) continue
+      btn.classList.remove('mic-on', 'mic-off', 'mic-busy')
+      btn.classList.add('mic-' + state)
+      btn.classList.toggle('mic-starting', starting)
+      btn.disabled = (state === 'busy')
+      btn.setAttribute('aria-pressed', state === 'on' ? 'true' : 'false')
     }
 
     if (state === 'on') {
       if (micLabel) micLabel.textContent = 'MIC ON'
       micBtn.title = 'Stop microphone'
     } else if (state === 'busy') {
-      if (micLabel) micLabel.textContent = 'STOPPING…'
+      if (micLabel) micLabel.textContent = starting ? startingLabel : 'STOPPING…'
       micBtn.title = 'Please wait…'
     } else {
       if (micLabel) micLabel.textContent = 'MIC OFF'
@@ -711,11 +716,15 @@
   // to press twice to get back on air.
 
   async function startRecording() {
-    setMicState('busy')
-    if (!await startSession()) {
-      // Denied mic permission or a dead socket. Claiming MIC ON here is the same skew
-      // in the other direction: button on, nothing streaming.
+    setMicState('busy', usingTabAudio() ? 'WAITING FOR SHARE…' : 'STARTING…')
+    const started = await startSession()
+    if (started !== 'started') {
+      // Denied permission, a cancelled share or a dead socket. Claiming MIC ON here
+      // is the same skew in the other direction: button on, nothing streaming.
       await stopRecording()
+      if (started === 'no-tab-audio') {
+        showTransientNotice('No audio shared — choose a tab or screen and turn on "Share audio" (Chrome or Edge)', 10000)
+      }
       return false
     }
     socket.emit('mic_on', { session_id: sessionId, secret_key: user_secret_key })
