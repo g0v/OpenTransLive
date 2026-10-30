@@ -44,6 +44,13 @@
         <iconify-icon icon="mdi:arrow-left" width="16" height="16"></iconify-icon> My Sessions</a>
       <div class="flex flex-wrap items-center gap-2">
         <a href="/download/{{ sid }}" target="_blank" class="nav-link">Download JSON</a>
+        <a href="/download/{{ sid }}/txt"
+           class="inline-flex items-center gap-1 px-3 py-1 rounded text-xs font-semibold bg-emerald-800 hover:bg-emerald-700 text-emerald-100 transition-colors"
+           title="A zip with one plain-text file per language"
+           download>
+          <iconify-icon icon="mdi:folder-zip-outline" width="14" height="14"></iconify-icon>
+          TXT · all languages
+        </a>
         {% for lang in languages %}
         <a href="/download/{{ sid }}/srt/{{ lang }}"
            class="inline-flex items-center gap-1 px-3 py-1 rounded text-xs font-semibold bg-emerald-800 hover:bg-emerald-700 text-emerald-100 transition-colors"

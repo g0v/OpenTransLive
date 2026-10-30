@@ -1,5 +1,7 @@
+import io
 import json
 import unittest
+import zipfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -122,6 +124,23 @@ class SegmentDeletedStreamTest(unittest.IsolatedAsyncioTestCase):
 
         # An `id:` line would make a reconnect skip commits older than the deleted line.
         self.assertEqual(event, 'event: segment_deleted\ndata: {"start_time":99.5}\n\n')
+
+
+class TxtExportTest(unittest.TestCase):
+    def test_zip_has_one_line_per_segment_for_source_and_each_language(self) -> None:
+        segments = [
+            {"start_time": 1.0, "text": "raw one", "result": {"corrected": "one", "translated": {"en": "One", "ja": "一"}}},
+            {"start_time": 2.0, "text": "two\nlines", "result": {"translated": {"en": "Two\nlines"}}},
+            {"start_time": 3.0, "text": "", "result": {"corrected": "three", "translated": {"source": "three", "en": ""}}},
+        ]
+        with zipfile.ZipFile(io.BytesIO(app._build_txt_zip("s1", segments))) as archive:
+            files = {name: archive.read(name).decode("utf-8") for name in archive.namelist()}
+
+        self.assertEqual(files, {
+            "s1.source.txt": "one\ntwo lines\nthree\n",
+            "s1.en.txt": "One\nTwo lines\n",
+            "s1.ja.txt": "一\n",
+        })
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import asyncio
 import base64
 import collections
 import hashlib
+import io
 import json
 import math
 import os
@@ -15,6 +16,7 @@ import secrets
 import time
 import uuid
 import weakref
+import zipfile
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
@@ -3602,6 +3604,10 @@ def _seconds_to_srt_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 
+# Language codes accepted in download routes and file names.
+_LANG_CODE_RE = re.compile(r'^[a-zA-Z0-9_-]{1,32}$')
+
+
 def _collect_srt_languages(segments: list) -> list[str]:
     seen: dict[str, None] = {}
     for seg in segments:
@@ -3633,6 +3639,32 @@ def _build_srt_for_language(segments: list, lang: str) -> str:
     return "\n".join(parts) if idx > 0 else ""
 
 
+def _segment_source_text(seg: dict) -> str:
+    return (seg.get("result") or {}).get("corrected") or seg.get("text") or ""
+
+
+def _build_txt_zip(sid: str, segments: list) -> bytes:
+    """Zip one plain-text file per language, one line per segment: the source
+    first, then every stored translation language."""
+    def lines(texts) -> str:
+        # Each segment stays on one line even if it was edited with line breaks.
+        return "".join(" ".join(text.split()) + "\n" for text in texts if text and text.strip())
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(f"{sid}.source.txt", lines(_segment_source_text(seg) for seg in segments))
+        for lang in _collect_srt_languages(segments):
+            # `source` is the corrected line itself in a room without targets, and
+            # only codes valid for the SRT route are safe to use as file names.
+            if lang == "source" or not _LANG_CODE_RE.match(lang):
+                continue
+            archive.writestr(
+                f"{sid}.{lang}.txt",
+                lines(((seg.get("result") or {}).get("translated") or {}).get(lang) for seg in segments),
+            )
+    return buffer.getvalue()
+
+
 async def _save_segment_to_mongo(sid, segment, stream_start_time):
     """Insert one committed segment once and refresh session metadata."""
     start_time = float(segment["start_time"])
@@ -3657,19 +3689,25 @@ async def _save_segment_to_mongo(sid, segment, stream_start_time):
 async def hello_world(request: Request):
     return templates.TemplateResponse("index.html", {"request": request, "email": _get_session_email(request)})
 
-@app.get("/download/{id}", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
-async def download(request: Request, id: str):
-    # Sanitize id parameter to prevent NoSQL injection
-    id = sanitize_query_param(id, "session ID")
-
+async def _load_owned_session_segments(request: Request, sid: str) -> tuple[list, dict | None]:
+    """Load a session's committed segments for download: owners only once the room
+    is claimed, 404 when there are none."""
     room, (segments, meta) = await asyncio.gather(
-        rooms_collection.find_one({"sid": id}, {"admin_email": 1, "admin_uid": 1, "co_owner_emails": 1}),
-        _load_segments_from_db(id),
+        rooms_collection.find_one({"sid": sid}, {"admin_email": 1, "admin_uid": 1, "co_owner_emails": 1}),
+        _load_segments_from_db(sid),
     )
     if room:
         await _require_room_owner(request, room)
     if not segments:
         raise HTTPException(status_code=404, detail="Session not found")
+    return segments, meta
+
+
+@app.get("/download/{id}", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def download(request: Request, id: str):
+    # Sanitize id parameter to prevent NoSQL injection
+    id = sanitize_query_param(id, "session ID")
+    segments, meta = await _load_owned_session_segments(request, id)
 
     updated_at = meta.get("updated_at") if meta else None
     data = {
@@ -3685,17 +3723,9 @@ async def download(request: Request, id: str):
 @app.get("/download/{id}/srt/{lang}", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def download_srt(request: Request, id: str, lang: str):
     id = sanitize_query_param(id, "session ID")
-    if not re.match(r'^[a-zA-Z0-9_-]{1,32}$', lang):
+    if not _LANG_CODE_RE.match(lang):
         raise HTTPException(status_code=400, detail="Invalid language code")
-
-    room, (segments, _) = await asyncio.gather(
-        rooms_collection.find_one({"sid": id}, {"admin_email": 1, "admin_uid": 1, "co_owner_emails": 1}),
-        _load_segments_from_db(id),
-    )
-    if room:
-        await _require_room_owner(request, room)
-    if not segments:
-        raise HTTPException(status_code=404, detail="Session not found")
+    segments, _ = await _load_owned_session_segments(request, id)
 
     content = _build_srt_for_language(segments, lang)
     if not content:
@@ -3706,6 +3736,18 @@ async def download_srt(request: Request, id: str, lang: str):
         content=content,
         media_type="application/x-subrip; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+@app.get("/download/{id}/txt", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def download_txt(request: Request, id: str):
+    """A zip of plain-text transcripts: {id}.source.txt and {id}.{lang}.txt."""
+    id = sanitize_query_param(id, "session ID")
+    segments, _ = await _load_owned_session_segments(request, id)
+
+    return Response(
+        content=_build_txt_zip(id, segments),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{id}.txt.zip"'},
     )
 
 @app.get("/api/session/{sid}/stream")
