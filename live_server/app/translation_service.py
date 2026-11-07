@@ -32,7 +32,12 @@ def _normalize_chinese_output(text: str, language: str) -> str:
         return to_simplified(text)
     return text
 
-_KEYWORD_STORE_CAP = 60  # keywords kept in Redis; extra headroom so low-frequency words can recover
+_KEYWORD_PROMPT_CAP = 30  # pinned plus best-scored unpinned keywords sent to prompts (pins never capped)
+_KEYWORD_STORE_CAP = _KEYWORD_PROMPT_CAP * 2  # kept in Redis; headroom so low-frequency words can climb back
+# Score of a keyword the panel adds from reference text: rerank decays an
+# unmentioned unpinned keyword by 1 per commit while transcript extractions
+# start at 1, so from here it outranks them for about this many lines.
+KEYWORD_SEED_SCORE = 50
 _PARTIAL_MIN_WORDS = SCRIBE_SETTINGS["PARTIAL_MIN_WORDS"]
 # Skip translating a partial when its source text has grown by fewer than this
 # many chars since the last dispatched partial. Re-translating tiny extensions
@@ -808,7 +813,7 @@ async def translate_committed_language(
         language=language,
         context=context,
         prev_translation="",
-        keywords=rank_keywords(current_keywords, locked_list, 0),
+        keywords=rank_keywords(current_keywords, locked_list, _KEYWORD_PROMPT_CAP),
         tone=tone,
         scribe_language=scribe_language,
         glossary=glossary,
@@ -862,10 +867,10 @@ async def translate_transcription(
         get_session_scribe_language(redis_client, session_id),
         get_glossary(redis_client, session_id),
     )
-    # Only pinned keywords reach the corrector and translator: AI-extracted
-    # unpinned keywords may be wrong and would steer the output. A cap of 0 keeps
-    # every pinned keyword and no unpinned one.
-    ranked = rank_keywords(current_keywords, locked_list, 0)
+    # Pinned keywords first, then the best-scored AI-extracted ones up to
+    # _KEYWORD_PROMPT_CAP (pins are never capped). The translator further keeps
+    # only those its input mentions.
+    ranked = rank_keywords(current_keywords, locked_list, _KEYWORD_PROMPT_CAP)
     # Only the corrector gets the glossary spellings: by translation time the term
     # has already been swapped into the text, so repeating the other languages'
     # spellings there would just be prompt noise.

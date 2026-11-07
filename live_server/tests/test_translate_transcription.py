@@ -85,7 +85,7 @@ class TranslateTranscriptionTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.translator.translate.call_count, 2)
 
-    async def test_only_pinned_keywords_reach_prompts_and_translator_gets_mentioned_ones(self) -> None:
+    async def test_ranked_keywords_reach_prompts_and_translator_gets_mentioned_ones(self) -> None:
         self.languages = ["en-US"]
         self.keywords = (
             {"OpenTransLive": 5, "Sean Gau": 3, "caption": 2},
@@ -95,7 +95,7 @@ class TranslateTranscriptionTest(unittest.IsolatedAsyncioTestCase):
         await self._run("Sean Gau speaks")
 
         self.assertEqual(
-            self.translator.correct.call_args.kwargs["keywords"], "OpenTransLive, Sean Gau"
+            self.translator.correct.call_args.kwargs["keywords"], "OpenTransLive, Sean Gau, caption"
         )
         self.assertEqual(self.translator.translate.call_args.kwargs["keywords"], "Sean Gau")
 

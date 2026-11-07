@@ -135,6 +135,20 @@ class KeywordsEndpointTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored, [["a"], ["b"]])
         self.assertEqual(manager.keyterms, ["b"])
 
+    async def test_only_declared_new_keywords_are_seeded_and_kept_scores_survive(self) -> None:
+        save = AsyncMock()
+        with (
+            patch.object(app, "_require_session_owner", AsyncMock()),
+            patch.object(app, "_emit_session_settings_update", AsyncMock()),
+            patch.object(ts, "get_keywords_and_locked", AsyncMock(return_value=({"kept": 7}, []))),
+            patch.object(ts, "save_current_keywords", save),
+        ):
+            # "dropped" is absent from Redis but not declared new: a stale panel
+            # list posting back a keyword rerank just pruned.
+            await app.update_session_keywords_endpoint(_Request(
+                {"keywords": ["kept", "ref", "dropped"], "seeded": ["ref", "kept"]}), "room")
+        self.assertEqual(save.await_args.args[2], {"kept": 7, "ref": ts.KEYWORD_SEED_SCORE, "dropped": 1})
+
 
 class ManagerCreationTest(unittest.IsolatedAsyncioTestCase):
     async def test_new_manager_is_biased_by_pinned_keywords_only(self) -> None:

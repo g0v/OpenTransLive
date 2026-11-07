@@ -2508,9 +2508,20 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
     else:
         locked_keywords = None
 
-    from .translation_service import save_current_keywords, save_locked_keywords, get_keywords_and_locked
+    # Keywords the panel just added from reference text. Only these are seeded:
+    # a keyword merely absent from Redis may be one rerank just dropped that a
+    # stale panel list is posting back, and that must not return near the top.
+    seeded = body.get("seeded", [])
+    if not isinstance(seeded, list):
+        raise HTTPException(status_code=400, detail="seeded must be a list")
+    seeded = {kw.strip() for kw in seeded if isinstance(kw, str)}
+
+    from .translation_service import save_current_keywords, save_locked_keywords, get_keywords_and_locked, KEYWORD_SEED_SCORE
     existing_keywords, _ = await get_keywords_and_locked(redis_client, sid)
-    keywords_dict = {kw: existing_keywords.get(kw, 1) for kw in keywords}
+    # A seeded keyword starts above the transcript's AI extractions; any other new one at 1.
+    keywords_dict = {
+        kw: existing_keywords.get(kw, KEYWORD_SEED_SCORE if kw in seeded else 1) for kw in keywords
+    }
     # Locked list first: a concurrent rerank restores pinned keywords from the
     # stored locked list, so an unpin must land before the list it applies to.
     if locked_keywords is not None:

@@ -1241,6 +1241,7 @@
   let keywordScores = {}          // server rerank counters; always follows the server
   let keywordSavePending = false  // true while debouncing or saving; blocks sync
   let keywordSaveTimer = null     // debounce timer for saveKeywords
+  let keywordSeeds = new Set()    // added from reference text, not yet saved; server seeds their score
   let keywordGenerating = false
 
   function updateKeywordLabel() {
@@ -1463,15 +1464,17 @@
     statusEl.textContent = 'Saving'
     keywordSavePending = true
     let saved = false
+    const seeded = Array.from(keywordSeeds)
     try {
       const res = await fetch(`/api/session/${sid}/keywords`, {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keywords: currentKeywords, locked_keywords: Array.from(lockedKeywords) })
+        body: JSON.stringify({ keywords: currentKeywords, locked_keywords: Array.from(lockedKeywords), seeded })
       })
       if (res.ok) {
         saved = true
+        for (const kw of seeded) keywordSeeds.delete(kw)
         statusEl.textContent = 'Saved'
       } else {
         const err = await res.json()
@@ -1532,22 +1535,20 @@
         statusEl.textContent = 'No keywords found'
         return
       }
+      // Added unpinned, like the transcript's own extractions; the server seeds
+      // them above those so they lead the prompts until the talk stops mentioning them.
       let added = 0
-      let pinned = 0
       for (const kw of generated) {
         if (!currentKeywords.includes(kw)) {
           currentKeywords.push(kw)
+          keywordSeeds.add(kw)
           added++
-        }
-        if (!lockedKeywords.has(kw)) {
-          lockedKeywords.add(kw)
-          pinned++
         }
       }
 
       updateKeywordLabel()
       renderKeywordList()
-      if (added || pinned) {
+      if (added) {
         const saved = await saveKeywords()
         if (!saved) {
           status.textContent = 'Keywords were generated but could not be saved.'
@@ -1557,11 +1558,8 @@
 
       input.value = ''
       if (added) {
-        status.textContent = `Added and pinned ${added} keyword${added === 1 ? '' : 's'}.`
+        status.textContent = `Added ${added} keyword${added === 1 ? '' : 's'}.`
         statusEl.textContent = 'Keywords added'
-      } else if (pinned) {
-        status.textContent = `Pinned ${pinned} existing keyword${pinned === 1 ? '' : 's'}.`
-        statusEl.textContent = 'Keywords pinned'
       } else {
         status.textContent = 'These keywords are already in the list.'
         statusEl.textContent = 'No new keywords'
