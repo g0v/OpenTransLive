@@ -27,9 +27,10 @@ let levelAnimFrame = null;
 // trouble (no socket means no audio reaches the server at all), so keep them apart
 // and re-render instead of letting whichever event fired last win.
 let socketStatus = { cls: 'bg-gray-400', text: 'Connecting…' };
-// null | 'connected' | 'reconnecting' | 'stopped' | 'misconfigured'. The last is
-// folded in from the stop reason rather than tracked separately: it is the only stop
-// the server never recovers from, and no other reason changes what we render.
+// null | 'connected' | 'reconnecting' | 'stopped' | 'misconfigured' | 'rejected'. The
+// last two are folded in from the stop reason rather than tracked separately: they are
+// the stops the server never recovers from on its own, and no other reason changes
+// what we render.
 let scribeState = null;
 let micActive = false;   // mirrors the panel mic toggle; see onMicStateChange
 
@@ -78,6 +79,11 @@ function renderStatus() {
       // reconnect that will never land.
       cls = 'bg-red-500';
       text = 'Transcription unavailable — server misconfigured';
+    } else if (micActive && scribeState === 'rejected') {
+      // The provider refused the credentials, quota, account terms or parameters. The
+      // server stops retrying; turning the mic off and on again tries once more.
+      cls = 'bg-red-500';
+      text = 'Transcription refused by the provider — check its API key and quota';
     } else if (scribeState === 'reconnecting' || (scribeState === 'stopped' && micActive)) {
       // 'stopped' rides along with 'reconnecting': while audio is still flowing the
       // server rebuilds the Scribe manager on the next chunk, so an ordinary stop
@@ -182,7 +188,7 @@ socket.on('joined_session', function (data) {
 socket.on('scribe_status', function (data) {
   if (!data || data.session_id !== sessionId) return;
   console.log('Scribe status:', data);
-  scribeState = data.reason === 'misconfigured' ? 'misconfigured' : data.state;
+  scribeState = data.reason === 'misconfigured' || data.reason === 'rejected' ? data.reason : data.state;
   renderStatus();
 });
 

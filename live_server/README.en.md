@@ -62,7 +62,7 @@ below (`app/config.py` is just the loader that reads this TOML; you rarely touch
 | `[mongodb_settings]` | MongoDB connection |
 | `redis_url` | Redis connection |
 | `[realtime_settings].STT_PROVIDER` | Default transcription engine (`elevenlabs` / `gemini`); each room can override it from the panel. Pinned keywords are sent to the engine on its next connection to bias recognition (ElevenLabs `keyterms`: up to 50, ≤20 chars each, billed as an add-on; Gemini `customVocabulary`); editing them never forces a reconnect |
-| `[realtime_settings].ELEVENLABS_API_KEY` | ElevenLabs Scribe |
+| `[realtime_settings].ELEVENLABS_API_KEY` | ElevenLabs Scribe. With a forced recognition language, the room's other translation languages are sent as `secondary_languages` (read when the transcription session is built; a language edit never forces a reconnect). After a reconnect, the first audio chunk carries the previous connection's last 50 characters as `previous_text`. On `auth_error`, `quota_exceeded`, `unaccepted_terms` or `invalid_request` transcription stops without retrying and the panel says it was refused; turning the mic off and on retries |
 | `[realtime_settings].AI_PROVIDER` | Default correction / translation provider (`openai` / `gemini` / `groq` / `cerebras`) |
 | `[realtime_settings].CORRECT_PROVIDER` | (Optional) provider used for correction only |
 | `[realtime_settings].TRANSLATE_PROVIDER` | (Optional) provider used for translation only |

@@ -473,11 +473,12 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
         if existing and existing.is_running and not force_new:
             return existing
 
-        if existing is not None and not existing.api_key and not force_new:
-            # Misconfigured server (no API key for the chosen provider): a replacement
-            # would refuse to start the same way, so keep the dead manager instead of
-            # churning one — and one error log — per audio chunk. It already reported
-            # "stopped" to the panel.
+        if existing is not None and (not existing.api_key or existing.rejected) and not force_new:
+            # Misconfigured server (no API key for the chosen provider) or a session the
+            # provider refused for good (credentials, quota, terms): a replacement would
+            # be refused the same way, so keep the dead manager instead of churning one —
+            # and one provider connection — per audio chunk. It already reported
+            # "stopped" to the panel; mic off/on or a provider/language change retries.
             return existing
 
         if existing is not None:
@@ -488,14 +489,18 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
             asyncio.create_task(existing.stop())
 
         from .translation_service import (get_session_scribe_language, get_session_partial_interval,
-                                          get_session_stt_provider, get_keywords_and_locked)
+                                          get_session_stt_provider, get_keywords_and_locked,
+                                          get_session_languages)
         language_code = await get_session_scribe_language(redis_client, session_id)
         partial_interval = await get_session_partial_interval(session_id)
         provider = await get_session_stt_provider(redis_client, session_id)
         # Only pinned keywords bias recognition: the unpinned ones are reranked and
         # pruned automatically, and an operator should decide what the model is pushed toward.
         _, pinned_keywords = await get_keywords_and_locked(redis_client, session_id)
-        manager = create_scribe_manager(provider, session_id, on_scribe_transcription, language_code=language_code, partial_interval=partial_interval, status_callback=_emit_scribe_status, keyterms=pinned_keywords)
+        translate_languages = await get_session_languages(redis_client, session_id)
+        manager = create_scribe_manager(provider, session_id, on_scribe_transcription, language_code=language_code,
+                                        partial_interval=partial_interval, status_callback=_emit_scribe_status,
+                                        keyterms=pinned_keywords, translate_languages=translate_languages)
         manager.yt_start_time = await get_youtube_start_time(session_id)
         active_scribe_managers[session_id] = manager
         asyncio.create_task(manager.start())

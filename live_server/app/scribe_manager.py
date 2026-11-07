@@ -232,7 +232,7 @@ class ScribeSessionManager:
         raise NotImplementedError
 
     def __init__(self, session_id, callback, language_code: str = "", partial_interval: float | None = None,
-                 status_callback=None, keyterms=()):
+                 status_callback=None, keyterms=(), translate_languages=()):
         self.session_id = session_id
         # Optional async (session_id, status_dict) hook used to surface transcription
         # health to the panel. Always set so a missing-key start can report its failure.
@@ -251,6 +251,15 @@ class ScribeSessionManager:
         self.api_key = REALTIME_SETTINGS.get(self.API_KEY_SETTING, '')
         self.callback = callback
         self.language_code = language_code
+        # The room's translation languages when the manager was built. ElevenLabs uses
+        # them as secondary_languages next to a forced language; a later language edit
+        # applies from the next manager, since it is only a recognition hint.
+        self.translate_languages = list(translate_languages)
+        # Set by _parse_message when the provider refuses the session for good
+        # (credentials, quota, account terms, invalid parameters). Reconnecting would
+        # be refused the same way, so start() stops instead, and audio does not
+        # rebuild a refused manager: only mic on or a provider/language change does.
+        self.rejected = False
         self.keyterms: list[str] = []
         self.set_keyterms(keyterms)
         self.seg_start_time = None
@@ -595,6 +604,8 @@ class ScribeSessionManager:
                 parsed = self._parse_message(data)
                 if parsed is not None:
                     await self.handle_transcript(*parsed)
+                if self.rejected:
+                    return
                 if after_finalize and self._is_turn_complete(data):
                     self._finalize_done.set()
         except (asyncio.CancelledError, ConnectionClosed, ConnectionClosedOK):
@@ -979,6 +990,12 @@ class ScribeSessionManager:
 
                     # TaskGroup exited — both loops are done.
                     self.ws = None
+                    if self.rejected:
+                        logger.error(
+                            f"Scribe refused the session for {self.session_id}; "
+                            "stopping without reconnecting"
+                        )
+                        break
                     if self.is_running and not self._stop_event.is_set():
                         retry_count = self._next_retry_count(retry_count)
                         if self._intentional_restart:
@@ -1010,7 +1027,10 @@ class ScribeSessionManager:
 
         self.is_running = False
         self.ws = None
-        await self._emit_status("stopped")
+        if self.rejected:
+            await self._emit_status("stopped", reason="rejected")
+        else:
+            await self._emit_status("stopped")
         logger.info(f"Scribe session ended for {self.session_id}")
 
     async def finalize(self, timeout: float = FINALIZE_TIMEOUT_SECS) -> None:
@@ -1051,6 +1071,71 @@ class ScribeSessionManager:
             log_exception(logger, e, "Error committing last partial on stop")
 
 
+# ISO 639-1 (and macrolanguage member) codes -> the ISO 639-3 code Scribe takes, for
+# the languages the panel offers for ElevenLabs (panel.html ELEVENLABS_LANGUAGES).
+# Members fold into the code the panel uses ("cmn" -> "zho", "nb" -> "nor").
+_ELEVENLABS_LANGUAGES = {
+    "zh": "zho", "cmn": "zho",
+    "en": "eng", "ja": "jpn", "ko": "kor", "es": "spa", "fr": "fra",
+    "de": "deu", "pt": "por", "ar": "ara", "th": "tha", "vi": "vie",
+    "id": "ind", "ru": "rus", "it": "ita", "tr": "tur", "pl": "pol",
+    "nl": "nld", "hi": "hin", "bn": "ben", "uk": "ukr", "sv": "swe",
+    "no": "nor", "nb": "nor", "nn": "nor", "da": "dan", "fi": "fin",
+    "cs": "ces", "ro": "ron", "ms": "msa", "tl": "fil",
+    "el": "ell", "he": "heb", "fa": "fas",
+    "ta": "tam", "te": "tel", "kn": "kan", "ml": "mal", "gu": "guj",
+    "mr": "mar", "ur": "urd", "sr": "srp", "hr": "hrv", "bg": "bul",
+    "sk": "slk", "hu": "hun", "ca": "cat", "yue": "yue",
+}
+_ELEVENLABS_LANGUAGES.update({code: code for code in list(_ELEVENLABS_LANGUAGES.values())})
+
+
+def _elevenlabs_language(tag: str) -> str | None:
+    """Scribe's ISO 639-3 code for a code or BCP-47 tag ("zh-Hant-TW", "jpn"), or None."""
+    normalized = normalize_language_code(tag or "")
+    if not normalized:
+        return None
+    return _ELEVENLABS_LANGUAGES.get(normalized.split("-", 1)[0])
+
+
+def scribe_secondary_languages(language_code: str, translate_languages) -> list[str]:
+    """The secondary_languages a Scribe session with a forced language sends: the
+    room's other translation languages as Scribe codes, deduplicated in order and
+    without the forced language. Auto-detect sends none (Scribe takes them only next
+    to language_code); unmapped languages are skipped."""
+    if not (language_code or "").strip():
+        return []
+    primary = _elevenlabs_language(language_code)
+    out: list[str] = []
+    for tag in translate_languages:
+        code = _elevenlabs_language(tag)
+        if code and code != primary and code not in out:
+            out.append(code)
+    return out
+
+
+# Scribe's previous_text limit, in characters.
+_SCRIBE_PREVIOUS_TEXT_CHARS = 50
+
+# Server messages that refuse the session for good: credentials, quota, account terms,
+# or connection parameters. A reconnect would be refused the same way.
+_SCRIBE_REFUSALS = frozenset({
+    "auth_error", "quota_exceeded", "quota_exceeded_error", "unaccepted_terms", "invalid_request",
+})
+# Errors the server follows by closing the socket, which the reconnect path recovers.
+_SCRIBE_ERRORS = frozenset({
+    "error", "transcriber_error", "input_error", "chunk_size_exceeded", "commit_throttled",
+    "queue_overflow", "resource_exhausted", "rate_limited", "session_time_limit_exceeded",
+    "insufficient_audio_activity",
+})
+# Documented events of options this session does not enable; the plain partial and
+# committed transcripts already carry the text.
+_SCRIBE_IGNORED = frozenset({
+    "final_transcript", "final_transcript_with_timestamps", "committed_transcript_with_timestamps",
+    "committed_transcript_entities", "edited_transcript", "redacted_transcript",
+})
+
+
 class ElevenLabsScribeManager(ScribeSessionManager):
     """ElevenLabs Scribe v2 realtime (wss://api.elevenlabs.io/v1/speech-to-text/realtime)."""
 
@@ -1066,6 +1151,12 @@ class ElevenLabsScribeManager(ScribeSessionManager):
     # Scribe v2 Realtime keyterm prompting (billed as an add-on per audio hour).
     MAX_KEYTERMS = 50
     MAX_KEYTERM_CHARS = 20
+    # The latest partial of the open segment and the latest non-empty commit, kept so
+    # a reconnected socket can be handed the text the previous one ended on; and that
+    # previous_text itself, sent with the first audio chunk of the new socket.
+    _interim = ""
+    _committed = ""
+    _context = ""
 
     def _connect_target(self):
         params_dict = {
@@ -1088,38 +1179,64 @@ class ElevenLabsScribeManager(ScribeSessionManager):
         }
         if self.language_code:
             params_dict["language_code"] = self.language_code
-            logger.info(f"Scribe forced language: {self.language_code} for {self.session_id}")
+            secondary = scribe_secondary_languages(self.language_code, self.translate_languages)
+            if secondary:
+                params_dict["secondary_languages"] = secondary
+            logger.info(f"Scribe forced language: {self.language_code} "
+                        f"(secondary {secondary}) for {self.session_id}")
         if self.keyterms:
             # Repeated query parameter: keyterms=A&keyterms=B.
             params_dict["keyterms"] = self.keyterms
         return ("wss://api.elevenlabs.io/v1/speech-to-text/realtime?"
                 f"{urlencode(params_dict, doseq=True)}"), {"xi-api-key": self.api_key}
 
+    async def _handshake(self, ws):
+        # A new socket is a fresh Scribe session: hand it the text the previous one
+        # ended on (an open partial, else the last commit) so casing and punctuation
+        # continue across the reconnect. Runs after the previous socket's loops ended.
+        self._context = (self._interim or self._committed).strip()[-_SCRIBE_PREVIOUS_TEXT_CHARS:].strip()
+        self._interim = ""
+
     async def _send_audio(self, ws, base64_audio: str, commit: bool):
-        await ws.send(
+        frame = (
             '{"message_type":"input_audio_chunk","audio_base_64":"'
             + base64_audio
             + f'","sample_rate":{_AUDIO_SAMPLE_RATE_HZ},"commit":'
-            + str(commit).lower() + '}'
+            + str(commit).lower()
         )
+        if self._context:
+            frame += ',"previous_text":' + json.dumps(self._context, ensure_ascii=False)
+            self._context = ""
+        await ws.send(frame + '}')
 
     def _is_turn_complete(self, data: dict) -> bool:
         return data.get("message_type") == "committed_transcript"
 
     def _parse_message(self, data: dict):
         msg_type = data.get("message_type")
-        if msg_type in ("partial_transcript", "committed_transcript"):
-            return data.get("text", ""), msg_type == "partial_transcript"
+        if msg_type == "partial_transcript":
+            self._interim = data.get("text", "")
+            return self._interim, True
+        if msg_type == "committed_transcript":
+            text = data.get("text", "")
+            if text.strip():
+                self._committed = text
+            self._interim = ""
+            return text, False
         if msg_type == "session_started":
             logger.info(f"Scribe session started for {self.session_id}")
-        elif msg_type in ("error", "auth_error", "quota_exceeded_error"):
-            logger.error(f"Scribe Error: {data.get('error')}")
-        elif msg_type == "queue_overflow":
-            # Server-side audio buffer overflowed; it will close the socket next.
-            # Log and let the reconnect path recover instead of misreporting Unknown.
-            logger.warning(f"Scribe queue_overflow for {self.session_id}; server dropping audio")
+        elif msg_type in _SCRIBE_REFUSALS:
+            logger.error(f"Scribe refused the session for {self.session_id}: "
+                         f"{msg_type} {data.get('error')}")
+            self.rejected = True
+        elif msg_type in _SCRIBE_ERRORS:
+            logger.warning(f"Scribe {msg_type} for {self.session_id}: {data.get('error')}")
+        elif msg_type == "warning":
+            logger.warning(f"Scribe warning for {self.session_id}: {data.get('warning')}")
+        elif msg_type in _SCRIBE_IGNORED:
+            logger.debug(f"Scribe event ignored for {self.session_id}: {msg_type}")
         else:
-            logger.error(f"Scribe Unknown message type: {msg_type}")
+            logger.warning(f"Scribe unknown message type for {self.session_id}: {msg_type}")
         return None
 
 

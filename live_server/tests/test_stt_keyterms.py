@@ -158,6 +158,7 @@ class ManagerCreationTest(unittest.IsolatedAsyncioTestCase):
             patch.object(ts, "get_session_stt_provider", AsyncMock(return_value="elevenlabs")),
             patch.object(ts, "get_keywords_and_locked",
                          AsyncMock(return_value=({"unpinned": 5, "pin": 1}, ["pin"]))),
+            patch.object(ts, "get_session_languages", AsyncMock(return_value=[])),
             patch.object(app, "get_youtube_start_time", AsyncMock(return_value=None)),
             patch.object(SCRIBE_MANAGERS["elevenlabs"], "start", AsyncMock()),
             patch.dict(app.active_scribe_managers, {}, clear=True),
