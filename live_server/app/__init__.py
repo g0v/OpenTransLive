@@ -1074,6 +1074,9 @@ async def _session_sse_stream(
                     max_sent_id = max(max_sent_id or event_id_raw, float(event_id_raw))
                 yield _format_sse(payload)
 
+        # Time of the last bytes written, for the heartbeat below. Every yield before the
+        # loop happens just now, so the loop starts from here.
+        last_output = time.monotonic()
         while True:
             if await request.is_disconnected():
                 return
@@ -1084,15 +1087,19 @@ async def _session_sse_stream(
                     await _emit_viewer_count(sid, count)
                     last_emitted_count = count
                 last_presence_refresh = now
+            # Counted from the last output, not from an idle read: pubsub messages this
+            # loop skips (malformed, already sent) would otherwise starve the heartbeat.
+            # A named event, not a comment: EventSource hides comments, and the viewer's
+            # liveness watchdog has to see traffic to keep the stream.
+            if now - last_output >= SSE_HEARTBEAT_SECONDS:
+                last_output = now
+                yield "event: heartbeat\ndata: {}\n\n"
 
             message = await pubsub.get_message(
                 ignore_subscribe_messages=True,
-                timeout=SSE_HEARTBEAT_SECONDS,
+                timeout=max(0.0, SSE_HEARTBEAT_SECONDS - (now - last_output)),
             )
             if message is None:
-                # A named event, not a comment: EventSource hides comments, and the
-                # viewer's liveness watchdog has to see traffic to keep the stream.
-                yield "event: heartbeat\ndata: {}\n\n"
                 continue
 
             try:
@@ -1101,43 +1108,33 @@ async def _session_sse_stream(
                 logger.warning("Skipping malformed pubsub event sid_hash=%s", _hash_token(sid))
                 continue
 
-            if payload.get("__sse_event") == "display_dictionary_update":
-                yield _format_sse(
+            sse_event = payload.get("__sse_event")
+            if sse_event == "display_dictionary_update":
+                chunk = _format_sse(
                     {"language_maps": payload.get("language_maps") or {}},
                     event="display_dictionary_update",
                 )
-                continue
+            elif sse_event == "segment_updated":
+                chunk = _format_sse({"segment": payload.get("segment") or {}}, event="segment_updated")
+            elif sse_event == "segment_deleted":
+                chunk = _format_sse({"start_time": payload.get("start_time")}, event="segment_deleted")
+            elif sse_event == "viewer_clear":
+                chunk = _format_sse({}, event="viewer_clear")
+            else:
+                event_id_raw = payload.get("start_time")
+                if (
+                    payload.get("partial") is not True
+                    and isinstance(event_id_raw, (int, float))
+                    and not isinstance(event_id_raw, bool)
+                ):
+                    event_id = float(event_id_raw)
+                    if max_sent_id is not None and event_id <= max_sent_id:
+                        continue
+                    max_sent_id = event_id
+                chunk = _format_sse(payload)
 
-            if payload.get("__sse_event") == "segment_updated":
-                yield _format_sse(
-                    {"segment": payload.get("segment") or {}},
-                    event="segment_updated",
-                )
-                continue
-
-            if payload.get("__sse_event") == "segment_deleted":
-                yield _format_sse(
-                    {"start_time": payload.get("start_time")},
-                    event="segment_deleted",
-                )
-                continue
-
-            if payload.get("__sse_event") == "viewer_clear":
-                yield _format_sse({}, event="viewer_clear")
-                continue
-
-            event_id_raw = payload.get("start_time")
-            if (
-                payload.get("partial") is not True
-                and isinstance(event_id_raw, (int, float))
-                and not isinstance(event_id_raw, bool)
-            ):
-                event_id = float(event_id_raw)
-                if max_sent_id is not None and event_id <= max_sent_id:
-                    continue
-                max_sent_id = event_id
-
-            yield _format_sse(payload)
+            last_output = time.monotonic()
+            yield chunk
     finally:
         # StreamingResponse cancels this generator inside an AnyIO cancel scope.
         # Without a shield, the first cleanup await is cancelled too, leaking one

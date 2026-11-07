@@ -121,7 +121,7 @@ The viewer pages use SSE:
 GET /api/session/{session_id}/stream
 ```
 
-Event name: `transcription_update`
+Event name: `transcription_update` (captions); also `segment_updated`, `segment_deleted`, `segment_snapshot`, `display_dictionary_update` and `viewer_clear`. When idle the stream sends a `heartbeat` event (`data: {}`) every 15 s, so clients can tell a live connection from a dead one (the viewer pages reconnect after 40 s without any event).
 
 Used by:
 

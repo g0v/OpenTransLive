@@ -127,7 +127,7 @@ Session 擁有者或 co-owner 可開啟 `/edit/{session_id}`：
 GET /api/session/{session_id}/stream
 ```
 
-事件名稱：`transcription_update`
+事件名稱：`transcription_update`（字幕）；另有 `segment_updated`、`segment_deleted`、`segment_snapshot`、`display_dictionary_update`、`viewer_clear`。連線閒置時每 15 秒送一次 `heartbeat` 事件（`data: {}`），客戶端可用它判斷連線是否還活著（觀眾頁超過 40 秒沒收到任何事件就重連）。
 
 用途：
 
