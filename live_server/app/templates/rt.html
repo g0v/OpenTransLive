@@ -1727,6 +1727,21 @@
     let lastEventId = String(Number.isFinite(initialLastStart) ? initialLastStart : 0);
     let pageUnloading = false;
     let reconnected = false;
+    // The server sends a heartbeat event every 15 s while idle. A half-open
+    // connection (phone sleep, network handover, idle NAT) never fires onerror,
+    // so with no event at all for this long the stream is treated as dead.
+    const STALE_STREAM_MS = 40000;
+    let staleTimer = null;
+
+    function clearStaleTimer() {
+      clearTimeout(staleTimer);
+      staleTimer = null;
+    }
+
+    function touchStream() {
+      clearStaleTimer();
+      staleTimer = setTimeout(scheduleReconnect, STALE_STREAM_MS);
+    }
 
     function streamUrl() {
       const url = new URL('/api/session/{{ id }}/stream', window.location.origin);
@@ -1813,6 +1828,7 @@
 
     function scheduleReconnect() {
       if (pageUnloading || reconnectTimer) return;
+      clearStaleTimer();
       reconnected = true;
       reconnectAttempts += 1;
       const delay = Math.min(1000 * reconnectAttempts, 10000);
@@ -1827,16 +1843,26 @@
 
     function connectStream() {
       stream = new EventSource(streamUrl());
+      touchStream();
+      // Every event, heartbeats included, proves the connection is alive.
+      function listen(name, handler) {
+        stream.addEventListener(name, function (event) {
+          touchStream();
+          handler(event);
+        });
+      }
 
       stream.onopen = function () {
+        touchStream();
         reconnectAttempts = 0;
         statusIndicator.className = 'status-dot-sm bg-emerald-500';
         statusText.textContent = 'Live';
       };
 
-      stream.addEventListener('transcription_update', handleTranscriptionUpdate);
-      stream.addEventListener('viewer_clear', handleViewerClear);
-      stream.addEventListener('display_dictionary_update', function (event) {
+      listen('heartbeat', function () {});
+      listen('transcription_update', handleTranscriptionUpdate);
+      listen('viewer_clear', handleViewerClear);
+      listen('display_dictionary_update', function (event) {
         const data = JSON.parse(event.data);
         const next = data && data.language_maps ? data.language_maps : {};
         if (JSON.stringify(next) === JSON.stringify(languageMaps)) return;
@@ -1844,18 +1870,18 @@
         dictCache.clear();
         refreshView();
       });
-      stream.addEventListener('segment_updated', function (event) {
+      listen('segment_updated', function (event) {
         const data = JSON.parse(event.data);
         if (!data?.segment || !replaceLoadedSegment(data.segment)) return;
         syncLanguagesFromData();
         refreshView();
       });
-      stream.addEventListener('segment_deleted', function (event) {
+      listen('segment_deleted', function (event) {
         const data = JSON.parse(event.data);
         if (!removeLoadedSegment(data?.start_time)) return;
         refreshView();
       });
-      stream.addEventListener('segment_snapshot', function (event) {
+      listen('segment_snapshot', function (event) {
         const data = JSON.parse(event.data);
         if (!Array.isArray(data?.segments)) return;
         transcriptionsData["transcriptions"] = data.segments;

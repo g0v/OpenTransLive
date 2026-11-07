@@ -1085,7 +1085,9 @@ async def _session_sse_stream(
                 timeout=SSE_HEARTBEAT_SECONDS,
             )
             if message is None:
-                yield ": heartbeat\n\n"
+                # A named event, not a comment: EventSource hides comments, and the
+                # viewer's liveness watchdog has to see traffic to keep the stream.
+                yield "event: heartbeat\ndata: {}\n\n"
                 continue
 
             try:
