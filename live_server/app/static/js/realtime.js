@@ -28,10 +28,12 @@ let levelAnimFrame = null;
 // and re-render instead of letting whichever event fired last win.
 let socketStatus = { cls: 'bg-gray-400', text: 'Connecting…' };
 // null | 'connected' | 'reconnecting' | 'stopped' | 'misconfigured' | 'rejected'. The
-// last two are folded in from the stop reason rather than tracked separately: they are
-// the stops the server never recovers from on its own, and no other reason changes
-// what we render.
+// last two are folded in from the stop reason rather than tracked separately: the
+// server does not retry them on its own right away, and no other reason changes what
+// we render.
 let scribeState = null;
+// The provider's refusal message type while scribeState is 'rejected'.
+let scribeRefusal = '';
 let micActive = false;   // mirrors the panel mic toggle; see onMicStateChange
 
 function setSocketStatus(cls, text) {
@@ -81,9 +83,10 @@ function renderStatus() {
       text = 'Transcription unavailable — server misconfigured';
     } else if (micActive && scribeState === 'rejected') {
       // The provider refused the credentials, quota, account terms or parameters. The
-      // server stops retrying; turning the mic off and on again tries once more.
+      // server stops retrying; mic off/on retries at once, and with the mic left on the
+      // server tries again after about 5 minutes.
       cls = 'bg-red-500';
-      text = 'Transcription refused by the provider — check its API key and quota';
+      text = 'Transcription refused by the provider — ' + refusalHint(scribeRefusal);
     } else if (scribeState === 'reconnecting' || (scribeState === 'stopped' && micActive)) {
       // 'stopped' rides along with 'reconnecting': while audio is still flowing the
       // server rebuilds the Scribe manager on the next chunk, so an ordinary stop
@@ -98,6 +101,13 @@ function renderStatus() {
   }
   statusIndicator.className = 'shrink-0 inline-block w-3 h-3 rounded-full ' + cls;
   statusText.textContent = text;
+}
+
+function refusalHint(refusal) {
+  if (refusal === 'auth_error') return 'check its API key';
+  if (refusal === 'quota_exceeded' || refusal === 'quota_exceeded_error') return 'quota exceeded';
+  if (refusal === 'unaccepted_terms') return 'accept its terms in the provider account';
+  return 'see the server log';
 }
 
 function updateViewerCountDisplay(count) {
@@ -189,6 +199,7 @@ socket.on('scribe_status', function (data) {
   if (!data || data.session_id !== sessionId) return;
   console.log('Scribe status:', data);
   scribeState = data.reason === 'misconfigured' || data.reason === 'rejected' ? data.reason : data.state;
+  scribeRefusal = data.reason === 'rejected' ? (data.refusal || '') : '';
   renderStatus();
 });
 

@@ -32,7 +32,7 @@ class _Socket:
 
 
 class RefusalTest(unittest.IsolatedAsyncioTestCase):
-    async def _run_until_stopped(self, *incoming: dict):
+    async def _run_until_stopped(self, *incoming: dict, close_error: bool = False):
         statuses: list[dict] = []
 
         async def on_status(_sid, status):
@@ -46,6 +46,9 @@ class RefusalTest(unittest.IsolatedAsyncioTestCase):
         async def connect(*_args, **_kwargs):
             sockets.append(_Socket(*incoming))
             yield sockets[-1]
+            if close_error:
+                # The socket's close handshake failing after the refusal arrived.
+                raise OSError("connection reset")
 
         with patch.object(sm, "ws_connect", connect):
             run = asyncio.create_task(m.start())
@@ -60,16 +63,17 @@ class RefusalTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_refusal_stops_without_reconnecting(self) -> None:
         for msg_type in ("auth_error", "quota_exceeded", "unaccepted_terms", "invalid_request"):
-            with self.subTest(msg_type):
-                m, sockets, statuses = await self._run_until_stopped(
-                    {"message_type": msg_type, "error": "no"})
-                self.assertTrue(m.rejected)
-                self.assertEqual(len(sockets), 1)
-                self.assertEqual(statuses[-1], {"state": "stopped", "reason": "rejected"})
+            for close_error in (False, True):
+                with self.subTest(msg_type, close_error=close_error):
+                    _m, sockets, statuses = await self._run_until_stopped(
+                        {"message_type": msg_type, "error": "no"}, close_error=close_error)
+                    self.assertEqual(len(sockets), 1)
+                    self.assertEqual(statuses[-1],
+                                     {"state": "stopped", "reason": "rejected", "refusal": msg_type})
 
     async def test_audio_does_not_rebuild_a_refused_session(self) -> None:
         refused = _manager()
-        refused.rejected = True
+        refused.rejected = "auth_error"
         with patch.dict(app.active_scribe_managers, {"room": refused}, clear=True):
             self.assertIs(await app._get_or_create_scribe_manager("room"), refused)
 

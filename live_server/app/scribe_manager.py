@@ -255,11 +255,13 @@ class ScribeSessionManager:
         # them as secondary_languages next to a forced language; a later language edit
         # applies from the next manager, since it is only a recognition hint.
         self.translate_languages = list(translate_languages)
-        # Set by _parse_message when the provider refuses the session for good
-        # (credentials, quota, account terms, invalid parameters). Reconnecting would
-        # be refused the same way, so start() stops instead, and audio does not
-        # rebuild a refused manager: only mic on or a provider/language change does.
-        self.rejected = False
+        # The provider's refusal message type ("auth_error", "quota_exceeded", …), set by
+        # _parse_message when it refuses the session for good (credentials, quota, account
+        # terms, invalid parameters); empty otherwise. Reconnecting would be refused the
+        # same way, so start() stops instead and audio does not rebuild a refused manager
+        # right away. Mic off/on or a provider/language change retries at once; with the
+        # mic left on, the manager's cache eviction (5 min) lets the next chunk retry.
+        self.rejected = ""
         self.keyterms: list[str] = []
         self.set_keyterms(keyterms)
         self.seg_start_time = None
@@ -990,13 +992,7 @@ class ScribeSessionManager:
 
                     # TaskGroup exited — both loops are done.
                     self.ws = None
-                    if self.rejected:
-                        logger.error(
-                            f"Scribe refused the session for {self.session_id}; "
-                            "stopping without reconnecting"
-                        )
-                        break
-                    if self.is_running and not self._stop_event.is_set():
+                    if self.is_running and not self._stop_event.is_set() and not self.rejected:
                         retry_count = self._next_retry_count(retry_count)
                         if self._intentional_restart:
                             self._intentional_restart = False
@@ -1017,6 +1013,14 @@ class ScribeSessionManager:
                     # marker; never reconnect for it.
                     self._finalize_done.set()
                     break
+                if self.rejected:
+                    # After both the clean and the failing exit of a connection, so no
+                    # path reconnects into the same refusal.
+                    logger.error(
+                        f"Scribe refused the session for {self.session_id}; "
+                        "stopping without reconnecting"
+                    )
+                    break
 
         finally:
             watchdog_task.cancel()
@@ -1028,7 +1032,7 @@ class ScribeSessionManager:
         self.is_running = False
         self.ws = None
         if self.rejected:
-            await self._emit_status("stopped", reason="rejected")
+            await self._emit_status("stopped", reason="rejected", refusal=self.rejected)
         else:
             await self._emit_status("stopped")
         logger.info(f"Scribe session ended for {self.session_id}")
@@ -1228,7 +1232,7 @@ class ElevenLabsScribeManager(ScribeSessionManager):
         elif msg_type in _SCRIBE_REFUSALS:
             logger.error(f"Scribe refused the session for {self.session_id}: "
                          f"{msg_type} {data.get('error')}")
-            self.rejected = True
+            self.rejected = msg_type
         elif msg_type in _SCRIBE_ERRORS:
             logger.warning(f"Scribe {msg_type} for {self.session_id}: {data.get('error')}")
         elif msg_type == "warning":

@@ -478,7 +478,9 @@ async def _get_or_create_scribe_manager(session_id, *, force_new: bool = False) 
             # provider refused for good (credentials, quota, terms): a replacement would
             # be refused the same way, so keep the dead manager instead of churning one —
             # and one provider connection — per audio chunk. It already reported
-            # "stopped" to the panel; mic off/on or a provider/language change retries.
+            # "stopped" to the panel. Mic off/on or a provider/language change retries at
+            # once; with the mic left on, the dead manager is not kept alive by the panel
+            # heartbeat, so its cache eviction (5 min) lets the next audio chunk retry.
             return existing
 
         if existing is not None:
