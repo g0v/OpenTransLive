@@ -354,6 +354,17 @@
         <label for="flow-edit-text" class="text-xs font-semibold text-[#d7e1ed]">Source text</label>
         <textarea id="flow-edit-text" rows="3" maxlength="5000"
           class="panel-input w-full flex-none resize-y leading-relaxed disabled:cursor-wait disabled:opacity-60"></textarea>
+        <!-- The raw STT transcript the corrector read; shown only when correction changed it. -->
+        <details id="flow-edit-transcript-wrap" class="hidden text-[11px]">
+          <summary class="cursor-pointer py-0.5">
+            <span class="font-semibold text-[#d7e1ed]">Original transcript</span>
+            <span class="text-[#7f8ea3]"> · Recognition result before correction</span>
+          </summary>
+          <div class="mt-1 flex items-start gap-2 rounded-md border border-[#2a3646] py-1 pr-1 pl-2.5">
+            <p id="flow-edit-transcript" class="min-w-0 flex-1 py-0.5 leading-relaxed text-[#9eacbf] whitespace-pre-wrap break-words"></p>
+            <button id="flow-edit-use-transcript" type="button" class="shrink-0 rounded px-2 py-1 text-xs font-bold text-gray-300 transition-colors hover:bg-[#273548] hover:text-white disabled:cursor-wait disabled:opacity-50" title="Replace the source text with the original transcript, then edit or retranslate">Use transcript</button>
+          </div>
+        </details>
         <div id="flow-edit-active" class="flex flex-col gap-2"></div>
         <details id="flow-edit-other-wrap" class="hidden">
           <summary class="cursor-pointer text-xs font-semibold text-[#d7e1ed]">Other languages</summary>
@@ -2669,6 +2680,9 @@
       const flowEditActive = document.getElementById('flow-edit-active')
       const flowEditOther = document.getElementById('flow-edit-other')
       const flowEditOtherWrap = document.getElementById('flow-edit-other-wrap')
+      const flowEditTranscriptWrap = document.getElementById('flow-edit-transcript-wrap')
+      const flowEditTranscript = document.getElementById('flow-edit-transcript')
+      const flowEditUseTranscript = document.getElementById('flow-edit-use-transcript')
       const committedRows = new Map()
       let latestCommittedStartTime = -Infinity
       let partialEl = null
@@ -2963,6 +2977,7 @@
         if (!row || !src) return false
         const anchor = captureScroll()
         row.dataset.src = src
+        row.dataset.transcript = segment.text || ''
         row._translated = segment.result?.translated || {}
         const textEl = row.querySelector('.flex-1')
         if (textEl) textEl.textContent = applyFlowDict(src)
@@ -3002,6 +3017,7 @@
         row.className = 'flow-item group flex w-full items-start justify-between rounded-md px-[0.45rem] py-[0.32rem] text-left text-[#cbd6e4] transition-colors hover:bg-[#1d2938] hover:text-[#edf3fa] focus-visible:bg-[#1d2938] active:bg-[#273548]'
         row.dataset.startTime = String(segment.start_time)
         row.dataset.src = src
+        row.dataset.transcript = segment.text || ''
         row._translated = segment.result?.translated || {}
 
         const latencyHtml = fresh
@@ -3106,7 +3122,7 @@
         editPending = pending
         flowEditModal.dataset.modalPending = pending ? 'true' : 'false'
         flowEditForm.setAttribute('aria-busy', pending ? 'true' : 'false')
-        for (const control of [flowEditText, flowEditRetranslateAll, flowEditDelete, flowEditCancel, flowEditClose, ...languageFields()]) {
+        for (const control of [flowEditText, flowEditUseTranscript, flowEditRetranslateAll, flowEditDelete, flowEditCancel, flowEditClose, ...languageFields()]) {
           control.disabled = !!pending
         }
         for (const button of flowEditForm.querySelectorAll('.flow-edit-lang-retranslate')) {
@@ -3153,10 +3169,11 @@
 
       // Fill the editor from a stored segment: the active languages in panel
       // order, then any other stored translation.
-      function fillEditor(src, translated) {
+      function fillEditor(src, translated, transcript) {
         const displayed = applyFlowDict(src)
         editOriginal = { corrected: displayed, translated: { ...translated } }
         flowEditText.value = displayed
+        showTranscript(src, transcript)
         flowEditActive.replaceChildren()
         flowEditOther.replaceChildren()
         flowEditOtherWrap.classList.add('hidden')
@@ -3165,6 +3182,14 @@
           if (!selectedLanguages.includes(lang)) addLanguageField(lang, text || '')
         }
         updateSaveState()
+      }
+
+      // The raw transcript shows, flow dictionary applied like the source field,
+      // only when the corrector changed it.
+      function showTranscript(src, transcript) {
+        const shown = !!transcript && transcript !== src
+        flowEditTranscript.textContent = shown ? applyFlowDict(transcript) : ''
+        flowEditTranscriptWrap.classList.toggle('hidden', !shown)
       }
 
       function isEditorOpenOn(startTime) {
@@ -3181,6 +3206,7 @@
           const displayed = applyFlowDict(src)
           if (flowEditText.value === editOriginal.corrected) flowEditText.value = displayed
           editOriginal.corrected = displayed
+          showTranscript(src, segment.text || '')
         }
         const translated = segment.result?.translated || {}
         const fields = new Map(languageFields().map(field => [field.dataset.lang, field]))
@@ -3199,7 +3225,7 @@
         editingStartTime = startTime
         editGeneration++
         languageRetranslatesPending.clear()
-        fillEditor(row.dataset.src || '', row._translated || {})
+        fillEditor(row.dataset.src || '', row._translated || {}, row.dataset.transcript || '')
         flowEditStatus.textContent = ''
         flowEditModal.classList.remove('hidden')
         setTimeout(() => {
@@ -3251,7 +3277,7 @@
           if (!payload.segment) throw new Error('Retranslation returned no segment.')
           replaceCommitted(payload.segment)
           setEditPending(false)
-          fillEditor(payload.segment.result?.corrected || payload.segment.text || '', payload.segment.result?.translated || {})
+          fillEditor(payload.segment.result?.corrected || payload.segment.text || '', payload.segment.result?.translated || {}, payload.segment.text || '')
           flowEditStatus.textContent = 'Retranslated'
         } catch (error) {
           setEditPending(false)
@@ -3315,6 +3341,11 @@
       flowEditClose.addEventListener('click', closeFlowEditor)
       flowEditRetranslateAll.addEventListener('click', retranslateAll)
       flowEditDelete.addEventListener('click', deleteSegment)
+      flowEditUseTranscript.addEventListener('click', function () {
+        flowEditText.value = flowEditTranscript.textContent
+        updateSaveState()
+        flowEditText.focus()
+      })
       flowEditModal.addEventListener('mousedown', function (event) {
         if (event.target === flowEditModal && !editPending) closeFlowEditor()
       })

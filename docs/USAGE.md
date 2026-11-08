@@ -58,6 +58,7 @@
 Session 擁有者或 co-owner 可開啟 `/edit/{session_id}`：
 
 - 修改已儲存片段的 corrected text。
+- 校正改動過的片段會顯示校正前的原始轉錄，可用 **Use transcript** 帶入 corrected 欄位。
 - 修改各語言翻譯內容。
 - 刪除不需要的字幕片段。
 - 編輯後會更新 MongoDB；若 Redis 快取存在也會同步更新。

@@ -56,6 +56,7 @@ Viewer behavior:
 The owner or a co-owner can open `/edit/{session_id}` to:
 
 - Edit the corrected text of stored segments.
+- See the raw transcript before correction for segments correction changed, and copy it into the corrected field with **Use transcript**.
 - Edit the translation of each language.
 - Delete unwanted segments.
 - Edits update MongoDB; Redis caches are updated in sync if present.

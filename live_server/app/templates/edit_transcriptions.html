@@ -102,9 +102,17 @@
           {% endif %}
         </div>
         <div class="grid grid-cols-[88px_1fr] gap-y-2 gap-x-3">
+          {% set corrected = (seg.result or {}).corrected or '' %}
           <label class="text-xs text-gray-400 self-start pt-1.5">corrected</label>
           <textarea data-field="corrected" rows="1"
-            class="seg-input w-full bg-gray-900 border border-gray-700 text-gray-100 text-sm rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none resize-y">{{ (seg.result or {}).corrected or '' }}</textarea>
+            class="seg-input w-full bg-gray-900 border border-gray-700 text-gray-100 text-sm rounded px-2 py-1 focus:ring-1 focus:ring-blue-500 outline-none resize-y">{{ corrected }}</textarea>
+          {% if seg.text and seg.text != corrected %}
+          <label class="text-xs text-gray-500 self-start pt-0.5">transcript</label>
+          <div class="flex items-start gap-2">
+            <p class="seg-transcript min-w-0 flex-1 text-xs leading-5 text-gray-400 whitespace-pre-wrap break-words" title="Recognition result before correction">{{ seg.text }}</p>
+            <button type="button" class="use-transcript-btn shrink-0 px-2 py-0.5 rounded text-xs font-semibold bg-gray-800 hover:bg-gray-700 text-gray-300 transition-colors">Use transcript</button>
+          </div>
+          {% endif %}
           {% set translated = (seg.result or {}).translated or {} %}
           {% for lang in languages %}
           {% if lang in translated %}
@@ -249,6 +257,16 @@
     tocHideBtn.addEventListener('click', () => setTocOpen(false));
     tocShowBtn.addEventListener('click', () => setTocOpen(true));
   }
+
+  document.querySelectorAll('.use-transcript-btn').forEach(btn => {
+    const row = btn.closest('.segment-row');
+    const correctedEl = row.querySelector('[data-field="corrected"]');
+    btn.addEventListener('click', () => {
+      correctedEl.value = row.querySelector('.seg-transcript').textContent;
+      autosize(correctedEl);
+      correctedEl.focus();
+    });
+  });
 
   document.querySelectorAll('.reset-btn').forEach(btn => {
     btn.addEventListener('click', () => {
