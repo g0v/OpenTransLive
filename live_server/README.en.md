@@ -13,9 +13,9 @@ For full roles, flows, APIs, and FAQ, see [../docs/USAGE.en.md](../docs/USAGE.en
 - Python 3.11+
 - MongoDB
 - Redis
-- At least one AI provider API key
+- At least one AI provider API key (a single Gemini API key runs every feature; see "Minimal setup" below)
 - (Optional) Docker and Docker Compose
-- (Optional) an ElevenLabs API key or a Gemini API key (realtime microphone; either one)
+- (Optional) an ElevenLabs API key, to use ElevenLabs Scribe for realtime microphone transcription instead of the default Gemini engine (which reuses `GEMINI_API_KEY`)
 - (Optional) YouTube API key (YouTube live-stream sync)
 
 ### Steps
@@ -45,6 +45,22 @@ cp app/secret/config.example.toml app/secret/config.toml
 The script derives the current repository and commit from Git, injects the exact source URL into the service, and records the provenance in OCI image labels. It refuses production deployments from a dirty worktree so the published source cannot differ from the running service. For non-GitHub forges, set `SOURCE_CODE_URL` to override the generated URL.
 
 Compose starts the FastAPI server, MongoDB, and Redis.
+
+### Minimal setup: one Gemini API key
+
+`config.example.toml` defaults to `STT_PROVIDER = "gemini"` and `AI_PROVIDER = "gemini"`, so after copying it you only need:
+
+```toml
+[settings]
+SECRET_KEY = "<random string>"
+
+[realtime_settings]
+GEMINI_API_KEY = "<your key>"
+```
+
+That key covers realtime transcription (Gemini Live Transcribe), correction, translation, keyword extraction and the glossary lookup. Leave the other provider keys and `YOUTUBE_API_KEY` empty; with SMTP empty, development mode logs the OTP. Don't point `CORRECT_PROVIDER` / `TRANSLATE_PROVIDER` at a provider without a key.
+
+Watch out: with `STT_PROVIDER = "elevenlabs"` and no `ELEVENLABS_API_KEY` the server still starts, but transcription never begins when the mic opens (the log has a single `missing ELEVENLABS_API_KEY` line); an `AI_PROVIDER` without a key makes correction and translation calls fail. Production (`ENVIRONMENT=production`) also needs SMTP and `SOURCE_CODE_URL`.
 
 ## Configuration
 

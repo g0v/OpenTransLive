@@ -57,8 +57,8 @@ opentranslive/
 - Python 3.11+
 - MongoDB
 - Redis
-- 至少一組 AI provider API key（OpenAI、Gemini、Groq 或 Cerebras 任一）
-- 使用即時麥克風轉錄時需要 ElevenLabs API key 或 Gemini API key（`STT_PROVIDER` 決定用哪一個）
+- 至少一組 AI provider API key（OpenAI、Gemini、Groq 或 Cerebras 任一）；只有一把 Gemini API key 也能跑完整功能（範例設定的預設）
+- 使用即時麥克風轉錄時需要 Gemini API key 或 ElevenLabs API key（`STT_PROVIDER` 決定用哪一個，預設 `gemini`）
 
 ### 啟動伺服器
 

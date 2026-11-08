@@ -13,9 +13,9 @@
 - Python 3.11+
 - MongoDB
 - Redis
-- 至少一組 AI provider API key
+- 至少一組 AI provider API key（只有一把 Gemini API key 也能跑完整功能，見下方「最少設定」）
 - （選用）Docker 與 Docker Compose
-- （選用）ElevenLabs API key 或 Gemini API key（即時麥克風轉錄，二選一）
+- （選用）ElevenLabs API key（即時麥克風轉錄改用 ElevenLabs Scribe 時；預設的 Gemini 轉錄沿用 `GEMINI_API_KEY`）
 - （選用）YouTube API key（YouTube 同步直播時間）
 
 ### 步驟
@@ -45,6 +45,22 @@ cp app/secret/config.example.toml app/secret/config.toml
 腳本會從 Git 自動取得目前 repository 與 commit，將精確的原始碼網址注入服務，並把來源資訊寫入 OCI image labels。正式環境若含有未提交變更，腳本會拒絕部署，避免公開的原始碼與實際服務內容不一致。若使用非 GitHub forge，可設定 `SOURCE_CODE_URL` 覆寫自動產生的網址。
 
 Compose 會啟動 FastAPI server、MongoDB、Redis。
+
+### 最少設定：只用一把 Gemini API key
+
+`config.example.toml` 的預設 `STT_PROVIDER = "gemini"`、`AI_PROVIDER = "gemini"`，所以複製後只要填這兩項就能啟動：
+
+```toml
+[settings]
+SECRET_KEY = "<隨機字串>"
+
+[realtime_settings]
+GEMINI_API_KEY = "<你的 key>"
+```
+
+這把 key 同時負責即時轉錄（Gemini Live Transcribe）、修正、翻譯、關鍵字擷取與 glossary 查詢。其他 provider key、`YOUTUBE_API_KEY` 可留空；SMTP 留空時開發模式會把 OTP 寫進 log。不要另外設定 `CORRECT_PROVIDER` / `TRANSLATE_PROVIDER` 指向沒有 key 的 provider。
+
+注意：`STT_PROVIDER` 改成 `elevenlabs` 卻沒有 `ELEVENLABS_API_KEY` 時，server 照常啟動，但開麥克風時轉錄不會開始（log 只有一行 `missing ELEVENLABS_API_KEY`）；`AI_PROVIDER` 指向沒有 key 的 provider 時，修正與翻譯呼叫會失敗。正式環境（`ENVIRONMENT=production`）另需 SMTP 與 `SOURCE_CODE_URL`。
 
 ## 設定
 

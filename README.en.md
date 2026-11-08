@@ -57,8 +57,8 @@ opentranslive/
 - Python 3.11+
 - MongoDB
 - Redis
-- At least one AI provider API key (any of OpenAI, Gemini, Groq, Cerebras)
-- An ElevenLabs API key or a Gemini API key for realtime microphone transcription (`STT_PROVIDER` picks which)
+- At least one AI provider API key (any of OpenAI, Gemini, Groq, Cerebras); a single Gemini API key runs every feature (the example config's default)
+- A Gemini API key or an ElevenLabs API key for realtime microphone transcription (`STT_PROVIDER` picks which; default `gemini`)
 
 ### Start the server
 
