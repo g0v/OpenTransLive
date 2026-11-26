@@ -2,7 +2,7 @@ import asyncio
 import base64
 import json
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import itsdangerous
 import socketio
@@ -182,6 +182,69 @@ class SocketSyncScopeTest(unittest.IsolatedAsyncioTestCase):
         await app.sync("s1", self._payload())
         self.assertEqual(self.sio.emitted_codes("s1"), ["unauthorized"])
         self.verify.assert_not_awaited()
+
+
+class SocketOutageAndShutdownTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.sio = _Sio()
+        self.limiter = app._OperatorSocketLimiter()
+        self.slots: dict = {}
+        self.deadlines: dict = {}
+        for name, value in (
+            ("sio", self.sio),
+            ("_operator_sockets", self.limiter),
+            ("_socket_slots", self.slots),
+            ("_join_deadline_tasks", self.deadlines),
+            ("_socket_limiter", app._SocketRateLimiter()),
+            ("_socket_upgrade_limiter", app._NetworkRateLimiter(max_calls=120, window=60.0)),
+        ):
+            patcher = patch.object(app, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    async def test_join_session_lookup_error_emits_service_unavailable_and_disconnects(self) -> None:
+        await self.sio.save_session("s1", {"verified": False})
+        rooms = MagicMock()
+        rooms.find_one = AsyncMock(side_effect=RuntimeError("mongo down"))
+        with (
+            patch.object(app, "rooms_collection", rooms),
+            patch.object(app, "_viewer_presence_op", AsyncMock(return_value=1)),
+            patch.object(app, "_emit_joined_session", AsyncMock()) as joined,
+            patch.object(app, "_emit_viewer_count", AsyncMock()),
+            patch.object(app, "_replay_scribe_status", AsyncMock()),
+        ):
+            await app.join_session("s1", {"session_id": "room1", "secret_key": "k1"})
+            self.assertNotIn("unauthorized", self.sio.emitted_codes("s1"))
+            self.assertEqual(self.sio.emitted_codes("s1"), ["service_unavailable"])
+            self.sio.disconnect.assert_awaited_once_with("s1")
+
+            # After the backend recovers, the reconnect join succeeds cleanly.
+            rooms.find_one = AsyncMock(return_value={"sid": "room1", "secret_key": "k1", "admin_email": "o@e.com"})
+            await self.sio.save_session("s2", {"verified": False})
+            await app.join_session("s2", {"session_id": "room1", "secret_key": "k1"})
+            joined.assert_awaited_once()
+
+    async def test_shutdown_disconnects_connected_sockets_and_refuses_new_connect(self) -> None:
+        self.slots["s1"] = (NET, "u1")
+        write_queue = MagicMock()
+        write_queue.stop = AsyncMock()
+        with (
+            patch.object(app, "init_indexes", AsyncMock()),
+            patch.object(app.FastAPILimiter, "init", AsyncMock()),
+            patch.object(app.FastAPILimiter, "close", AsyncMock()),
+            patch.object(app, "segment_write_queue", write_queue),
+            patch("app.translators.close_translator", AsyncMock()),
+            patch.object(app, "active_scribe_managers", {}),
+            patch.object(app, "active_translation_managers", {}),
+        ):
+            async with app.lifespan(app.app):
+                self.assertFalse(app._shutting_down)
+                self.slots["s1"] = (NET, "u1")
+            self.assertTrue(app._shutting_down)
+            self.sio.disconnect.assert_awaited_with("s1")
+            with self.assertRaises(socketio.exceptions.ConnectionRefusedError):
+                await app.connect("s2", _environ(), None)
+        app._shutting_down = False
 
 
 if __name__ == "__main__":

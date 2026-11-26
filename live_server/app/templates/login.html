@@ -32,7 +32,7 @@
         <p class="text-sm font-semibold text-gray-300">Enter the 6-digit code</p>
         <p id="otp-hint" class="mt-1 text-xs text-gray-500"></p>
       </div>
-      <input id="otp-input" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000"
+      <input id="otp-input" type="text" inputmode="numeric" pattern="[0-9]{6}" placeholder="000000"
         class="auth-input text-2xl font-mono tracking-widest text-center py-3 placeholder-gray-700" />
       <div id="otp-error" class="hidden text-xs text-red-400"></div>
       <button id="verify-otp-btn" class="auth-btn">
@@ -106,13 +106,24 @@
     }
   })
 
+  function normalizeOtpDigits(value) {
+    // Normalize full-width IME numerals and strip spaces or zero-width characters from pastes.
+    return value.normalize('NFKC').replace(/\D/g, '').slice(0, 6)
+  }
+
+  otpInput.addEventListener('input', () => {
+    const digits = normalizeOtpDigits(otpInput.value)
+    if (digits !== otpInput.value) otpInput.value = digits
+  })
+
   emailInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') sendOtpBtn.click()
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) sendOtpBtn.click()
   })
 
   verifyOtpBtn.addEventListener('click', async () => {
     hideError(otpError)
-    const otp = otpInput.value.trim()
+    const otp = normalizeOtpDigits(otpInput.value)
+    otpInput.value = otp
     if (!/^\d{6}$/.test(otp)) {
       showError(otpError, 'Please enter the 6-digit code.')
       return
@@ -141,7 +152,7 @@
   })
 
   otpInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') verifyOtpBtn.click()
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) verifyOtpBtn.click()
   })
 
   backBtn.addEventListener('click', () => {

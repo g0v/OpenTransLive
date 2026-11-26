@@ -73,6 +73,20 @@
             style="display:none;">
             <option value="">Select Microphone</option>
           </select>
+          <button id="tab-toggle-btn" title="Share tab or system audio" style="display:none;"
+            class="mic-btn mic-off inline-flex min-h-[30px] select-none items-center gap-1.5 rounded-lg border border-transparent px-1.5 py-[3px] text-[0.6rem] font-bold tracking-[0.08em] outline-none transition-colors active:translate-y-px disabled:cursor-not-allowed"
+            aria-pressed="false">
+            <iconify-icon class="mic-icon-on" icon="ph:screencast" width="18" height="18"></iconify-icon>
+            <iconify-icon class="mic-icon-off" icon="ph:screencast" width="18" height="18"></iconify-icon>
+            <span id="tab-label">TAB AUDIO</span>
+          </button>
+          <div id="tab-level-container" class="flex items-center gap-1" style="display:none;">
+            <div class="relative w-20 h-3 bg-gray-700 rounded overflow-hidden">
+              <div id="tab-level-bar" class="absolute left-0 top-0 h-full bg-green-500 rounded transition-none"
+                style="width:0%"></div>
+            </div>
+            <span id="tab-level-db" class="text-xs text-gray-500 w-10 text-right font-mono">--dB</span>
+          </div>
         </div>
         <!-- Transcription engine (only for realtime transcription) -->
         <div class="toolbar-group">
@@ -240,28 +254,39 @@
           takes effect on the engine's next connection). Use <iconify-icon icon="ph:translate" width="11" height="11" class="align-middle"></iconify-icon>
           to look a keyword's translations up on the web and add them to the glossary.
         </p>
-        <div class="flex shrink-0 flex-col gap-2 rounded-lg border border-[#2a3646] bg-[#111a27] p-3">
-          <label for="kw-generate-text" class="text-xs font-semibold text-[#d7e1ed]">Generate from reference text</label>
-          <textarea id="kw-generate-text" rows="4" maxlength="20000"
-            placeholder="Paste an agenda, script, article, or notes. Multiple lines are supported."
-            class="panel-input min-h-24 w-full flex-none resize-y leading-relaxed"></textarea>
-          <div class="flex items-center gap-2">
-            <button id="kw-generate-btn" type="button"
-              class="panel-add-btn inline-flex items-center gap-1.5 disabled:cursor-wait disabled:opacity-60">
-              <iconify-icon id="kw-generate-icon" icon="ph:sparkle" width="14" height="14"></iconify-icon>
-              Generate keywords
-            </button>
-            <span id="kw-generate-status" class="hidden min-w-0 flex-1 text-[11px] leading-snug text-[#aebed2]"
-              role="status" aria-live="polite"></span>
-          </div>
-        </div>
+        <label class="flex shrink-0 cursor-pointer select-none items-center gap-2 text-xs font-semibold text-[#d7e1ed]">
+          <input id="kw-auto-checkbox" type="checkbox" role="switch" checked class="size-4 shrink-0 accent-blue-500">
+          Auto-add keywords from the transcript (AI)
+        </label>
         <div id="kw-lookup-status" class="hidden rounded-lg border border-[#34465c] bg-[#111a27] px-3 py-2 text-[11px] leading-snug text-[#aebed2]"
           role="status" aria-live="polite"></div>
-        <div id="kw-list" class="modal-list flex min-h-14 flex-1 basis-auto flex-col gap-1 overflow-y-auto pr-1 [scrollbar-color:#4d5d72_transparent] [scrollbar-width:thin] [&>div]:rounded-lg [&>label]:rounded-lg"></div>
-        <div class="modal-add-row flex shrink-0 gap-1 border-t border-[#2a3646] pt-3">
-          <input id="kw-custom-input" type="text" placeholder="Add keyword" class="panel-input flex-1">
+        <div class="modal-add-row flex shrink-0 gap-1">
+          <input id="kw-custom-input" type="text" placeholder="Add keyword (comma-separated)" aria-label="Add keyword" class="panel-input font-mono flex-1">
           <button id="kw-custom-add-btn" type="button" class="panel-add-btn">Add</button>
         </div>
+        <div id="kw-list" class="modal-list flex min-h-14 flex-1 basis-auto flex-col gap-1 overflow-y-auto pr-1 [scrollbar-color:#4d5d72_transparent] [scrollbar-width:thin] [&>div]:rounded-lg [&>label]:rounded-lg"></div>
+        <details id="kw-generate-details" class="group shrink-0 border-t border-[#2a3646] pt-3" open>
+          <summary class="flex cursor-pointer list-none select-none items-center gap-1.5 text-xs font-semibold text-[#d7e1ed] hover:text-blue-400 [&::-webkit-details-marker]:hidden">
+            <iconify-icon icon="ph:sparkle" width="14" height="14" class="text-blue-400"></iconify-icon>
+            <span>Generate keywords from an agenda or script</span>
+            <iconify-icon icon="ph:caret-down" width="14" height="14" class="ml-auto text-[#8d9aae] transition-transform group-open:rotate-180"></iconify-icon>
+          </summary>
+          <div class="mt-2 flex flex-col gap-2">
+            <textarea id="kw-generate-text" rows="4" maxlength="20000"
+              placeholder="Paste an agenda, script, article, or notes. Multiple lines are supported."
+              aria-label="Generate keywords from an agenda or script"
+              class="panel-input min-h-24 w-full flex-none resize-y leading-relaxed"></textarea>
+            <div class="flex items-center gap-2">
+              <button id="kw-generate-btn" type="button"
+                class="panel-add-btn inline-flex items-center gap-1.5 disabled:cursor-wait disabled:opacity-60">
+                <iconify-icon id="kw-generate-icon" icon="ph:sparkle" width="14" height="14"></iconify-icon>
+                Generate keywords
+              </button>
+              <span id="kw-generate-status" class="hidden min-w-0 flex-1 text-[11px] leading-snug text-[#aebed2]"
+                role="status" aria-live="polite"></span>
+            </div>
+          </div>
+        </details>
       </div>
     </div>
   </div>
@@ -300,9 +325,10 @@
         <div id="td-list" class="modal-list flex min-h-14 flex-1 basis-auto flex-col gap-1 overflow-y-auto pr-1 [scrollbar-color:#4d5d72_transparent] [scrollbar-width:thin] [&>div]:rounded-lg [&>label]:rounded-lg"></div>
         <div class="modal-add-row flex shrink-0 gap-1 border-t border-[#2a3646] pt-3 flex-col items-stretch gap-1">
           <div class="flex gap-1">
-            <input id="td-from-input" type="text" placeholder="From" class="panel-input flex-1">
-            <input id="td-to-input" type="text" placeholder="To" class="panel-input flex-1">
+            <input id="td-from-input" type="text" placeholder="From" class="panel-input font-mono flex-1">
+            <input id="td-to-input" type="text" placeholder="To" list="kw-suggestions-datalist" class="panel-input font-mono flex-1">
           </div>
+          <datalist id="kw-suggestions-datalist"></datalist>
           <div class="flex gap-1">
             <select id="td-target-select" class="panel-input flex-1"></select>
             <button id="td-add-btn" type="button" class="panel-add-btn">Add</button>
@@ -413,9 +439,9 @@
         <textarea id="flow-rule-snapshot" rows="4" readonly
           class="panel-input min-h-20 w-full resize-y leading-relaxed"></textarea>
         <div class="flex items-center gap-1">
-          <input id="flow-rule-from" type="text" maxlength="200" placeholder="From" aria-label="From" class="panel-input min-w-0 flex-1">
+          <input id="flow-rule-from" type="text" maxlength="200" placeholder="From" aria-label="From" class="panel-input font-mono min-w-0 flex-1">
           <iconify-icon icon="ph:arrow-right" width="14" height="14" class="shrink-0 text-[#8d9aae]"></iconify-icon>
-          <input id="flow-rule-to" type="text" maxlength="200" placeholder="Replace with" aria-label="Replace with" class="panel-input min-w-0 flex-1">
+          <input id="flow-rule-to" type="text" maxlength="200" placeholder="Replace with" aria-label="Replace with" list="kw-suggestions-datalist" class="panel-input font-mono min-w-0 flex-1">
         </div>
         <div id="flow-rule-hint" class="min-h-4 text-[11px] leading-snug text-[#aebed2]" role="status" aria-live="polite"></div>
         <div class="flex justify-end gap-2 border-t border-[#2a3646] pt-3">
@@ -684,58 +710,104 @@
 
   // ── Mic toggle ───────────────────────────────────────────────────────────
 
+  // True when an IME (Chinese, Japanese, Korean input) is actively composing.
+  // Enter/Escape that belong to the composition must not submit or close dialogs.
+  function isImeComposing(event) {
+    return !!(event && (event.isComposing || event.keyCode === 229))
+  }
+
+  const CJK_SOURCE_LANG = {
+    zh: 'zh-Hant',
+    zho: 'zh-Hant',
+    cmn: 'zh-Hant',
+    yue: 'zh-Hant-HK',
+    ja: 'ja',
+    jpn: 'ja',
+    ko: 'ko',
+    kor: 'ko',
+  }
+
+  function sourceTextLang(code) {
+    if (!code) return ''
+    return CJK_SOURCE_LANG[String(code).split('-')[0].toLowerCase()] || ''
+  }
+
+  function applySourceTextLang(code) {
+    const lang = sourceTextLang(code)
+    for (const id of ['flow-content', 'flow-edit-text', 'flow-edit-transcript', 'flow-rule-snapshot', 'flow-rule-from', 'flow-rule-to']) {
+      const el = document.getElementById(id)
+      if (!el) continue
+      if (lang) el.setAttribute('lang', lang)
+      else el.removeAttribute('lang')
+    }
+  }
+
   const micLabel = document.getElementById('mic-label')
   const micBtn = document.getElementById('mic-toggle-btn')
   const micMobileBtn = document.getElementById('mic-mobile-btn')
+  const tabLabel = document.getElementById('tab-label')
+  const tabBtn = document.getElementById('tab-toggle-btn')
   let recording = false
-  // Enables the flow panel's "Commit current sentence" button while the mic is
-  // on. Assigned by the flow panel IIFE, like reapplyFlowDict.
   let onFlowMicStateChange = function () {}
 
-  // state: 'off' | 'on' | 'busy'. `startingLabel` marks a busy state that is
-  // starting capture rather than stopping it.
-  function setMicState(state, startingLabel) {
-    if (!micBtn) return
-    const starting = state === 'busy' && !!startingLabel
-    for (const btn of [micBtn, micMobileBtn]) {
-      if (!btn) continue
-      btn.classList.remove('mic-on', 'mic-off', 'mic-busy')
-      btn.classList.add('mic-' + state)
-      btn.classList.toggle('mic-starting', starting)
-      btn.disabled = (state === 'busy')
-      btn.setAttribute('aria-pressed', state === 'on' ? 'true' : 'false')
+  function applySourceButtonClasses(btn, labelEl, state, busyLabel, onText, offText, onTitle, offTitle) {
+    if (!btn) return
+    const starting = state === 'busy' && !!busyLabel
+    btn.classList.remove('mic-on', 'mic-off', 'mic-busy')
+    btn.classList.add('mic-' + state)
+    btn.classList.toggle('mic-starting', starting)
+    btn.disabled = (state === 'busy')
+    btn.setAttribute('aria-pressed', state === 'on' ? 'true' : 'false')
+    if (labelEl) {
+      labelEl.textContent = state === 'on' ? onText : state === 'busy' ? (starting ? busyLabel : 'STOPPING…') : offText
     }
-
-    if (state === 'on') {
-      if (micLabel) micLabel.textContent = 'MIC ON'
-      micBtn.title = 'Stop microphone'
-    } else if (state === 'busy') {
-      if (micLabel) micLabel.textContent = starting ? startingLabel : 'STOPPING…'
-      micBtn.title = 'Please wait…'
-    } else {
-      if (micLabel) micLabel.textContent = 'MIC OFF'
-      micBtn.title = 'Start microphone'
-    }
-
-    // Let the status indicator re-evaluate: a transcription-stopped alarm is only
-    // meaningful while the mic is on. Defined in realtime.js, which loads after this.
-    if (typeof onMicStateChange === 'function') onMicStateChange(state)
-    onFlowMicStateChange(state)
+    btn.title = state === 'on' ? onTitle : state === 'busy' ? 'Please wait…' : offTitle
   }
 
-  // The only two writers of `recording`. It lives here with setMicState(), while
-  // startSession()/stopSession()/socket live in realtime.js, so every caller used to
-  // hand-assemble the sequence from both files - and each one that forgot a step left
-  // the state machine skewed: realtime.js's error handler dropped `recording`, so the
-  // next click took the mic_off branch on an already-dead session and the operator had
-  // to press twice to get back on air.
+  function syncCaptureButtons(busySource, startingLabel) {
+    const micOn = recording && (typeof hasCaptureSource === 'function' ? hasCaptureSource('mic') : true)
+    const tabOn = recording && typeof hasCaptureSource === 'function' && hasCaptureSource('tab')
+    const micState = busySource === 'mic' ? 'busy' : busySource === 'all' ? 'busy' : (micOn ? 'on' : 'off')
+    const tabState = busySource === 'tab' ? 'busy' : busySource === 'all' ? 'busy' : (tabOn ? 'on' : 'off')
 
-  async function startRecording() {
-    setMicState('busy', usingTabAudio() ? 'WAITING FOR SHARE…' : 'STARTING…')
-    const started = await startSession()
+    applySourceButtonClasses(micBtn, micLabel, micState, startingLabel, 'MIC ON', 'MIC OFF', 'Stop microphone', 'Start microphone')
+    applySourceButtonClasses(micMobileBtn, null, micState, startingLabel, 'MIC ON', 'MIC OFF', 'Stop microphone', 'Start microphone')
+    applySourceButtonClasses(tabBtn, tabLabel, tabState, startingLabel, 'TAB ON', 'TAB AUDIO', 'Stop tab audio share', 'Share tab or system audio')
+
+    const overall = recording ? 'on' : (busySource ? 'busy' : 'off')
+    if (typeof onMicStateChange === 'function') onMicStateChange(overall)
+    onFlowMicStateChange(overall)
+  }
+
+  async function toggleCaptureSource(source) {
+    if (micBtn && micBtn.disabled) return
+    if (tabBtn && tabBtn.disabled) return
+    const alreadyOpen = recording && typeof hasCaptureSource === 'function' && hasCaptureSource(source)
+    if (!alreadyOpen) {
+      if (!recording) {
+        return await startRecording(source)
+      }
+      syncCaptureButtons(source, source === 'tab' ? 'WAITING FOR SHARE…' : 'STARTING…')
+      const status = await openCaptureSource(source)
+      syncCaptureButtons(null)
+      if (status === 'no-tab-audio') {
+        showTransientNotice('No audio shared — choose a tab or screen and turn on "Share audio" (Chrome or Edge)', 10000)
+      }
+      return status === 'started'
+    }
+    if (typeof activeCaptureCount === 'function' && activeCaptureCount() <= 1) {
+      await stopRecording()
+      return false
+    }
+    closeCaptureSource(source)
+    syncCaptureButtons(null)
+    return true
+  }
+
+  async function startRecording(source = 'mic') {
+    syncCaptureButtons(source, source === 'tab' ? 'WAITING FOR SHARE…' : 'STARTING…')
+    const started = await startSession(source)
     if (started !== 'started') {
-      // Denied permission, a cancelled share or a dead socket. Claiming MIC ON here
-      // is the same skew in the other direction: button on, nothing streaming.
       await stopRecording()
       if (started === 'no-tab-audio') {
         showTransientNotice('No audio shared — choose a tab or screen and turn on "Share audio" (Chrome or Edge)', 10000)
@@ -744,21 +816,18 @@
     }
     socket.emit('mic_on', { session_id: sessionId, secret_key: user_secret_key })
     recording = true
-    setMicState('on')
+    syncCaptureButtons(null)
     return true
   }
 
   async function stopRecording() {
-    setMicState('busy')
-    // Stop capturing first: a chunk arriving after mic_off would start a new
-    // transcription session on the server. The server drops its Scribe manager on
-    // mic_off; skipping it leaves one spinning until the idle watchdog notices.
+    syncCaptureButtons('all')
     await stopSession()
     if (typeof socket !== 'undefined' && socket.connected) {
       socket.emit('mic_off', { session_id: sessionId })
     }
     recording = false
-    setMicState('off')
+    syncCaptureButtons(null)
   }
 
   // Send heartbeat every 10 seconds to maintain admin lock.
@@ -968,7 +1037,9 @@
       if (res.ok) {
         const data = await res.json()
         const sel = document.getElementById('scribe-lang-select')
-        if (sel) sel.value = data.language || ''
+        const lang = data.language || ''
+        if (sel) sel.value = lang
+        applySourceTextLang(lang)
       }
     } catch (e) {
       console.error('Failed to load scribe language:', e)
@@ -1261,6 +1332,7 @@
   let keywordSavePending = false  // true while debouncing or saving; blocks sync
   let keywordSaveTimer = null     // debounce timer for saveKeywords
   let keywordSeeds = new Set()    // added from reference text, not yet saved; server seeds their score
+  let kwDetailsInitialized = false
   let keywordGenerating = false
 
   function updateKeywordLabel() {
@@ -1280,9 +1352,23 @@
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   }
 
+  function renderKeywordDatalist(sorted) {
+    const datalist = document.getElementById('kw-suggestions-datalist')
+    if (!datalist) return
+    datalist.replaceChildren(...sorted.map(kw => {
+      const opt = document.createElement('option')
+      opt.value = kw
+      return opt
+    }))
+  }
+
   function renderKeywordList() {
     const list = document.getElementById('kw-list')
     list.innerHTML = ''
+    // Pinned first, then by rerank score descending; ties keep list order.
+    const sorted = currentKeywords.slice().sort((a, b) =>
+      Number(lockedKeywords.has(b)) - Number(lockedKeywords.has(a)) || keywordScore(b) - keywordScore(a))
+    renderKeywordDatalist(sorted)
     if (!currentKeywords.length) {
       const empty = document.createElement('div')
       empty.className = 'text-xs text-gray-500 px-2 py-1'
@@ -1291,10 +1377,6 @@
       return
     }
     const knownSpellings = new Set(glossary.flatMap(e => Object.values(e)))
-    // Pinned first, then by rerank score descending; ties keep list order.
-    // Display only: currentKeywords keeps its order for saves.
-    const sorted = currentKeywords.slice().sort((a, b) =>
-      Number(lockedKeywords.has(b)) - Number(lockedKeywords.has(a)) || keywordScore(b) - keywordScore(a))
     sorted.forEach(function (kw) {
       const isLocked = lockedKeywords.has(kw)
       const row = document.createElement('div')
@@ -1423,12 +1505,33 @@
         currentKeywords = data.keywords
         lockedKeywords = new Set(data.locked_keywords || [])
         keywordScores = data.scores || {}
+        if (!kwDetailsInitialized) {
+          kwDetailsInitialized = true
+          const details = document.getElementById('kw-generate-details')
+          if (details) details.open = currentKeywords.length === 0
+        }
         updateKeywordLabel()
         renderKeywordList()
       }
     } catch (e) {
       console.error('Failed to load keywords:', e)
     }
+  }
+
+  async function loadAutoKeywords() {
+    try {
+      const res = await fetch(`/api/session/${sid}/auto-keywords`, { credentials: 'same-origin' })
+      if (!res.ok) return
+      const data = await res.json()
+      const cb = document.getElementById('kw-auto-checkbox')
+      if (cb) cb.checked = !!data.enabled
+    } catch (e) {
+      console.error('Failed to load auto_keywords:', e)
+    }
+  }
+
+  async function saveAutoKeywords(enabled) {
+    await saveSessionField('auto-keywords', { enabled: !!enabled }, 'settings-status')
   }
 
   // Merge server keywords into the local list without overwriting user edits.
@@ -1709,7 +1812,7 @@
   // Enter runs `action`, unless an IME is composing (Enter then confirms the
   // candidate, not the form).
   function onEnterKey(event, action) {
-    if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return
+    if (event.key !== 'Enter' || isImeComposing(event)) return
     event.preventDefault()
     action()
   }
@@ -1972,6 +2075,17 @@
     renderViewerShowOptions()
   }
 
+  function syncDictionaryToListSuggestion() {
+    const sel = document.getElementById('td-target-select')
+    const toInput = document.getElementById('td-to-input')
+    if (!sel || !toInput) return
+    if (sel.value === 'flow' || sel.value === '') {
+      toInput.setAttribute('list', 'kw-suggestions-datalist')
+    } else {
+      toInput.removeAttribute('list')
+    }
+  }
+
   // Populate the add-row target <select> with Flow + the session's languages.
   function renderTargetOptions() {
     const sel = document.getElementById('td-target-select')
@@ -1981,6 +2095,7 @@
       .concat(selectedLanguages.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(langLabel(c))}</option>`))
     sel.innerHTML = opts.join('')
     if (prev && Array.from(sel.options).some(o => o.value === prev)) sel.value = prev
+    syncDictionaryToListSuggestion()
   }
 
   function renderTextDictList() {
@@ -2202,6 +2317,7 @@
   const SETTINGS_KINDS = {
     'languages':       { load: loadLanguages,      isInteracting: () => langSaveInFlight || !!langSaveTimer, polled: true },
     'keywords':        { load: loadKeywords,       isInteracting: () => keywordSavePending || keywordGenerating,     polled: false },
+    'auto-keywords':   { load: loadAutoKeywords,   isInteracting: () => focused('kw-auto-checkbox'),         polled: true },
     'text-dictionary': { load: loadTextDictionary, isInteracting: () => !!textDictSaveTimer,                 polled: true },
     'glossary':        { load: loadGlossary,       isInteracting: () => !!glossarySaveTimer || glossarySavesPending > 0, polled: true },
     'stt-provider':    { load: loadEngineAndLanguage,
@@ -2401,7 +2517,7 @@
   }
 
   document.addEventListener('keydown', function (e) {
-    if (e.key !== 'Escape') return
+    if (e.key !== 'Escape' || isImeComposing(e)) return
     document.querySelectorAll('.modal-overlay:not(.hidden)').forEach(function (modal) {
       if (modal.dataset.modalPending !== 'true') modal.classList.add('hidden')
     })
@@ -2430,6 +2546,7 @@
     const scribeLangSelect = document.getElementById('scribe-lang-select')
     if (scribeLangSelect) {
       scribeLangSelect.addEventListener('change', function () {
+        applySourceTextLang(this.value)
         saveScribeLanguage(this.value)
       })
       loadEngineAndLanguage()
@@ -2438,6 +2555,7 @@
     loadTranslateTone()
     loadLanguages()
     loadKeywords()
+    loadAutoKeywords()
     loadTextDictionary()
     loadGlossary()
     loadCoOwners()
@@ -2456,7 +2574,7 @@
         coEmailInput.value = ''
       })
       coEmailInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') coAddBtn.click()
+        if (e.key === 'Enter' && !isImeComposing(e)) coAddBtn.click()
       })
     }
 
@@ -2464,6 +2582,12 @@
     const toneCustomInput = document.getElementById('tone-custom-input')
     const toneStatusEl = document.getElementById('settings-status')
     let toneDebounce = null
+    let toneComposing = false
+    function scheduleToneSave(value) {
+      clearTimeout(toneDebounce)
+      if (toneStatusEl) toneStatusEl.textContent = 'Saving'
+      toneDebounce = setTimeout(() => saveTranslateTone(value.trim()), 800)
+    }
     toneSelect.addEventListener('change', function () {
       if (this.value === 'custom') {
         toneCustomInput.classList.remove('hidden')
@@ -2473,13 +2597,17 @@
         saveTranslateTone(this.value)
       }
     })
-    toneCustomInput.addEventListener('input', function () {
-      clearTimeout(toneDebounce)
-      if (toneStatusEl) toneStatusEl.textContent = 'Saving'
-      toneDebounce = setTimeout(() => saveTranslateTone(this.value.trim()), 800)
+    toneCustomInput.addEventListener('compositionstart', function () { toneComposing = true })
+    toneCustomInput.addEventListener('compositionend', function () {
+      toneComposing = false
+      scheduleToneSave(this.value)
+    })
+    toneCustomInput.addEventListener('input', function (e) {
+      if (toneComposing || e.isComposing) return
+      scheduleToneSave(this.value)
     })
     toneCustomInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !isImeComposing(e)) {
         clearTimeout(toneDebounce)
         saveTranslateTone(this.value.trim())
       }
@@ -2549,16 +2677,26 @@
       toInput.value = ''
       fromInput.focus()
     })
+    const tdTargetSelect = document.getElementById('td-target-select')
+    if (tdTargetSelect) tdTargetSelect.addEventListener('change', syncDictionaryToListSuggestion)
     const tdSubmitOnEnter = function (e) {
-      if (e.key === 'Enter') document.getElementById('td-add-btn').click()
+      if (e.key === 'Enter' && !isImeComposing(e)) document.getElementById('td-add-btn').click()
     }
     document.getElementById('td-from-input').addEventListener('keydown', tdSubmitOnEnter)
     document.getElementById('td-to-input').addEventListener('keydown', tdSubmitOnEnter)
 
-    // Add custom keyword
+    // Auto keywords switch
+    const kwAutoCheckbox = document.getElementById('kw-auto-checkbox')
+    if (kwAutoCheckbox) {
+      kwAutoCheckbox.addEventListener('change', function () {
+        saveAutoKeywords(this.checked)
+      })
+    }
+
+    // Add custom keyword (split on ASCII & CJK commas)
     document.getElementById('kw-custom-add-btn').addEventListener('click', function () {
       const input = document.getElementById('kw-custom-input')
-      const kws = input.value.split(',').map(s => s.trim()).filter(Boolean)
+      const kws = input.value.split(/[,，、､]/u).map(s => s.trim()).filter(Boolean)
       if (!kws.length) return
       for (const kw of kws) {
         if (!currentKeywords.includes(kw)) {
@@ -2572,7 +2710,7 @@
       input.value = ''
     })
     document.getElementById('kw-custom-input').addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') document.getElementById('kw-custom-add-btn').click()
+      if (e.key === 'Enter' && !isImeComposing(e)) document.getElementById('kw-custom-add-btn').click()
     })
     document.getElementById('kw-generate-btn').addEventListener('click', generateKeywordsFromText)
 
@@ -2598,7 +2736,7 @@
       input.value = ''
     })
     document.getElementById('lang-custom-input').addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') document.getElementById('lang-custom-add-btn').click()
+      if (e.key === 'Enter' && !isImeComposing(e)) document.getElementById('lang-custom-add-btn').click()
     })
 
     // ── Copyable inputs ──────────────────────────────────────────────────────
@@ -2643,19 +2781,18 @@
     }
 
     if (micBtn) {
-      micBtn.addEventListener('click', async () => {
-        if (recording) {
-          await stopRecording()
-        } else {
-          await startRecording()
-        }
-      })
+      micBtn.addEventListener('click', () => { toggleCaptureSource('mic') })
     }
 
     if (micMobileBtn) {
-      micMobileBtn.addEventListener('click', async () => {
-        micBtn.click()
-      })
+      micMobileBtn.addEventListener('click', () => { toggleCaptureSource('mic') })
+    }
+
+    if (tabBtn) {
+      if (typeof tabAudioSupported !== 'undefined' && tabAudioSupported) {
+        tabBtn.style.display = ''
+      }
+      tabBtn.addEventListener('click', () => { toggleCaptureSource('tab') })
     }
   })
 </script>
@@ -2931,6 +3068,9 @@
       })
       flowRuleFrom.addEventListener('input', updateFlowRuleHint)
       flowRuleTo.addEventListener('input', updateFlowRuleHint)
+      flowRuleForm.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' && isImeComposing(event)) event.preventDefault()
+      })
       flowRuleForm.addEventListener('submit', function (event) {
         event.preventDefault()
         if (addTextRule(flowRuleFrom.value, flowRuleTo.value, 'flow')) closeFlowRuleEditor()
@@ -3154,8 +3294,9 @@
         wrap.innerHTML = `
           <div class="flex items-center gap-2">
             <label for="flow-edit-lang-${n}" class="flex-1 truncate text-xs font-semibold text-[#d7e1ed]"></label>
-            <button type="button" class="flow-edit-lang-retranslate inline-flex size-6 items-center justify-center rounded text-[#8d9aae] transition-colors hover:bg-[#273548] hover:text-[#edf3fa] disabled:cursor-wait disabled:opacity-50" title="Retranslate this language" aria-label="Retranslate this language">
-              <iconify-icon icon="ph:arrows-clockwise" width="14" height="14"></iconify-icon>
+            <button type="button" class="flow-edit-lang-retranslate inline-flex min-h-6 items-center gap-1 rounded border border-[#3b4a5d] px-2 text-[11px] font-semibold text-[#d7e1ed] transition-colors hover:border-blue-500 hover:bg-[#273548] hover:text-white disabled:cursor-wait disabled:opacity-50" title="Retranslate this language" aria-label="Retranslate this language">
+              <iconify-icon icon="ph:arrows-clockwise" width="12" height="12"></iconify-icon>
+              <span class="flow-edit-lang-retranslate-label">Retranslate</span>
             </button>
           </div>
           <textarea id="flow-edit-lang-${n}" rows="2" maxlength="5000" class="flow-edit-lang panel-input w-full flex-none resize-y leading-relaxed disabled:cursor-wait disabled:opacity-60"></textarea>`
@@ -3305,6 +3446,10 @@
         const startTime = editingStartTime
         languageRetranslatesPending.add(lang)
         button.disabled = true
+        const btnLabel = button.querySelector('.flow-edit-lang-retranslate-label')
+        const btnIcon = button.querySelector('iconify-icon')
+        if (btnLabel) btnLabel.textContent = 'Retranslating…'
+        if (btnIcon) btnIcon.classList.add('animate-spin')
         updateSaveState()
         flowEditStatus.textContent = `Translating ${lang}…`
         try {
@@ -3316,6 +3461,8 @@
         } catch (error) {
           if (generation === editGeneration) flowEditStatus.textContent = error.message || 'Translation failed.'
         } finally {
+          if (btnLabel) btnLabel.textContent = 'Retranslate'
+          if (btnIcon) btnIcon.classList.remove('animate-spin')
           if (generation === editGeneration) {
             languageRetranslatesPending.delete(lang)
             button.disabled = !!editPending
@@ -3364,7 +3511,7 @@
       // CJK candidate never submits.
       flowEditForm.addEventListener('keydown', function (event) {
         if (!(event.target instanceof HTMLTextAreaElement)) return
-        if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229 || event.altKey) return
+        if (event.key !== 'Enter' || isImeComposing(event) || event.altKey) return
         if (event.shiftKey) return
         event.preventDefault()
         if (event.repeat) return

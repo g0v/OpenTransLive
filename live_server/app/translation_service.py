@@ -235,6 +235,46 @@ async def _save_session_string_field(redis_client, session_id, field: str, value
     asyncio.create_task(_save_room_field_to_mongo(session_id, field, value))
 
 
+async def get_session_auto_keywords(redis_client, session_id) -> bool:
+    """Whether AI keyword extraction from committed lines is enabled (default True)."""
+    key = f"auto_keywords:{session_id}"
+    try:
+        raw = await redis_client.get(key)
+        if raw is not None:
+            text = raw.decode() if isinstance(raw, bytes) else str(raw)
+            if text in ("0", "false", "False"):
+                return False
+            if text in ("1", "true", "True"):
+                return True
+    except Exception as e:
+        log_exception(logger, e, "Redis get auto_keywords error")
+
+    enabled = True
+    try:
+        room = await rooms_collection.find_one({"sid": session_id}, {"auto_keywords": 1})
+        if room and isinstance(room.get("auto_keywords"), bool):
+            enabled = room["auto_keywords"]
+    except Exception as e:
+        log_exception(logger, e, "MongoDB get auto_keywords error")
+
+    try:
+        await redis_client.set(key, "1" if enabled else "0", ex=86400)
+    except Exception:
+        pass
+
+    return enabled
+
+
+async def save_session_auto_keywords(redis_client, session_id, enabled: bool):
+    """Persist the per-session auto_keywords switch in Redis and MongoDB."""
+    enabled = bool(enabled)
+    try:
+        await redis_client.set(f"auto_keywords:{session_id}", "1" if enabled else "0", ex=86400)
+    except Exception as e:
+        log_exception(logger, e, "Redis set auto_keywords error")
+    asyncio.create_task(_save_room_field_to_mongo(session_id, "auto_keywords", enabled))
+
+
 # ---------------------------------------------------------------------------
 # Session: scribe language
 # ---------------------------------------------------------------------------
@@ -679,21 +719,31 @@ def rank_keywords(keywords: dict[str, int], locked_list: list[str], cap: int) ->
     }
 
 
-async def rerank_keywords(redis_client, session_id, extraction_context: dict[str, int], recent_text: str, provider: str | None = None):
+async def rerank_keywords(
+    redis_client,
+    session_id,
+    extraction_context: dict[str, int] | None,
+    recent_text: str,
+    provider: str | None = None,
+    extract: bool | None = None,
+):
     """
-    Extract new special nouns/names from recent_text, then increment/decrement keyword
-    counts by presence in text. `extraction_context` is the caller's keyword snapshot,
-    used only to prime extraction; the state that gets rewritten is re-read from Redis.
-    Locked keywords are always preserved: they never decay and are never trimmed.
-    Runs as a fire-and-forget background task; result is saved to Redis.
+    When `extract` is enabled (or unset and the session setting is enabled),
+    extract new special nouns/names from recent_text; always increment/decrement
+    keyword counts by presence in text. `extraction_context` is the caller's
+    keyword snapshot, used only to prime extraction; the state that gets rewritten
+    is re-read from Redis. Locked keywords are always preserved: they never decay
+    and are never trimmed.
     """
-    translator = get_translator(provider)
-
+    if extract is None:
+        extract = await get_session_auto_keywords(redis_client, session_id)
     new_kws = []
-    try:
-        new_kws = await translator.extract_keywords(recent_text, extraction_context)
-    except Exception as e:
-        log_exception(logger, e, "Keyword extraction error")
+    if extract:
+        translator = get_translator(provider)
+        try:
+            new_kws = await translator.extract_keywords(recent_text, extraction_context or {})
+        except Exception as e:
+            log_exception(logger, e, "Keyword extraction error")
 
     # Re-read instead of writing back the caller's snapshot: extraction and the
     # translation before it take seconds, and the panel may have added, removed

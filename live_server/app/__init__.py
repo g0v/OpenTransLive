@@ -242,6 +242,7 @@ class _NetworkRateLimiter:
 
 _operator_sockets = _OperatorSocketLimiter()
 _socket_slots: dict[str, tuple[str, str]] = {}  # socket id -> (network, account)
+_shutting_down = False
 _socket_upgrade_limiter = _NetworkRateLimiter(max_calls=120, window=60.0)
 # A socket that has not joined a session by then is disconnected.
 _JOIN_DEADLINE_SECS = 10.0
@@ -522,6 +523,8 @@ def _get_or_create_translation_manager(session_id):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _shutting_down
+    _shutting_down = False
     # Startup
     await init_indexes()
     _limiter_redis = _create_redis_client()
@@ -530,6 +533,14 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     logger.info("Shutting down resources")
+    _shutting_down = True
+    # Disconnect active operator sockets first so connected panels reconnect
+    # immediately instead of streaming audio into managers that are stopping.
+    for sock_id in list(_socket_slots.keys()):
+        try:
+            await sio.disconnect(sock_id)
+        except Exception as e:
+            log_exception(logger, e, f"Failed to disconnect socket during shutdown")
     await FastAPILimiter.close()
 
     # Stop all active scribe managers (snapshot first to avoid mutation during
@@ -575,6 +586,7 @@ _PUBLIC_API_ENDPOINTS = {
     "create_room", "list_rooms",
     "get_session_languages_endpoint", "update_session_languages_endpoint",
     "get_session_keywords_endpoint", "update_session_keywords_endpoint",
+    "get_session_auto_keywords_endpoint", "update_session_auto_keywords_endpoint",
     "get_session_text_dictionary_endpoint", "update_session_text_dictionary_endpoint",
     "get_session_scribe_language_endpoint", "update_session_scribe_language_endpoint",
     "get_session_stt_provider_endpoint", "update_session_stt_provider_endpoint",
@@ -617,6 +629,13 @@ _PUBLIC_API_REQUEST_BODIES: dict[str, dict] = {
                                                "connection (no reconnect is forced). ElevenLabs uses "
                                                "at most 50 pins of up to 20 characters."}}},
         "example": {"keywords": ["OpenTransLive", "g0v"], "locked_keywords": ["g0v"]},
+    },
+    "update_session_auto_keywords_endpoint": {
+        "required": True,
+        "schema": {"type": "object", "required": ["enabled"], "properties": {
+            "enabled": {"type": "boolean",
+                        "description": "Whether committed transcript lines automatically add AI-extracted keywords (default true)."}}},
+        "example": {"enabled": False},
     },
     "update_session_text_dictionary_endpoint": {
         "required": True,
@@ -2635,6 +2654,34 @@ async def update_session_keywords_endpoint(request: Request, sid: str):
     return result
 
 
+@app.get("/api/session/{sid}/auto-keywords", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def get_session_auto_keywords_endpoint(request: Request, sid: str):
+    """Get whether committed lines automatically add AI-extracted keywords."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _require_session_owner(request, sid)
+
+    from .translation_service import get_session_auto_keywords
+    enabled = await get_session_auto_keywords(redis_client, sid)
+    return {"enabled": enabled}
+
+
+@app.post("/api/session/{sid}/auto-keywords", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
+async def update_session_auto_keywords_endpoint(request: Request, sid: str):
+    """Toggle whether committed lines automatically add AI-extracted keywords."""
+    sid = sanitize_query_param(sid, "session ID")
+    await _require_session_owner(request, sid)
+
+    body = await request.json()
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail="enabled must be a boolean")
+
+    from .translation_service import save_session_auto_keywords
+    await save_session_auto_keywords(redis_client, sid, enabled)
+    await _emit_session_settings_update(sid, "auto-keywords")
+    return {"enabled": enabled}
+
+
 # User-triggered AI work is intentionally rate-limited more tightly than the
 # regular settings writes.
 @app.post("/api/session/{sid}/keywords/generate", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_identifier))])
@@ -4271,6 +4318,10 @@ async def connect(socket_id, environ, auth):
     (it's idempotent and triggers the joined_session UI update). A socket
     that has not joined within _JOIN_DEADLINE_SECS is disconnected.
     """
+    if _shutting_down:
+        raise socketio.exceptions.ConnectionRefusedError(
+            "Server restarting, try again later", {"code": "service_restart"}
+        )
     # engineio fills REMOTE_ADDR with a constant; the ASGI scope has the real
     # (proxy-resolved) client.
     network = client_network(((environ.get("asgi.scope") or {}).get("client") or [None])[0])
@@ -4563,7 +4614,14 @@ async def join_session(socket_id, data):
 
     # API-key path: authorize by key + room ownership, then join.
     if api_key or session.get('auth_via') == 'api_key':
-        if not await _authorize_api_key_socket(socket_id, session, api_key, session_id):
+        try:
+            authorized = await _authorize_api_key_socket(socket_id, session, api_key, session_id)
+        except Exception as e:
+            log_exception(logger, e, "join_session api_key verification lookup failed")
+            await _emit_socket_error(socket_id, 'service_unavailable', 'Credentials could not be verified — please retry')
+            await sio.disconnect(socket_id)
+            return
+        if not authorized:
             logger.warning(
                 "join_session apikey_unauthorized sid_hash=%s socket_hash=%s",
                 _hash_token(session_id), _hash_token(socket_id),
@@ -4583,7 +4641,17 @@ async def join_session(socket_id, data):
         )
         return
 
-    if not await verify_socket_auth(socket_id, session_id, secret_key):
+    try:
+        verified = await verify_socket_auth(socket_id, session_id, secret_key)
+        room = await rooms_collection.find_one({"sid": session_id, "secret_key": secret_key}) if verified else None
+        owner_email = await _get_room_owner_email(room) if room else None
+    except Exception as e:
+        log_exception(logger, e, "join_session credential lookup failed")
+        await _emit_socket_error(socket_id, 'service_unavailable', 'Credentials could not be verified — please retry')
+        await sio.disconnect(socket_id)
+        return
+
+    if not verified or not room:
         logger.warning(
             "join_session authentication_failed sid_hash=%s socket_hash=%s",
             _hash_token(session_id),
@@ -4592,15 +4660,10 @@ async def join_session(socket_id, data):
         await _emit_unauthorized(socket_id)
         return
 
-    room = await rooms_collection.find_one({"sid": session_id, "secret_key": secret_key})
-    if not room:
-        await _emit_unauthorized(socket_id)
-        return
-
     session['secret_key'] = secret_key
     session['verified'] = True
     session['session_id'] = session_id
-    session['email'] = await _get_room_owner_email(room)
+    session['email'] = owner_email
     await sio.save_session(socket_id, session)
     await sio.enter_room(socket_id, session_id)
     logger.info(
