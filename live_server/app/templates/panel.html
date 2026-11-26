@@ -907,7 +907,11 @@
     { code: 'ca-ES', label: 'Catalan' },
   ]
 
-  const SCRIBE_LANGUAGES = { elevenlabs: ELEVENLABS_LANGUAGES, gemini: GEMINI_LANGUAGES }
+  const SCRIBE_LANGUAGES = {
+    elevenlabs: ELEVENLABS_LANGUAGES,
+    'elevenlabs-v2': ELEVENLABS_LANGUAGES,
+    gemini: GEMINI_LANGUAGES,
+  }
 
   // Which engine the Detect Lang options currently describe. Set by loadSttProvider
   // before the language value is applied, so the option for a saved code always exists
@@ -924,7 +928,11 @@
     }
   }
 
-  const STT_PROVIDER_LABELS = { elevenlabs: 'ElevenLabs Scribe', gemini: 'Gemini Transcribe' }
+  const STT_PROVIDER_LABELS = {
+    elevenlabs: 'ElevenLabs Scribe v3',
+    'elevenlabs-v2': 'ElevenLabs Scribe v2',
+    gemini: 'Gemini Transcribe',
+  }
 
   // Only engines whose API key the server holds are selectable. A session still set
   // to an engine without a key shows it as a disabled entry rather than pretending it

@@ -31,8 +31,8 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedOK
 from datetime import datetime, timezone
 from .config import REALTIME_SETTINGS, SCRIBE_SETTINGS
 from .logger_config import setup_logger, log_exception
-from .text_script import (approx_word_count, dominant_script, should_force_traditional,
-                          to_taiwan_traditional)
+from .text_script import (approx_word_count, clean_transcript, dominant_script,
+                          ends_sentence, should_force_traditional, to_taiwan_traditional)
 
 logger = setup_logger(__name__)
 encoding = tiktoken.get_encoding("o200k_base")
@@ -58,6 +58,7 @@ _IDLE_TIMEOUT_SECS = SCRIBE_SETTINGS["IDLE_TIMEOUT_SECS"]
 _IDLE_CHECK_INTERVAL = SCRIBE_SETTINGS["IDLE_CHECK_INTERVAL_SECS"]
 _MAX_SESSION_SECS = SCRIBE_SETTINGS["MAX_SESSION_SECS"]
 _MAX_PARTIAL_TOKENS = SCRIBE_SETTINGS["MAX_PARTIAL_TOKENS"]
+_MAX_SEGMENT_SECS = SCRIBE_SETTINGS["MAX_SEGMENT_SECS"]
 _MIN_COMMIT_WORDS = SCRIBE_SETTINGS["MIN_COMMIT_WORDS"]
 _COMMIT_TIMEOUT_SECS = SCRIBE_SETTINGS["COMMIT_TIMEOUT_SECS"]
 _MIN_ALPHABETIC_TRANSCRIPT_CHARS = SCRIBE_SETTINGS["MIN_ALPHABETIC_TRANSCRIPT_CHARS"]
@@ -172,6 +173,15 @@ def _tidy_transcript(text: str) -> str:
     )
 
 
+def _prefix_or_anchor_end(key: str, prefix: str) -> int:
+    """Locate `prefix` at the start of `key` (exact prefix, else via _committed_end)."""
+    if not prefix:
+        return 0
+    if key.startswith(prefix):
+        return len(prefix)
+    return _committed_end(key, prefix)
+
+
 def _strip_forced_head(transcript: str, forced_key: str) -> str:
     """Drop the head of `transcript` that repeats text force_commit() already
     committed (`forced_key` is its match key): an exact prefix, or else up to the last
@@ -181,10 +191,61 @@ def _strip_forced_head(transcript: str, forced_key: str) -> str:
     if matched is None:
         return transcript
     key, ends = matched
-    cut = len(forced_key) if key.startswith(forced_key) else _committed_end(key, forced_key)
+    cut = _prefix_or_anchor_end(key, forced_key)
     if cut == 0:
         return transcript
     return _tidy_transcript(transcript[_word_start(transcript, ends[cut - 1]):])
+
+
+def _join_text(a: str, b: str) -> str:
+    """Concatenate two transcript fragments, omitting the space around CJK characters."""
+    if not a:
+        return b
+    if not b:
+        return a
+    a = a.rstrip()
+    b = b.lstrip()
+    if not a or not b:
+        return a or b
+    if _is_wide(a[-1]) or _is_wide(b[0]):
+        return a + b
+    return a + " " + b
+
+
+_CLAUSE_END_CHARS = frozenset("。！？!?，、；")
+
+
+def _clause_ends(s: str) -> list[tuple[int, int]]:
+    """Return (char_offset_after, match_key_len_before) for each sentence/clause end."""
+    ends: list[tuple[int, int]] = []
+    key = 0
+    n = len(s)
+    for i, ch in enumerate(s):
+        if not ch.isspace() and not _is_punct(ch):
+            key += 1
+            continue
+        prev = s[i - 1] if i > 0 else ""
+        nxt = s[i + 1] if i + 1 < n else ""
+        spaced = not nxt or nxt.isspace()
+        if (
+            ch in _CLAUSE_END_CHARS
+            or (ch == "." and prev != "." and spaced)
+            or (ch in (",", ";") and spaced)
+        ):
+            ends.append((i + 1, key))
+    return ends
+
+
+def _last_clause_end_mark(s: str) -> tuple[int, str | None]:
+    """Return (match_key_len, match_key_prefix) for the last clause end in s."""
+    ends = _clause_ends(s)
+    if not ends:
+        return 0, None
+    at, key_pos = ends[-1]
+    matched = _match_key(s[:at])
+    if matched is None:
+        return key_pos, None
+    return key_pos, matched[0]
 
 
 
@@ -287,6 +348,9 @@ class ScribeSessionManager:
         # current turn that fallback already committed (stripped from what follows).
         self._force_wait_task: asyncio.Task | None = None
         self._forced_key: str | None = None
+        self._cap_wait = False
+        self._cap_mark = 0
+        self._cap_mark_key: str | None = None
         # Audio chunks that entered and left the queue (sent, dropped or drained), so
         # force_commit() can put the commit flag on the newest chunk queued at the click.
         self._audio_in = 0
@@ -496,6 +560,11 @@ class ScribeSessionManager:
                 f"[reconnect] drained {drained} stale audio chunks for {self.session_id}"
             )
 
+    def _clear_cap_wait(self) -> None:
+        self._cap_wait = False
+        self._cap_mark = 0
+        self._cap_mark_key = None
+
     def _reset_segment_state(self):
         """Clear per-connection transcript state so a reconnect starts a clean segment.
         The audio that would have continued the open segment is drained on reconnect, so
@@ -504,6 +573,7 @@ class ScribeSessionManager:
         self.seg_start_time = None
         self.pending_commit_text = ""
         self.last_partial_text = ""
+        self._clear_cap_wait()
         self.should_commit = False
         self._commit_at_chunk = None
         self._forced_key = None
@@ -521,6 +591,7 @@ class ScribeSessionManager:
         text = self.pending_commit_text.strip()
         transcription = self._build_transcription(text, False, now)
         self.pending_commit_text = ""
+        self._clear_cap_wait()
         self.seg_start_time = None
         self.should_commit = False
         if cancel_timeout:
@@ -666,12 +737,57 @@ class ScribeSessionManager:
 
         return False
 
+    def _cut_at_new_clause_end(self, transcript: str, now: datetime) -> bool:
+        """Commit the open segment through the first sentence or clause end a partial
+        shows past `_cap_mark`, keeping the tail open as the next segment. The provider's
+        turn continues with the committed head stripped on later messages."""
+        ends = _clause_ends(transcript)
+        mark = self._cap_mark
+        if self._cap_mark_key:
+            matched = _match_key(transcript)
+            if matched is not None:
+                pos = _prefix_or_anchor_end(matched[0], self._cap_mark_key)
+                if pos > 0:
+                    mark = pos
+                    for _, key_pos in ends:
+                        if key_pos >= pos:
+                            mark = key_pos
+                            break
+        cut_at = 0
+        for at, key_pos in ends:
+            if key_pos > mark:
+                cut_at = at
+                break
+        if cut_at == 0:
+            return False
+        matched_head = _match_key(transcript[:cut_at])
+        if matched_head is None:
+            return False
+        head = clean_transcript(_join_text(self.pending_commit_text, transcript[:cut_at]))
+        tail = _tidy_transcript(transcript[cut_at:])
+        logger.info(
+            f"Cap cut at next clause end for {self.session_id}: "
+            f"committed={head!r}, open={tail!r}"
+        )
+        self.callback(self.session_id, self._build_transcription(head, False, now))
+        self._forced_key = (self._forced_key or "") + matched_head[0]
+        self._clear_cap_wait()
+        self.pending_commit_text = ""
+        self._cancel_commit_timeout()
+        self.seg_start_time = now if tail else None
+        self.last_partial_text = tail
+        self.last_partial_time = now
+        if tail:
+            self.callback(self.session_id, self._build_transcription(tail, True, now))
+        return True
+
     async def handle_transcript(self, transcript: str, partial: bool):
         try:
-            transcript = transcript.strip()
-            # Strip trailing punctuation before deciding whether anything is left; a
-            # lone "。" carries no content.
-            transcript = transcript.rstrip(",.。，").strip()
+            # A final that ends a sentence was not cut mid-speech or mid-sentence.
+            sentence_end = not partial and ends_sentence(transcript)
+            # Strip trailing clause/hesitation punctuation while keeping a sentence-final
+            # "。" or single "."; a lone "。" carries no content.
+            transcript = clean_transcript(transcript)
             # Any final while force_commit() waits is the provider's answer: it ends the
             # sentence where the operator pressed the button, however short it is. It
             # closes the turn even when dropped below as noise: the fallback must not
@@ -683,10 +799,10 @@ class ScribeSessionManager:
                 self._commit_at_chunk = None
                 self.should_commit = False
                 self.last_partial_text = ""
-            # The final that closes a turn whose head force_commit() already committed
-            # (the provider answered too late) is held like a short commit, so it joins
-            # the next sentence instead of standing alone as a second cut.
-            closes_forced_turn = not partial and self._forced_key is not None
+            # The final that closes a turn whose head force_commit() or a cap cut already
+            # committed is held like a short commit unless it ends a sentence, so it
+            # joins the next sentence instead of standing alone as a second cut.
+            closes_forced_turn = not partial and self._forced_key is not None and not sentence_end
             if self._forced_key is not None:
                 # The operator already committed the head of the provider's current turn.
                 transcript = _strip_forced_head(transcript, self._forced_key)
@@ -699,7 +815,7 @@ class ScribeSessionManager:
             # one or two Han/kana/Hangul characters can be a complete reply. Longer
             # junk is still caught by _is_hallucination below.
             if (
-                len(transcript) < _MIN_ALPHABETIC_TRANSCRIPT_CHARS
+                len(transcript.rstrip("。.")) < _MIN_ALPHABETIC_TRANSCRIPT_CHARS
                 and dominant_script(transcript) not in ("han", "kana", "hangul")
             ):
                 return
@@ -731,10 +847,23 @@ class ScribeSessionManager:
                         and "other" not in (pending_script, new_script)):
                     self._flush_pending(now, f"Script boundary ({pending_script} -> {new_script})")
 
+            # A held commit that already crossed a cap with no follow-up partial on screen
+            # closes on its own before a new turn joins it.
+            if self.pending_commit_text and self.seg_start_time is not None and not self.last_partial_text:
+                pending_over_age = (
+                    _MAX_SEGMENT_SECS > 0
+                    and (now - self.seg_start_time).total_seconds() >= _MAX_SEGMENT_SECS
+                )
+                if pending_over_age or len(encoding.encode(self.pending_commit_text)) >= _MAX_PARTIAL_TOKENS:
+                    self._flush_pending(now, "Pending commit cap reached")
+
             if self.seg_start_time is None:
                 self.seg_start_time = now
 
-            combined_text = self.pending_commit_text + transcript
+            if partial and self._cap_wait and self._cut_at_new_clause_end(transcript, now):
+                return
+
+            combined_text = _join_text(self.pending_commit_text, transcript)
             # Judged on the buffered pending text plus this one, so it asks whether the
             # whole candidate segment says enough to stand alone.
             emit_partial = partial or (not forced and (
@@ -754,19 +883,43 @@ class ScribeSessionManager:
                     # Short commit: keep segment open and accumulate as prefix. The
                     # interim it finalizes is now part of that prefix, so stop() must
                     # not append it again.
-                    self.pending_commit_text = combined_text + " "
+                    self.pending_commit_text = combined_text
                     self.last_partial_text = ""
+                    self._cap_mark = 0
+                    self._cap_mark_key = None
                     if self._commit_timeout_task is None or self._commit_timeout_task.done():
                         self._commit_timeout_task = asyncio.create_task(self._commit_timeout_handler())
-                # Only the partial path can outgrow the cap; a committed segment is
-                # closed out below regardless of size, so it never needs the encode.
-                if len(encoding.encode(combined_text)) > _MAX_PARTIAL_TOKENS:
+                # Only the partial/pending path can outgrow the cap; a committed segment
+                # closes out below regardless of size. Wait for the next clause end its
+                # partials show instead of asking the provider to split mid-word.
+                tokens = len(encoding.encode(combined_text))
+                over_age = (
+                    _MAX_SEGMENT_SECS > 0
+                    and (now - self.seg_start_time).total_seconds() >= _MAX_SEGMENT_SECS
+                )
+                if not self._cap_wait and (tokens > _MAX_PARTIAL_TOKENS or over_age):
+                    self._cap_wait = True
+                    if partial:
+                        self._cap_mark, self._cap_mark_key = _last_clause_end_mark(transcript)
+                    else:
+                        self._cap_mark = 0
+                        self._cap_mark_key = None
+                elif self._cap_wait and partial and (
+                    tokens >= _MAX_PARTIAL_TOKENS * 2
+                    or (
+                        _MAX_SEGMENT_SECS > 0
+                        and (now - self.seg_start_time).total_seconds() >= _MAX_SEGMENT_SECS * 1.5
+                    )
+                ):
+                    # Hard-cut fallback when unpunctuated speech never offers a clause boundary.
+                    self._clear_cap_wait()
                     self.should_commit = True
                 self.callback(self.session_id, transcription)
             else:
                 transcription = self._build_transcription(combined_text, False, now)
                 self.pending_commit_text = ""
                 self.last_partial_text = ""
+                self._clear_cap_wait()
                 self.seg_start_time = None
                 self.should_commit = False
                 self._cancel_commit_timeout()
@@ -777,10 +930,15 @@ class ScribeSessionManager:
 
     async def _commit_timeout_handler(self):
         """Force-flush pending_commit_text after _COMMIT_TIMEOUT_SECS so short
-        commits don't sit indefinitely when no longer-form follow-up arrives."""
+        commits don't sit indefinitely when no follow-up arrives. A partial that
+        followed it joins the segment instead of being cut off mid-speech."""
         try:
             await asyncio.sleep(_COMMIT_TIMEOUT_SECS)
-            if self.pending_commit_text and self.seg_start_time is not None:
+            if (
+                self.pending_commit_text
+                and self.seg_start_time is not None
+                and not self.last_partial_text
+            ):
                 self._flush_pending(
                     datetime.now(timezone.utc), "Commit timeout reached",
                     cancel_timeout=False,
@@ -845,12 +1003,13 @@ class ScribeSessionManager:
 
     def _commit_open_segment(self, reason: str) -> None:
         """Emit the buffered short commit plus the last partial as a committed segment."""
-        final_text = (self.pending_commit_text + self.last_partial_text).strip()
+        final_text = _join_text(self.pending_commit_text, self.last_partial_text).strip()
         if not final_text or self.seg_start_time is None:
             return
         transcription = self._build_transcription(final_text, False, datetime.now(timezone.utc))
         self.seg_start_time = None
         self.pending_commit_text = ""
+        self._clear_cap_wait()
         logger.info(f"{reason} for {self.session_id}: {repr(final_text)}")
         self.callback(self.session_id, transcription)
 
@@ -1141,9 +1300,10 @@ _SCRIBE_IGNORED = frozenset({
 
 
 class ElevenLabsScribeManager(ScribeSessionManager):
-    """ElevenLabs Scribe v2 realtime (wss://api.elevenlabs.io/v1/speech-to-text/realtime)."""
+    """ElevenLabs Scribe v3 Live (wss://api.elevenlabs.io/v1/speech-to-text/realtime)."""
 
     PROVIDER = "elevenlabs"
+    MODEL_ID = "scribe_v3_live"
     API_KEY_SETTING = "ELEVENLABS_API_KEY"
     # While audio flows but nobody speaks, Scribe's only output is a periodic empty
     # committed_transcript, measured at ~36s intervals against the live API. The
@@ -1152,7 +1312,7 @@ class ElevenLabsScribeManager(ScribeSessionManager):
     IDLE_OUTPUT_STALL_TIMEOUT = SCRIBE_SETTINGS[
         "ELEVENLABS_IDLE_OUTPUT_STALL_TIMEOUT_SECS"
     ]
-    # Scribe v2 Realtime keyterm prompting (billed as an add-on per audio hour).
+    # Scribe v3 Live / v2 Realtime keyterm prompting (billed as an add-on per audio hour).
     MAX_KEYTERMS = 50
     MAX_KEYTERM_CHARS = 20
     # The latest partial of the open segment and the latest non-empty commit, kept so
@@ -1164,7 +1324,7 @@ class ElevenLabsScribeManager(ScribeSessionManager):
 
     def _connect_target(self):
         params_dict = {
-            "model_id": "scribe_v2_realtime",
+            "model_id": self.MODEL_ID,
             "audio_format": f"pcm_{_AUDIO_SAMPLE_RATE_HZ}",
             "commit_strategy": "vad",
             "vad_silence_threshold_secs": SCRIBE_SETTINGS[
@@ -1335,8 +1495,23 @@ class GeminiScribeManager(ScribeSessionManager):
         return None
 
 
-SCRIBE_MANAGERS = {c.PROVIDER: c for c in (ElevenLabsScribeManager, GeminiScribeManager)}
+class ElevenLabsV2ScribeManager(ElevenLabsScribeManager):
+    """ElevenLabs Scribe v2 realtime fallback, kept so a room can switch back."""
+
+    PROVIDER = "elevenlabs-v2"
+    MODEL_ID = "scribe_v2_realtime"
+
+
+SCRIBE_MANAGERS = {
+    c.PROVIDER: c
+    for c in (ElevenLabsScribeManager, ElevenLabsV2ScribeManager, GeminiScribeManager)
+}
 _DEFAULT_PROVIDER = ElevenLabsScribeManager.PROVIDER
+
+
+def same_stt_language_codes(a: str, b: str) -> bool:
+    """Whether two STT provider ids share the same forced detect-language codes."""
+    return a in ("elevenlabs", "elevenlabs-v2") and b in ("elevenlabs", "elevenlabs-v2")
 
 
 def configured_stt_providers() -> list[str]:

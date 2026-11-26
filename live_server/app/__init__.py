@@ -58,7 +58,7 @@ from .database import (rooms_collection, transcription_store_collection, transcr
 from .logger_config import setup_logger, log_exception
 from .scribe_manager import (AUDIO_BYTES_PER_SEC, SCRIBE_MANAGERS, ScribeSessionManager,
                              configured_stt_providers, create_scribe_manager,
-                             normalize_language_code)
+                             normalize_language_code, same_stt_language_codes)
 from .socket_schema import (
     validate_sync_payload,
     validate_audio_buffer_append_payload,
@@ -1009,6 +1009,82 @@ async def _publish_display_dictionary_update(sid: str, language_maps: dict) -> N
     )
 
 
+def _viewers_cleared_key(sid: str) -> str:
+    return f"viewers_cleared_at:{sid}"
+
+
+async def _get_viewers_cleared_at(sid: str) -> float:
+    """Unix timestamp before which segments are hidden from viewers (0.0 when unset)."""
+    key = _viewers_cleared_key(sid)
+    try:
+        cached = await redis_client.get(key)
+        if cached is not None:
+            return float(cached)
+    except Exception as e:
+        log_exception(logger, e, f"Redis read viewers_cleared_at error for {_hash_token(sid)}")
+
+    cleared_at = 0.0
+    try:
+        room = await rooms_collection.find_one({"sid": sid}, {"viewers_cleared_at": 1})
+        raw = (room or {}).get("viewers_cleared_at")
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            cleared_at = float(raw)
+        elif isinstance(raw, datetime):
+            cleared_at = raw.timestamp()
+        await redis_client.set(key, str(cleared_at), ex=86400)
+    except Exception as e:
+        log_exception(logger, e, f"Read viewers_cleared_at error for {_hash_token(sid)}")
+    return cleared_at
+
+
+async def _record_viewers_clear(sid: str) -> None:
+    """Persist viewers_cleared_at past the newest committed segment and drop any cached partial."""
+    latest_start: float | None = None
+    zset_key = f"transcription:{sid}:list"
+    try:
+        top = await redis_client.zrevrange(zset_key, 0, 0, withscores=True)
+        if top:
+            latest_start = float(top[0][1])
+    except Exception as e:
+        log_exception(logger, e, f"Redis read newest commit failed for {_hash_token(sid)}")
+
+    if latest_start is None:
+        doc = await transcription_segments_collection.find_one(
+            {"sid": sid, "partial": {"$ne": True}},
+            {"start_time": 1},
+            sort=[("start_time", -1)],
+        )
+        if doc and isinstance(doc.get("start_time"), (int, float)) and not isinstance(doc.get("start_time"), bool):
+            latest_start = float(doc["start_time"])
+
+    if latest_start is not None:
+        cleared_at = latest_start + 0.001
+        await rooms_collection.update_one(
+            {"sid": sid},
+            {"$max": {"viewers_cleared_at": cleared_at}},
+        )
+        await redis_client.set(_viewers_cleared_key(sid), str(cleared_at), ex=86400)
+
+    async with _get_or_create_lock(_partial_rmw_locks, sid):
+        await redis_client.delete(f"transcription:{sid}:partial")
+
+
+async def _get_audience_snapshot(sid: str, limit: int = 50) -> tuple[list[dict], dict | None]:
+    """Return committed segments (ascending) and cached partial visible to viewers."""
+    data, cleared_at = await asyncio.gather(
+        get_cached_transcription(sid, num_committed=limit),
+        _get_viewers_cleared_at(sid),
+    )
+    segments = [
+        seg for seg in (data.get("transcriptions") or [])
+        if (seg.get("start_time") or 0) >= cleared_at
+    ][-limit:]
+    partial = data.get("partial")
+    if not isinstance(partial, dict) or (partial.get("start_time") or 0) < cleared_at:
+        partial = None
+    return segments, partial
+
+
 async def _publish_viewer_clear(sid: str) -> None:
     """Tell currently connected viewers to clear local display text."""
     await _publish_transcription_update(sid, {"__sse_event": "viewer_clear"})
@@ -1016,6 +1092,7 @@ async def _publish_viewer_clear(sid: str) -> None:
 
 async def _iter_replay_transcription_events(sid: str, last_event_id: float) -> AsyncIterator[dict]:
     zset_key = f"transcription:{sid}:list"
+    cleared_at = await _get_viewers_cleared_at(sid)
     try:
         raw_segments = await redis_client.zrangebyscore(zset_key, f"({last_event_id}", "+inf")
     except Exception as e:
@@ -1024,9 +1101,12 @@ async def _iter_replay_transcription_events(sid: str, last_event_id: float) -> A
 
     for raw in raw_segments:
         try:
-            yield json.loads(raw)
+            seg = json.loads(raw)
         except (TypeError, ValueError):
             logger.warning("Skipping malformed replay segment sid_hash=%s", _hash_token(sid))
+            continue
+        if isinstance(seg, dict) and (seg.get("start_time") or 0) >= cleared_at:
+            yield seg
 
 
 async def _session_sse_stream(
@@ -1062,8 +1142,9 @@ async def _session_sse_stream(
             )
 
         if send_segment_snapshot:
+            snapshot_segments, snapshot_partial = await _get_audience_snapshot(sid)
             yield _format_sse(
-                {"segments": await _get_recent_committed_segments(sid)},
+                {"segments": snapshot_segments, "partial": snapshot_partial},
                 event="segment_snapshot",
             )
 
@@ -2410,6 +2491,11 @@ async def clear_session_viewers_endpoint(request: Request, sid: str):
     """Clear text on connected viewers without changing stored transcriptions."""
     sid = sanitize_query_param(sid, "session ID")
     await _verify_session_lock_holder(request, sid)
+    try:
+        await _record_viewers_clear(sid)
+    except Exception as e:
+        log_exception(logger, e, f"Failed to record viewer clear for {_hash_token(sid)}")
+        raise HTTPException(status_code=500, detail="Failed to clear viewer screens")
     await _publish_viewer_clear(sid)
     return {"status": "ok"}
 
@@ -2825,15 +2911,21 @@ async def update_session_stt_provider_endpoint(request: Request, sid: str):
 
     from .translation_service import (get_session_stt_provider, save_session_stt_provider,
                                       save_session_scribe_language)
-    if provider == await get_session_stt_provider(redis_client, sid):
+    prev_provider = await get_session_stt_provider(redis_client, sid)
+    if provider == prev_provider:
         return {"provider": provider}
+
+    default_provider = (REALTIME_SETTINGS.get("STT_PROVIDER") or "elevenlabs").strip().lower()
+    prev_effective = prev_provider or default_provider
+    next_effective = provider or default_provider
 
     await save_session_stt_provider(redis_client, sid, provider)
     # The forced detect language belongs to the provider that was selected when it was
     # set — "zho" means nothing to Gemini and "cmn-Hans-CN" nothing to ElevenLabs — so
-    # switching provider drops it back to auto-detect rather than carrying a code the
-    # new engine would reject.
-    await save_session_scribe_language(redis_client, sid, "")
+    # switching provider drops it back to auto-detect, except between Scribe v3 / v2
+    # which accept the same language codes.
+    if not same_stt_language_codes(prev_effective, next_effective):
+        await save_session_scribe_language(redis_client, sid, "")
 
     if active_scribe_managers.get(sid):
         await _get_or_create_scribe_manager(sid, force_new=True)
@@ -3834,8 +3926,14 @@ async def rt(request: Request, id: str):
             "stream_start_time": None,
             "transcriptions": []
         }
+    cleared_at = await _get_viewers_cleared_at(id)
     sliced_data = data.copy()
-    sliced_data["transcriptions"] = sliced_data["transcriptions"][-50:]
+    sliced_data["transcriptions"] = [
+        seg for seg in (sliced_data.get("transcriptions") or [])
+        if (seg.get("start_time") or 0) >= cleared_at
+    ][-50:]
+    if isinstance(sliced_data.get("partial"), dict) and (sliced_data["partial"].get("start_time") or 0) < cleared_at:
+        sliced_data.pop("partial", None)
     # Per-language replacement maps applied client-side at render time so rules
     # added mid-session also reflow lines already on screen (see rt.html).
     from .translation_service import get_language_maps
@@ -4040,10 +4138,12 @@ async def delete_session(request: Request, sid: str):
             "secret_key": None,
             "admin_last_heartbeat": None,
             "co_owner_emails": [],
+            "viewers_cleared_at": None,
             "updated_at": datetime.now(timezone.utc),
         }}
     )
     await _invalidate_owner_override_cache(sid)
+    await _invalidate_session_cache([sid], ["viewers_cleared_at"])
     return {"status": "deleted"}
 
 # Socket.IO Event Handlers
@@ -4369,7 +4469,8 @@ async def _process_transcription_update(session_id, sync_data):
             proc_elapsed_ms,
         )
         await sio.emit('transcription_update', p, room=session_id)
-        await _publish_transcription_update(session_id, p)
+        if not (p.get("partial") is True and p.get("flow_only")):
+            await _publish_transcription_update(session_id, p)
 
     async def _emit_partial(p):
         # Mark before awaiting I/O so concurrent updates observe the open window.
