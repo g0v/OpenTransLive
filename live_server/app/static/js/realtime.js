@@ -16,11 +16,15 @@ const statusIndicator = document.getElementById('status-indicator');
 const statusText = document.getElementById('status-text');
 let selectedDeviceId = null;
 let micDeviceSelector = null;
-let mediaStream = null;
 let audioContext = null;
 let audioProcessor = null;
-let analyserNode = null;
+// Mixable active audio inputs ('mic' | 'tab' -> { stream, sourceNode, analyser }).
+const activeInputs = new Map();
+let captureGeneration = 0;
 let levelAnimFrame = null;
+let wakeLockSentinel = null;
+let wakeLockListening = false;
+let fatalAuthStopped = false;
 
 // Two independent health signals share one indicator: the browser<->server socket,
 // and the server<->Scribe transcription pipeline. Socket trouble outranks scribe
@@ -41,7 +45,7 @@ function setSocketStatus(cls, text) {
   renderStatus();
 }
 
-// Called by setMicState() in panel.html. 'stopped' means opposite things depending on
+// Called by syncCaptureButtons() in panel.html. 'stopped' means opposite things depending on
 // the mic ('expected' after mic_off vs 'transcription died' while streaming), and
 // nothing else re-renders when the operator toggles the mic.
 function onMicStateChange(state) {
@@ -151,6 +155,7 @@ function syncServerClock(samples, gapMs) {
 setInterval(function () { if (socket.connected) syncServerClock(3, 200); }, 30000);
 
 socket.on('connect', function () {
+  fatalAuthStopped = false;
   // Show pending state — auth is not yet confirmed by the server
   setSocketStatus('bg-yellow-400', 'Authenticating…');
   console.log('WebSocket connection opened');
@@ -161,12 +166,19 @@ socket.on('connect', function () {
   syncServerClock(5, 200);
 });
 
-socket.on('disconnect', function () {
+socket.on('disconnect', function (reason) {
   // Stale scribe state: the server may have stopped or restarted the session while
   // we were away. join_session replays the real state on reconnect.
   scribeState = null;
   setSocketStatus('bg-red-500', 'Disconnected');
-  console.log('WebSocket connection closed');
+  console.log('WebSocket connection closed:', reason);
+  // Server-initiated disconnects (graceful shutdown or transient DB lookup retry)
+  // do not auto-reconnect in Socket.IO; reconnect automatically unless auth failed.
+  if (reason === 'io server disconnect' && !fatalAuthStopped) {
+    setTimeout(function () {
+      if (!socket.connected && !fatalAuthStopped) socket.connect();
+    }, 1000);
+  }
 });
 
 // A refused handshake (e.g. the server's connection caps) is not retried by the
@@ -187,6 +199,9 @@ socket.on('joined_session', function (data) {
   if (data.authorized) {
     setSocketStatus('bg-green-500', 'Connected: ' + data.session_id);
     socket.emit('realtime_connect', { session_id: sessionId });
+    if (typeof recording !== 'undefined' && recording) {
+      socket.emit('mic_on', { session_id: sessionId, secret_key: user_secret_key });
+    }
   } else {
     setSocketStatus('bg-orange-500', 'Unauthorized');
     console.warn('join_session: not authorized for session', data.session_id);
@@ -218,8 +233,13 @@ socket.on('error', function (data) {
   console.error('WebSocket error:', data);
   const code = data && data.code;
   if (FATAL_ERROR_CODES.indexOf(code) !== -1) {
+    fatalAuthStopped = true;
     setSocketStatus('bg-orange-500', 'Unauthorized — microphone stopped');
     stopRecording();
+    return;
+  }
+  if (code === 'service_unavailable') {
+    showTransientNotice('Credentials could not be verified — reconnecting…');
     return;
   }
   // Recoverable (invalid_payload, rate_limited, or an unknown code): keep streaming
@@ -229,15 +249,7 @@ socket.on('error', function (data) {
     : 'Server rejected a message — still streaming');
 });
 
-// Device-selector value for browser tab or system audio (getDisplayMedia) instead of
-// a microphone. Mobile browsers have no getDisplayMedia; desktop Firefox and Safari
-// have it but never share audio, which startSession reports as 'no-tab-audio'.
-const TAB_AUDIO_SOURCE = 'tab-audio';
 const tabAudioSupported = !!(navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === 'function');
-
-function usingTabAudio() {
-  return selectedDeviceId === TAB_AUDIO_SOURCE;
-}
 
 class NoTabAudioError extends Error {}
 
@@ -247,10 +259,7 @@ async function openTabAudio() {
     video: true,
     // Speech processing tuned for microphones damages already-mixed program audio.
     audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-    // Chromium-only hints; other browsers ignore them. The panel tab itself carries
-    // no program audio, switching lets the operator move the share to another tab
-    // without stopping capture, and whole-screen shares offer system audio where
-    // the OS allows it (Windows, ChromeOS).
+    // Chromium-only hints; other browsers ignore them.
     selfBrowserSurface: 'exclude',
     surfaceSwitching: 'include',
     systemAudio: 'include',
@@ -278,140 +287,239 @@ function openMicrophone() {
   return navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
 }
 
-// Resolves 'started' when audio is streaming, 'no-tab-audio' when the share picker
-// returned no audio (sharing audio not ticked, or a browser that never shares it),
-// or 'failed' otherwise (denied or cancelled permission, dead socket), so
-// startRecording() can keep the mic button in step. Swallows its own errors, which
-// is why this is a return value and not a throw. With tab audio it must run from a
-// user gesture: the share picker opens.
-async function startSession() {
-  try {
-    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-    // Open the input before any other await: the share picker needs the click's
-    // transient activation.
-    const stream = usingTabAudio() ? await openTabAudio() : await openMicrophone();
-    mediaStream = stream;
-    await audioContext.audioWorklet.addModule('/static/js/audio-processor.js');
+function hasCaptureSource(source) {
+  return activeInputs.has(source);
+}
 
-    if (!socket.connected) {
-      await stopSession();  // tears down the AudioContext the manual track-stop left open
+function activeCaptureCount() {
+  return activeInputs.size;
+}
+
+// Keep mobile screens awake while capturing so locking doesn't kill the microphone;
+// re-acquire on visibilitychange because browsers drop wake locks when hidden.
+async function holdWakeLock() {
+  if (!audioContext || activeInputs.size === 0 || wakeLockSentinel || document.visibilityState !== 'visible' || !('wakeLock' in navigator)) {
+    return;
+  }
+  try {
+    const sentinel = await navigator.wakeLock.request('screen');
+    if (!audioContext || activeInputs.size === 0 || wakeLockSentinel) {
+      sentinel.release().catch(() => {});
+      return;
+    }
+    wakeLockSentinel = sentinel;
+    sentinel.onrelease = function () {
+      if (wakeLockSentinel === sentinel) wakeLockSentinel = null;
+    };
+  } catch (error) {
+    console.warn('Screen wake lock not granted:', error);
+  }
+}
+
+function releaseWakeLock() {
+  if (wakeLockListening) {
+    document.removeEventListener('visibilitychange', holdWakeLock);
+    wakeLockListening = false;
+  }
+  if (wakeLockSentinel) {
+    const sentinel = wakeLockSentinel;
+    wakeLockSentinel = null;
+    sentinel.release().catch(() => {});
+  }
+}
+
+async function handleSourceInterrupted(source) {
+  if (!recording) return;
+  if (activeInputs.size > 1) {
+    closeCaptureSource(source);
+    showTransientNotice(
+      source === 'tab'
+        ? 'Tab audio sharing ended — microphone still active'
+        : 'Microphone disconnected — tab audio still streaming',
+      8000,
+    );
+    return;
+  }
+
+  await stopRecording();
+  showTransientNotice(
+    source === 'tab'
+      ? 'Tab audio sharing ended'
+      : 'Microphone disconnected — capture stopped',
+    8000,
+  );
+}
+
+// Opens and mixes `source` ('mic' | 'tab') into the shared AudioContext worklet.
+// Resolves 'started', 'no-tab-audio', or 'failed'.
+async function openCaptureSource(source = 'mic') {
+  if (activeInputs.has(source)) return 'started';
+  if (!socket.connected) return 'failed';
+  const attempt = captureGeneration;
+  const createdPipeline = !audioContext;
+  let stream = null;
+  try {
+    // Open the input before any other await so the screen-share picker keeps transient user activation.
+    stream = source === 'tab' ? await openTabAudio() : await openMicrophone();
+    if (attempt !== captureGeneration || !socket.connected) {
+      stream.getTracks().forEach(track => { track.onended = null; track.stop(); });
       return 'failed';
     }
-    // The input died on its own (device unplugged, permission revoked, or "Stop
-    // sharing"): turn the mic off rather than leave it claiming MIC ON. A stopped
-    // share is not reopened, since that needs the picker again. stopSession()'s own
-    // track.stop() fires no `ended`.
-    stream.getAudioTracks().forEach(track => track.addEventListener('ended', function () {
-      if (mediaStream === stream && recording) stopRecording();
-    }));
-    const source = audioContext.createMediaStreamSource(stream);
-
-    // Analyser node for level metering (after gain, before worklet)
-    analyserNode = audioContext.createAnalyser();
-    analyserNode.fftSize = 256;
-    analyserNode.smoothingTimeConstant = 0.5;
-
-    // The worklet reads channel 0 only; down-mix stereo tab audio instead of
-    // dropping the right channel.
-    audioProcessor = new AudioWorkletNode(audioContext, 'audio-processor', {
-      channelCount: 1,
-      channelCountMode: 'explicit',
-    });
-
-    // Audio graph: source -> analyser -> worklet -> destination
-    source.connect(analyserNode);
-    analyserNode.connect(audioProcessor);
-    audioProcessor.connect(audioContext.destination);
-
-    startLevelMeter();
-
-    audioProcessor.port.onmessage = (e) => {
-      if (!socket.connected) return;
-
-      const inputData = e.data;
-      const buffer = new ArrayBuffer(inputData.length * 2);
-      const view = new DataView(buffer);
-
-      for (let i = 0; i < inputData.length; i++) {
-        const s = Math.max(-1, Math.min(1, inputData[i]));
-        view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    if (!audioContext) {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      await audioContext.audioWorklet.addModule('/static/js/audio-processor.js');
+      if (attempt !== captureGeneration || !socket.connected) {
+        stream.getTracks().forEach(track => { track.onended = null; track.stop(); });
+        await stopSession();
+        return 'failed';
       }
-
-      // Convert to base64 in chunks to avoid call stack overflow on large buffers.
-      const bytes = new Uint8Array(buffer);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const base64Audio = btoa(binary);
-
-      socket.emit('audio_buffer_append', {
-        secret_key: user_secret_key,
-        audio: base64Audio
+      // The worklet reads channel 0 only; down-mix stereo tab audio instead of
+      // dropping the right channel.
+      audioProcessor = new AudioWorkletNode(audioContext, 'audio-processor', {
+        channelCount: 1,
+        channelCountMode: 'explicit',
       });
-    };
+      audioProcessor.connect(audioContext.destination);
+      audioProcessor.port.onmessage = (e) => {
+        if (!socket.connected) return;
+        const inputData = e.data;
+        const buffer = new ArrayBuffer(inputData.length * 2);
+        const view = new DataView(buffer);
 
+        for (let i = 0; i < inputData.length; i++) {
+          const s = Math.max(-1, Math.min(1, inputData[i]));
+          view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        }
+
+        // Convert to base64 in chunks to avoid call stack overflow on large buffers.
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        const base64Audio = btoa(binary);
+
+        socket.emit('audio_buffer_append', {
+          secret_key: user_secret_key,
+          audio: base64Audio
+        });
+      };
+    } else if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
+
+    const sourceNode = audioContext.createMediaStreamSource(stream);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.5;
+    sourceNode.connect(analyser);
+    analyser.connect(audioProcessor);
+
+    stream.getAudioTracks().forEach(track => track.addEventListener('ended', function () {
+      const entry = activeInputs.get(source);
+      if (entry && entry.stream === stream) void handleSourceInterrupted(source);
+    }));
+
+    activeInputs.set(source, { stream, sourceNode, analyser });
+    startLevelMeter();
+    if (!wakeLockListening) {
+      document.addEventListener('visibilitychange', holdWakeLock);
+      wakeLockListening = true;
+    }
+    void holdWakeLock();
     return 'started';
   } catch (error) {
-    console.error('Error starting audio capture:', error);
-    await stopSession();
+    console.error(`Error opening ${source} audio capture:`, error);
+    if (stream) stream.getTracks().forEach(track => { track.onended = null; track.stop(); });
+    if (createdPipeline && activeInputs.size === 0) await stopSession();
     return error instanceof NoTabAudioError ? 'no-tab-audio' : 'failed';
   }
 }
 
+function closeCaptureSource(source) {
+  const input = activeInputs.get(source);
+  if (!input) return;
+  activeInputs.delete(source);
+  input.stream.getTracks().forEach(track => { track.onended = null; track.stop(); });
+  input.sourceNode.disconnect();
+  input.analyser.disconnect();
+  resetLevelMeterUI(source);
+  if (typeof syncCaptureButtons === 'function') syncCaptureButtons();
+}
+
+async function startSession(source = 'mic') {
+  fatalAuthStopped = false;
+  return openCaptureSource(source);
+}
+
+const meterSmooth = { mic: 0, tab: 0 };
+const meterLastColor = { mic: null, tab: null };
+const meterLastDbText = { mic: null, tab: null };
+
+function meterElements(source) {
+  const prefix = source === 'tab' ? 'tab-level' : 'mic-level';
+  return {
+    container: document.getElementById(prefix + '-container'),
+    bar: document.getElementById(prefix + '-bar'),
+    dbLabel: document.getElementById(prefix + '-db'),
+  };
+}
+
+function resetLevelMeterUI(source) {
+  meterSmooth[source] = 0;
+  meterLastColor[source] = null;
+  meterLastDbText[source] = null;
+  const { container, bar, dbLabel } = meterElements(source);
+  if (container) container.style.display = 'none';
+  if (bar) bar.style.width = '0%';
+  if (dbLabel) dbLabel.textContent = '--dB';
+}
+
 function startLevelMeter() {
-  const container = document.getElementById('mic-level-container');
-  const bar = document.getElementById('mic-level-bar');
-  const dbLabel = document.getElementById('mic-level-db');
-  if (!container || !bar || !dbLabel) return;
+  for (const source of ['mic', 'tab']) {
+    const { container } = meterElements(source);
+    if (container) container.style.display = activeInputs.has(source) ? '' : 'none';
+  }
+  if (levelAnimFrame) return;
 
-  container.style.display = '';
-  const dataArray = new Float32Array(analyserNode.fftSize);
-
-  let smoothPct = 0;
+  const dataArray = new Float32Array(256);
   const RISE_COEFF = 0.25;  // fast attack
   const FALL_COEFF = 0.025;  // slow decay
-  // Last painted values: the meter runs at 60fps, and rewriting className /
-  // textContent every frame costs a style recalc per frame for nothing. Only
-  // touch the DOM when the rendered value actually changes.
-  let lastColor = null;
-  let lastDbText = null;
 
   function update() {
-    if (!analyserNode) return;
-    analyserNode.getFloatTimeDomainData(dataArray);
-
-    // Compute RMS level
-    let sum = 0;
-    for (let i = 0; i < dataArray.length; i++) {
-      sum += dataArray[i] * dataArray[i];
+    if (!audioContext || activeInputs.size === 0) {
+      levelAnimFrame = null;
+      return;
     }
-    const rms = Math.sqrt(sum / dataArray.length);
-    const db = rms > 0 ? 20 * Math.log10(rms) : -100;
+    for (const source of ['mic', 'tab']) {
+      const input = activeInputs.get(source);
+      const { bar, dbLabel } = meterElements(source);
+      if (!input || !bar || !dbLabel) continue;
+      input.analyser.getFloatTimeDomainData(dataArray);
 
-    // Map dB to percentage: -60 dB = 0%, 0 dB = 100%
-    const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        sum += dataArray[i] * dataArray[i];
+      }
+      const rms = Math.sqrt(sum / dataArray.length);
+      const db = rms > 0 ? 20 * Math.log10(rms) : -100;
+      const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
 
-    // Smooth: fast rise, slow fall
-    if (pct > smoothPct) {
-      smoothPct = smoothPct + (pct - smoothPct) * RISE_COEFF;
-    } else {
-      smoothPct = smoothPct + (pct - smoothPct) * FALL_COEFF;
-    }
+      meterSmooth[source] += (pct - meterSmooth[source]) * (pct > meterSmooth[source] ? RISE_COEFF : FALL_COEFF);
+      bar.style.width = meterSmooth[source] + '%';
 
-    bar.style.width = smoothPct + '%';
-    // Color: green below 70%, yellow 70-90%, red above 90%
-    const color = smoothPct > 90 ? 'bg-red-500' : smoothPct > 70 ? 'bg-yellow-500' : 'bg-green-500';
-    if (color !== lastColor) {
-      bar.className = bar.className.replace(/bg-\w+-500/, color);
-      lastColor = color;
-    }
-    dbLabel.classList.toggle('peak-active', smoothPct > 90);
+      const color = meterSmooth[source] > 90 ? 'bg-red-500' : meterSmooth[source] > 70 ? 'bg-yellow-500' : 'bg-green-500';
+      if (color !== meterLastColor[source]) {
+        bar.className = bar.className.replace(/bg-\w+-500/, color);
+        meterLastColor[source] = color;
+      }
+      dbLabel.classList.toggle('peak-active', meterSmooth[source] > 90);
 
-    const dbText = (db > -100 ? db.toFixed(0) : '--') + 'dB';
-    if (dbText !== lastDbText) {
-      dbLabel.textContent = dbText;
-      lastDbText = dbText;
+      const dbText = (db > -100 ? db.toFixed(0) : '--') + 'dB';
+      if (dbText !== meterLastDbText[source]) {
+        dbLabel.textContent = dbText;
+        meterLastDbText[source] = dbText;
+      }
     }
     levelAnimFrame = requestAnimationFrame(update);
   }
@@ -423,38 +531,32 @@ function stopLevelMeter() {
     cancelAnimationFrame(levelAnimFrame);
     levelAnimFrame = null;
   }
-  const container = document.getElementById('mic-level-container');
-  const bar = document.getElementById('mic-level-bar');
-  const dbLabel = document.getElementById('mic-level-db');
-  if (container) container.style.display = 'none';
-  if (bar) bar.style.width = '0%';
-  if (dbLabel) dbLabel.textContent = '--dB';
+  resetLevelMeterUI('mic');
+  resetLevelMeterUI('tab');
 }
 
 async function stopSession() {
+  captureGeneration++;
+  releaseWakeLock();
   stopLevelMeter();
-  if (mediaStream) {
-    mediaStream.getTracks().forEach(track => track.stop());
-    mediaStream = null;
+  for (const source of ['mic', 'tab']) {
+    closeCaptureSource(source);
   }
   if (audioProcessor) {
     audioProcessor.port.onmessage = null;  // chunks the worklet already posted must not reach the socket after stop
     audioProcessor.disconnect();
     audioProcessor = null;
   }
-  if (analyserNode) {
-    analyserNode.disconnect();
-    analyserNode = null;
-  }
   if (audioContext) {
-    audioContext.close();
+    const ctx = audioContext;
     audioContext = null;
+    await ctx.close().catch(() => {});
   }
 }
 
-// startSession / stopSession are called by the mic toggle in panel.html
+// startSession / stopSession are called by the source toggles in panel.html
 
-// Enumerate and populate audio sources: microphones, then tab or system audio
+// Enumerate and populate audio input devices (microphones only; tab audio has its own toggle).
 async function enumerateDevices() {
   if (!micDeviceSelector) return;
   let audioInputs = [];
@@ -465,48 +567,38 @@ async function enumerateDevices() {
   } catch (error) {
     console.error('Error enumerating devices:', error);
   }
-  if (audioInputs.length === 0 && !tabAudioSupported) return;
+  if (audioInputs.length === 0) return;
 
-  // Clear existing options except the first one
   micDeviceSelector.innerHTML = '<option value="">Default Microphone</option>';
 
-  // Add all audio input devices
   audioInputs.forEach(device => {
     const option = document.createElement('option');
     option.value = device.deviceId;
     option.textContent = device.label || `Microphone ${micDeviceSelector.options.length}`;
     micDeviceSelector.appendChild(option);
   });
-  if (tabAudioSupported) {
-    const option = document.createElement('option');
-    option.value = TAB_AUDIO_SOURCE;
-    option.textContent = 'Tab or system audio';
-    micDeviceSelector.appendChild(option);
-  }
   micDeviceSelector.style.display = '';
 
-  // Restore previously selected device
+  // Restore previously selected microphone, ignoring the legacy 'tab-audio' value.
   const savedDeviceId = localStorage.getItem('selectedMicDeviceId');
-  if (savedDeviceId && (savedDeviceId !== TAB_AUDIO_SOURCE || tabAudioSupported)) {
+  if (savedDeviceId && savedDeviceId !== 'tab-audio') {
     micDeviceSelector.value = savedDeviceId;
     selectedDeviceId = savedDeviceId;
   }
 }
 
-// Handle device change
+// Switch microphone in place without disturbing tab audio or restarting Scribe.
 async function handleDeviceChange() {
-  const wasRecording = recording;
-
-  if (wasRecording) {
-    await stopRecording();
-  }
-
-  // Update selected device
   selectedDeviceId = micDeviceSelector.value || null;
   localStorage.setItem('selectedMicDeviceId', selectedDeviceId || '');
 
-  if (wasRecording) {
-    await startRecording();
+  if (!recording || !hasCaptureSource('mic')) return;
+
+  closeCaptureSource('mic');
+  const status = await openCaptureSource('mic');
+  if (typeof syncCaptureButtons === 'function') syncCaptureButtons();
+  if (status !== 'started' && activeInputs.size === 0) {
+    await stopRecording();
   }
 }
 

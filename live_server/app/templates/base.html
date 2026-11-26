@@ -19,6 +19,8 @@
   <style type="text/tailwindcss">
     @theme {
       --font-sans: "Noto Sans", sans-serif;
+      /* CJK sans fallbacks before monospace so user text (keywords, glossary, rules) avoids MingLiU / MS Gothic. */
+      --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", monospace;
     }
 
     :root {
@@ -39,6 +41,10 @@
 
     :lang(ja), [data-language^="ja"], [data-lang^="ja"] {
       font-family: "Noto Sans JP", sans-serif;
+    }
+
+    :root:lang(ja) {
+      --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", "Noto Sans JP", "Hiragino Sans", "Yu Gothic", Meiryo, monospace;
     }
 
     :lang(ko), [data-language^="ko"], [data-lang^="ko"] {
