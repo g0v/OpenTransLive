@@ -742,6 +742,15 @@
     return out;
   }
 
+  // Han, kana and CJK punctuation/full-width forms: Chinese and Japanese put no
+  // space between sentences. Hangul is absent: Korean separates words with spaces.
+  const CJK_END_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\u3000-\u303F\uFF01-\uFF60]$/u;
+
+  function withSegmentJoiner(text) {
+    if (!text) return '';
+    return CJK_END_RE.test(text) ? text : text + ' ';
+  }
+
   // Build the rendered history/last/partial text for one language from the
   // current transcription buffer. Segments missing the language key (predating
   // it) are skipped; a committed segment with an empty translation renders the
@@ -755,11 +764,11 @@
       if (!translated || !(lang in translated)) continue;
       const raw = translated[lang];
       const text = raw ? applyLangDict(lang, raw) : TRANSLATION_GAP;
-      if (i === cropped.length - 1) lastText = text + ' ';
+      if (i === cropped.length - 1) lastText = withSegmentJoiner(text);
       else historyItems.push(text);
     }
     const partial = transcriptionsData?.partial?.result?.translated;
-    const partialText = partial ? applyLangDict(lang, partial[lang] || '') + ' ' : '';
+    const partialText = partial ? withSegmentJoiner(applyLangDict(lang, partial[lang] || '')) : '';
     return { historyItems, lastText, partialText };
   }
 
@@ -1405,12 +1414,12 @@
     if (patchCost < trimCost) {
       const segs = Array.from(historyEl.children);
       for (let i = 0; i < overlap; i++) {
-        if (existing[i] !== newItems[i]) segs[i].textContent = newItems[i] + ' ';
+        if (existing[i] !== newItems[i]) segs[i].textContent = withSegmentJoiner(newItems[i]);
       }
       for (let i = existing.length - 1; i >= newItems.length; i--) segs[i].remove();
       for (let i = existing.length; i < newItems.length; i++) {
         const seg = document.createElement('span');
-        seg.textContent = newItems[i] + ' ';
+        seg.textContent = withSegmentJoiner(newItems[i]);
         historyEl.appendChild(seg);
       }
       historyEl._items = newItems.slice();
@@ -1452,7 +1461,7 @@
     let appended = 0;
     for (let i = retained; i < newItems.length; i++) {
       const seg = document.createElement('span');
-      seg.textContent = newItems[i] + ' ';
+      seg.textContent = withSegmentJoiner(newItems[i]);
       historyEl.appendChild(seg);
       appended++;
     }
@@ -1731,7 +1740,9 @@
     // connection (phone sleep, network handover, idle NAT) never fires onerror,
     // so with no event at all for this long the stream is treated as dead.
     const STALE_STREAM_MS = 40000;
+    const RESUME_STALE_MS = 20000;
     let staleTimer = null;
+    let lastActivityAt = 0;
 
     function clearStaleTimer() {
       clearTimeout(staleTimer);
@@ -1739,6 +1750,7 @@
     }
 
     function touchStream() {
+      lastActivityAt = Date.now();
       clearStaleTimer();
       staleTimer = setTimeout(scheduleReconnect, STALE_STREAM_MS);
     }
@@ -1828,6 +1840,11 @@
 
     function scheduleReconnect() {
       if (pageUnloading || reconnectTimer) return;
+      // Disable native EventSource retry while waiting for our backoff reconnect.
+      if (stream) {
+        stream.close();
+        stream = null;
+      }
       clearStaleTimer();
       reconnected = true;
       reconnectAttempts += 1;
@@ -1836,7 +1853,6 @@
       statusText.textContent = 'Reconnecting... retry ' + reconnectAttempts;
       reconnectTimer = setTimeout(function () {
         reconnectTimer = null;
-        if (stream) stream.close();
         connectStream();
       }, delay);
     }
@@ -1885,6 +1901,8 @@
         const data = JSON.parse(event.data);
         if (!Array.isArray(data?.segments)) return;
         transcriptionsData["transcriptions"] = data.segments;
+        // Authoritative on reconnect: a partial kept from before a missed viewer_clear never gets its commit.
+        transcriptionsData["partial"] = (data.partial && typeof data.partial === 'object') ? data.partial : null;
         syncLanguagesFromData();
         refreshView();
       });
@@ -1904,6 +1922,10 @@
       });
     } else {
       connectStream();
+      document.addEventListener('visibilitychange', function () {
+        if (pageUnloading || reconnectTimer || document.visibilityState === 'hidden') return;
+        if (Date.now() - lastActivityAt >= RESUME_STALE_MS) scheduleReconnect();
+      });
     }
 
     window.addEventListener('resize', function () {

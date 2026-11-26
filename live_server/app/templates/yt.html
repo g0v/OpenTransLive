@@ -732,7 +732,9 @@
     // connection (phone sleep, network handover, idle NAT) never fires onerror,
     // so with no event at all for this long the stream is treated as dead.
     const STALE_STREAM_MS = 40000;
+    const RESUME_STALE_MS = 20000;
     let staleTimer = null;
+    let lastActivityAt = 0;
 
     function clearStaleTimer() {
       clearTimeout(staleTimer);
@@ -740,6 +742,7 @@
     }
 
     function touchStream() {
+      lastActivityAt = Date.now();
       clearStaleTimer();
       staleTimer = setTimeout(scheduleReconnect, STALE_STREAM_MS);
     }
@@ -797,6 +800,10 @@
 
     function scheduleReconnect() {
       if (pageUnloading || reconnectTimer) return;
+      if (stream) {
+        stream.close();
+        stream = null;
+      }
       clearStaleTimer();
       reconnected = true;
       reconnectAttempts += 1;
@@ -805,7 +812,6 @@
       statusText.textContent = 'Reconnecting... retry ' + reconnectAttempts;
       reconnectTimer = setTimeout(function () {
         reconnectTimer = null;
-        if (stream) stream.close();
         connectStream();
       }, delay);
     }
@@ -846,6 +852,7 @@
         for (const segment of data.segments) {
           if (!replaceCommittedSegment(segment)) appendCommittedSegment(segment);
         }
+        transcriptionsData.partial = (data.partial && typeof data.partial === 'object') ? data.partial : null;
         populateLanguageSelect();
       });
 
@@ -855,6 +862,10 @@
     }
 
     connectStream();
+    document.addEventListener('visibilitychange', function () {
+      if (pageUnloading || reconnectTimer || document.visibilityState === 'hidden') return;
+      if (Date.now() - lastActivityAt >= RESUME_STALE_MS) scheduleReconnect();
+    });
 
     window.addEventListener('load', function () {
       const params = new URLSearchParams(window.location.search);

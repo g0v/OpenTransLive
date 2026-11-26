@@ -43,9 +43,18 @@ from .config import REALTIME_SETTINGS
 # gets them right, so listing them would add risk and fix nothing.
 _INHERITED_CHARS = "干里范岳准托丑咸"
 
+# Dual-script characters in OpenCC's STCharacters.ocd2 whose value list includes
+# themselves, just not as the first (default) entry. Any Han character outside this
+# set that STCharacters rewrites cannot occur in Traditional text, so its presence
+# tells us the input actually is Simplified and needs the full character table.
+_DUAL_SCRIPT_ST_CHARS = (
+    "㐹万丑丰于云亘仆价伙余佣党准几凶划占厂厘台叶吁吃后咨咸唇夸尸岩岳帘干广征愿托挂据斗朴杠杰极柜涂涌淀游熏皂确种筑胜腊腌膻苹范荐虫蚝蜡蝎跖辟适郁采里"
+)
+_DROP_DUAL_SCRIPT = str.maketrans("", "", _DUAL_SCRIPT_ST_CHARS)
 
-def _build_s2tw() -> OpenCC:
-    """s2tw with _INHERITED_CHARS pinned to themselves.
+
+def _build_converters() -> tuple[OpenCC, OpenCC, OpenCC]:
+    """Build s2tw (with _INHERITED_CHARS pinned), phrase-only s2tw, and STCharacters.
 
     OpenCC only takes a config as a file on disk, and it resolves the dictionaries a
     config names relative to the process, not to the config — so both files have to be
@@ -59,29 +68,51 @@ def _build_s2tw() -> OpenCC:
     with open(inherited, 'w', encoding='utf-8') as f:
         f.writelines(f"{c}\t{c}\n" for c in _INHERITED_CHARS)
 
+    st_phrases = {"type": "ocd2", "file": os.path.join(data_dir, 'STPhrases.ocd2')}
+    st_chars = {"type": "ocd2", "file": os.path.join(data_dir, 'STCharacters.ocd2')}
+    tw_variants = {"type": "ocd2", "file": os.path.join(data_dir, 'TWVariants.ocd2')}
+
     # Mirrors the stock s2tw.json, with the pinned characters inserted between the
     # phrase table and the single-character table.
-    config = os.path.join(out_dir, 's2tw_inherited.json')
-    with open(config, 'w', encoding='utf-8') as f:
+    s2tw_config = os.path.join(out_dir, 's2tw_inherited.json')
+    with open(s2tw_config, 'w', encoding='utf-8') as f:
         json.dump({
             "name": "Simplified to Traditional (Taiwan), keeping inherited characters",
-            "segmentation": {
-                "type": "mmseg",
-                "dict": {"type": "ocd2", "file": os.path.join(data_dir, 'STPhrases.ocd2')},
-            },
+            "segmentation": {"type": "mmseg", "dict": st_phrases},
             "conversion_chain": [
                 {"dict": {"type": "group", "dicts": [
-                    {"type": "ocd2", "file": os.path.join(data_dir, 'STPhrases.ocd2')},
+                    st_phrases,
                     {"type": "text", "file": inherited},
-                    {"type": "ocd2", "file": os.path.join(data_dir, 'STCharacters.ocd2')},
+                    st_chars,
                 ]}},
-                {"dict": {"type": "ocd2", "file": os.path.join(data_dir, 'TWVariants.ocd2')}},
+                {"dict": tw_variants},
             ],
         }, f)
-    return OpenCC(config)
+
+    # Phrase table + Taiwan variants only, for text that is already Traditional.
+    phrases_config = os.path.join(out_dir, 's2tw_phrases.json')
+    with open(phrases_config, 'w', encoding='utf-8') as f:
+        json.dump({
+            "name": "Simplified phrases to Traditional (Taiwan), without STCharacters",
+            "segmentation": {"type": "mmseg", "dict": st_phrases},
+            "conversion_chain": [
+                {"dict": st_phrases},
+                {"dict": tw_variants},
+            ],
+        }, f)
+
+    st_chars_config = os.path.join(out_dir, 'st_characters.json')
+    with open(st_chars_config, 'w', encoding='utf-8') as f:
+        json.dump({
+            "name": "Single-character Simplified to Traditional check",
+            "segmentation": {"type": "mmseg", "dict": st_chars},
+            "conversion_chain": [{"dict": st_chars}],
+        }, f)
+
+    return OpenCC(s2tw_config), OpenCC(phrases_config), OpenCC(st_chars_config)
 
 
-_cc_s2tw = _build_s2tw()
+_cc_s2tw, _cc_s2tw_phrases, _cc_st_chars = _build_converters()
 _cc_tw2s = OpenCC('tw2s')
 
 # Hiragana + katakana + halfwidth katakana. Checked first in dominant_script:
@@ -182,14 +213,48 @@ def should_force_traditional(language_code: str | None) -> bool:
     return not language_code and bool(REALTIME_SETTINGS.get("FORCE_OPENCC", False))
 
 
+def _has_simplified_only(text: str) -> bool:
+    """Whether text contains a character STCharacters never maps to itself."""
+    if not text or max(text) < "\u2e80":
+        return False
+    probe = text.translate(_DROP_DUAL_SCRIPT)
+    return bool(probe) and _cc_st_chars.convert(probe) != probe
+
+
 def to_taiwan_traditional(text: str) -> str:
-    """Convert to Traditional Chinese (Taiwan), leaving Japanese untouched."""
-    # Kana is the only reliable tell. Han-only text stays convertible on purpose:
-    # running s2tw over Chinese-looking text is close to harmless, while converting
-    # real Japanese (対→對, 学→學, 発→發) is the damage this guards against.
-    if _KANA_RE.search(text):
+    """Convert to Traditional Chinese (Taiwan), leaving Japanese and pure Traditional untouched."""
+    # Kana is the only reliable tell for Japanese. Text without any Simplified-only
+    # character skips STCharacters so already-Traditional characters (游, 朴, 征, 斗,
+    # 台) aren't rewritten while STPhrases (干活→幹活) and TWVariants (爲→為) still apply.
+    if not text or _KANA_RE.search(text):
         return text
-    return _cc_s2tw.convert(text)
+    converter = _cc_s2tw if _has_simplified_only(text) else _cc_s2tw_phrases
+    return converter.convert(text)
+
+
+def ends_sentence(text: str) -> bool:
+    """Whether text ends on sentence-final punctuation ('。', '！', '？', '!', '?', or a single '.')."""
+    s = text.strip()
+    if not s:
+        return False
+    if s[-1] == ".":
+        return len(s) < 2 or s[-2] != "."
+    return s[-1] in "。！？!?"
+
+
+def clean_transcript(text: str) -> str:
+    """Trim whitespace and trailing clause/hesitation punctuation while keeping a
+    sentence-final '。' or single '.'. Empty result means no spoken content."""
+    s = text.strip()
+    body = s.rstrip(",.。，—- ").strip()
+    if not body:
+        return ""
+    tail = s[len(body):].strip()
+    if tail.endswith("。"):
+        return body + "。"
+    if tail.endswith(".") and not tail[:-1].endswith("."):
+        return body + "."
+    return body
 
 
 def to_simplified(text: str) -> str:
