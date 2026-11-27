@@ -8,6 +8,7 @@
 {% block title %}OpenTransLive - Live Transcript{% endblock %}
 {% block content %}
 <div id="app-root" class="relative flex h-dvh flex-col !bg-[var(--rt-canvas)] font-sans !text-[var(--rt-text)]">
+  <script defer src="/static/js/uqr.js?v={{ timestamp }}"></script>
 
   <!-- Top Bar -->
   <div id="top-bar" class="top-bar flex min-h-10 shrink-0 items-center gap-2 border-b border-[var(--rt-border)] !bg-[var(--rt-surface)] px-2 shadow-[0_8px_28px_color-mix(in_srgb,var(--rt-canvas)_64%,transparent)] max-md:min-h-9 max-md:gap-1 max-md:px-1.5">
@@ -27,8 +28,8 @@
     </div>
 
     <div class="viewer-controls ms-auto flex min-w-0 items-center justify-end gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-md:gap-0.5 max-md:[&>div]:ml-0 max-md:[&>div]:gap-0.5 max-md:[&>div]:pl-1.5">
-      <!-- Theme buttons -->
-      <div class="flex items-center gap-1 shrink-0">
+      <!-- Theme buttons (desktop inline; phone moves into #settings-popover) -->
+      <div class="flex items-center gap-1 shrink-0 max-md:hidden">
         <button data-theme="light" class="icon-btn theme-btn icon-btn-sm text-xs" aria-label="Light theme"
           aria-pressed="false" title="Light theme">
           <iconify-icon icon="ph:sun" width="15" height="15"></iconify-icon>
@@ -45,12 +46,10 @@
 
       <!-- Font size controls -->
       <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider" title="Font size">
-        <button id="font-decrease" class="icon-btn icon-btn-sm" aria-label="Decrease font size"><iconify-icon
-            icon="ph:minus" width="18" height="18"></iconify-icon></button>
-        <button id="font-increase" class="icon-btn icon-btn-sm" aria-label="Increase font size"><iconify-icon
-            icon="ph:plus" width="18" height="18"></iconify-icon></button>
-        <!-- Fade highlight toggle -->
-        <button id="fade-toggle" class="icon-btn icon-btn-sm active" aria-label="Toggle highlight fade"
+        <button id="font-decrease" class="icon-btn icon-btn-sm" aria-label="Decrease font size" title="Decrease font size"><span class="viewer-font-step" aria-hidden="true">A−</span></button>
+        <button id="font-increase" class="icon-btn icon-btn-sm" aria-label="Increase font size" title="Increase font size"><span class="viewer-font-step" aria-hidden="true">A+</span></button>
+        <!-- Fade highlight toggle (desktop inline; phone moves into #settings-popover) -->
+        <button id="fade-toggle" class="icon-btn icon-btn-sm active max-md:hidden!" aria-label="Toggle highlight fade"
           aria-pressed="true" title="Toggle highlight fade">
           <iconify-icon icon="ph:highlighter-circle" width="18" height="18"></iconify-icon>
         </button>
@@ -63,6 +62,44 @@
 
       <!-- Action buttons -->
       <div class="flex items-center gap-1 shrink-0 border-l pl-2 ml-1 border-divider">
+        <!-- Phone settings popover trigger -->
+        <div id="settings-area" class="relative hidden max-md:block">
+          <button id="settings-btn" type="button" class="icon-btn icon-btn-sm" aria-label="Display settings" aria-expanded="false"
+            aria-controls="settings-popover" title="Display settings">
+            <iconify-icon icon="ph:sliders-horizontal" width="16" height="16"></iconify-icon>
+          </button>
+          <div id="settings-popover"
+            class="hidden fixed right-2 top-11 z-50 max-h-[calc(100dvh-3.5rem)] w-[min(20rem,calc(100vw-1rem))] overflow-y-auto rounded-xl border border-[var(--rt-border-strong)] bg-[var(--rt-surface)] p-3.5 text-[var(--rt-text)] shadow-[0_24px_70px_color-mix(in_srgb,var(--rt-canvas)_82%,transparent)]"
+            role="dialog" aria-labelledby="settings-popover-title">
+            <div class="flex items-center justify-between gap-2">
+              <h2 id="settings-popover-title" class="text-sm font-semibold">Settings</h2>
+              <button id="settings-close-btn" type="button" class="icon-btn icon-btn-sm" aria-label="Close">
+                <iconify-icon icon="ph:x" width="16" height="16"></iconify-icon>
+              </button>
+            </div>
+            <fieldset class="mt-2">
+              <legend class="mb-1.5 text-xs font-semibold text-[var(--rt-muted)]">Theme</legend>
+              <div class="grid grid-cols-3 gap-1.5">
+                <button data-theme="light" type="button" class="icon-btn theme-btn w-full justify-center gap-1 px-2 py-1.5 text-xs" aria-pressed="false">
+                  <iconify-icon icon="ph:sun" width="14" height="14"></iconify-icon><span>Light</span>
+                </button>
+                <button data-theme="dark" type="button" class="icon-btn theme-btn w-full justify-center gap-1 px-2 py-1.5 text-xs" aria-pressed="false">
+                  <iconify-icon icon="ph:moon" width="14" height="14"></iconify-icon><span>Dark</span>
+                </button>
+                <button data-theme="high-contrast" type="button" class="icon-btn theme-btn w-full justify-center gap-1 px-2 py-1.5 text-xs" aria-pressed="false">
+                  <iconify-icon icon="ph:circle-half" width="14" height="14"></iconify-icon><span>Contrast</span>
+                </button>
+              </div>
+            </fieldset>
+            <div class="mt-3 border-t border-[var(--rt-border)] pt-2">
+              <label class="flex min-h-9 cursor-pointer items-center gap-2 text-sm">
+                <iconify-icon icon="ph:highlighter-circle" width="16" height="16" class="text-[var(--rt-muted)]"></iconify-icon>
+                <span class="flex-1">Highlight new text</span>
+                <input id="mobile-fade-checkbox" type="checkbox" role="switch" checked class="size-4 shrink-0 accent-[var(--rt-accent)]">
+              </label>
+            </div>
+          </div>
+        </div>
         <!-- Screen capture + captions -->
         <button id="share-btn" hidden class="icon-btn icon-btn-sm" aria-label="Present a window with captions (this device only)"
           title="Present a window with captions (this device only)">
@@ -76,9 +113,14 @@
           </button>
           <!-- QR popup -->
           <div id="qr-popup"
-            class="qr-popup-bg hidden fixed right-2 top-10 z-50 min-w-max rounded-xl border border-[var(--rt-border-strong)] bg-[var(--rt-surface)] p-3 text-[var(--rt-text)] shadow-[0_24px_70px_color-mix(in_srgb,var(--rt-canvas)_82%,transparent)]">
-            <div class="mb-2 text-xs font-semibold text-[var(--rt-muted)]">Scan to open</div>
-            <img id="qr-img" class="w-40 h-40 rounded-lg" src="" alt="QR code" />
+            class="qr-popup-bg hidden fixed right-2 top-10 z-50 min-w-max rounded-xl border border-[var(--rt-border-strong)] bg-[var(--rt-surface)] p-3 text-[var(--rt-text)] shadow-[0_24px_70px_color-mix(in_srgb,var(--rt-canvas)_82%,transparent)] max-md:top-11">
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <span class="text-xs font-semibold text-[var(--rt-muted)]">Scan to open</span>
+              <button id="qr-popout-btn" type="button" class="icon-btn icon-btn-sm" aria-label="Open in pop-up window" title="Open in pop-up window">
+                <iconify-icon icon="ph:arrow-square-out" width="13" height="13"></iconify-icon>
+              </button>
+            </div>
+            <img id="qr-img" class="w-40 h-40 rounded-lg bg-white" src="" alt="QR code" />
             <div id="qr-url-text"
               class="qr-url-copy mt-2 flex max-w-40 cursor-pointer items-center gap-1 rounded px-1.5 py-1 text-xs text-[var(--rt-muted)]"
               role="button" tabindex="0" title="Click to copy">
@@ -118,39 +160,45 @@
     </div>
   </div>
 
-  <!-- Screen capture + captions combined view -->
+  <!-- Screen capture + captions combined view (also used by ?embed=present) -->
   <div id="combine-view" class="min-h-0 flex-1 flex-col bg-[var(--rt-canvas)]">
     <div id="combine-captions" class="rt-text relative flex shrink-0 flex-col overflow-hidden border-b border-[var(--rt-border)] bg-[var(--rt-surface)]"></div>
     <div class="flex min-h-0 flex-1">
-      <div class="relative min-w-0 flex-1 bg-black flex flex-col">
-        <div class="pointer-events-none inline-flex items-center gap-1.5 rounded-md bg-black px-2 py-1 text-xs text-white/50">
+      <div id="combine-video-stage" class="relative min-w-0 flex-1 bg-black flex flex-col">
+        <div id="combine-local-badge" class="pointer-events-none inline-flex items-center gap-1.5 rounded-md bg-black px-2 py-1 text-xs text-white/50">
           <iconify-icon icon="ph:lock-simple" width="13" height="13" aria-hidden="true"></iconify-icon>This screen is only visible on this device.
         </div>
         <video id="combine-video" class="flex-1 object-contain" autoplay muted playsinline></video>
       </div>
       <aside id="combine-sidebar" class="flex w-64 shrink-0 flex-col gap-4 overflow-y-auto border-l border-[var(--rt-border)] bg-[var(--rt-surface)] p-3 text-sm text-[var(--rt-text)]">
         <section class="flex flex-col items-center gap-2 text-center">
-          <div class="text-xs font-semibold text-[var(--rt-muted)]">Scan for captions on your phone</div>
+          <div id="combine-qr-heading" class="text-xs font-semibold text-[var(--rt-muted)]">Scan for captions on your phone</div>
           <img id="combine-qr-img" class="aspect-square w-full rounded-lg bg-white" src="" alt="QR code to open this transcript" />
-          <ul class="w-full space-y-1.5 text-left text-xs">
+          <ul id="combine-feature-list" class="w-full space-y-1.5 text-left text-xs">
             <li class="flex items-center gap-2"><iconify-icon icon="ph:translate" width="14" height="14"></iconify-icon>Pick your own language</li>
             <li class="flex items-center gap-2"><iconify-icon icon="ph:text-aa" width="14" height="14"></iconify-icon>Adjust text size</li>
             <li class="flex items-center gap-2"><iconify-icon icon="ph:circle-half" width="14" height="14"></iconify-icon>Dark &amp; high-contrast themes</li>
           </ul>
-          <div class="w-full text-left">
+          <div id="combine-lang-chips-wrap" class="w-full text-left">
             <div class="mb-1 text-xs font-semibold text-[var(--rt-muted)]">Available languages</div>
             <div id="combine-lang-chips" class="flex flex-wrap gap-1"></div>
           </div>
         </section>
-        <section class="mt-auto flex flex-col gap-2 border-t border-[var(--rt-border)] pt-3">
+        <div id="combine-present-brand" class="hidden mt-auto flex-col items-center gap-2 border-t border-[var(--rt-border)] pt-3 text-center">
+          <span class="inline-flex size-12 items-center justify-center rounded-xl bg-[#326fbd] text-[#f4f8fd]" aria-hidden="true">
+            <iconify-icon icon="ph:waveform" width="28" height="28"></iconify-icon>
+          </span>
+          <span class="text-xl font-bold tracking-tight">OpenTransLive</span>
+        </div>
+        <section id="combine-controls-section" class="mt-auto flex flex-col gap-2 border-t border-[var(--rt-border)] pt-3">
           <div class="text-xs font-semibold text-[var(--rt-muted)]">Controls</div>
           <label class="flex flex-col gap-1 text-xs">Caption language
             <select id="combine-lang-select" class="select-ctrl w-full rounded-md border px-2 py-1 text-sm"></select>
           </label>
           <div class="flex items-center gap-1">
             <span class="flex-1 text-xs">Text size</span>
-            <button id="combine-font-decrease" class="icon-btn icon-btn-sm" aria-label="Decrease font size"><iconify-icon icon="ph:minus" width="16" height="16"></iconify-icon></button>
-            <button id="combine-font-increase" class="icon-btn icon-btn-sm" aria-label="Increase font size"><iconify-icon icon="ph:plus" width="16" height="16"></iconify-icon></button>
+            <button id="combine-font-decrease" class="icon-btn icon-btn-sm" aria-label="Decrease font size" title="Decrease font size"><span class="viewer-font-step" aria-hidden="true">A−</span></button>
+            <button id="combine-font-increase" class="icon-btn icon-btn-sm" aria-label="Increase font size" title="Increase font size"><span class="viewer-font-step" aria-hidden="true">A+</span></button>
           </div>
           <div class="flex items-center gap-1">
             <span class="flex-1 text-xs">Theme</span>
@@ -228,11 +276,66 @@
     font-size: var(--rt-font-size);
   }
 
+  .viewer-font-step {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+  }
+
   #grid-content {
     grid-template-columns: repeat(var(--grid-cols, 1), 1fr);
     /* --grid-row-h is set (in px) only when rows are pinned to a fixed height;
        otherwise rows split the container evenly. */
     grid-template-rows: repeat(var(--grid-rows, 1), var(--grid-row-h, 1fr));
+  }
+
+  #app-root.viewer-embed :is(#top-bar, .viewer-footer, .grid-lang-label, #viewer-empty, #owner-login-notice, .speak-btn) {
+    display: none !important;
+  }
+
+  #app-root.viewer-embed :is(#single-view, #grid-view) {
+    padding: 0;
+  }
+
+  #app-root.viewer-embed :is(#single-content, .grid-lang-box) {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  html.viewer-embed-transparent,
+  html.viewer-embed-transparent body,
+  #app-root.viewer-embed-transparent,
+  #app-root.viewer-embed-transparent :is(#single-view, #grid-view, #single-content, .grid-lang-box, #combine-view) {
+    background: transparent !important;
+  }
+
+  #app-root.viewer-embed-transparent:not(.viewer-embed-present) .language-card {
+    color: #ffffff !important;
+    text-shadow: -1px -1px 0 rgba(0, 0, 0, 0.85), 1px -1px 0 rgba(0, 0, 0, 0.85), -1px 1px 0 rgba(0, 0, 0, 0.85), 1px 1px 0 rgba(0, 0, 0, 0.85);
+  }
+
+  #app-root.viewer-embed-present #combine-video-stage {
+    background: transparent !important;
+  }
+
+  #app-root.viewer-embed-present :is(#combine-local-badge, #combine-video, #combine-feature-list, #combine-lang-chips-wrap, #combine-controls-section) {
+    display: none !important;
+  }
+
+  #app-root.viewer-embed-present #combine-present-brand {
+    display: flex !important;
+  }
+
+  #app-root.viewer-embed-present #combine-sidebar {
+    width: clamp(16rem, 20vw, 24rem);
+  }
+
+  #app-root.viewer-embed-present #combine-qr-heading {
+    font-size: clamp(1rem, 1.4vw, 1.5rem);
+    color: var(--rt-text);
   }
 
   /* Screen capture + captions combined view. Hidden via the root class (not
@@ -814,11 +917,15 @@
     const fadeButton = document.getElementById('fade-toggle');
     fadeButton.classList.toggle('active', enabled);
     fadeButton.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    const mobileFade = document.getElementById('mobile-fade-checkbox');
+    if (mobileFade) mobileFade.checked = enabled;
     updateUrlParam('fade', enabled ? null : '0');
   }
 
   document.getElementById('fade-toggle').addEventListener('click', () =>
     applyFade(document.getElementById('app-root').classList.contains('fade-off')));
+  document.getElementById('mobile-fade-checkbox')?.addEventListener('change', (e) =>
+    applyFade(e.target.checked));
 
   // ------------------------------------------------------------------ //
   // URL param helpers                                                   //
@@ -841,22 +948,58 @@
   const qrBtn = document.getElementById('qr-btn');
   const qrUrlText = document.getElementById('qr-url-text');
   const qrUrlValue = document.getElementById('qr-url-value');
+  const settingsPopup = document.getElementById('settings-popover');
+  const settingsBtn = document.getElementById('settings-btn');
+  const settingsCloseBtn = document.getElementById('settings-close-btn');
+
+  function closeSettingsPopover() {
+    if (!settingsPopup) return;
+    settingsPopup.classList.add('hidden');
+    if (settingsBtn) settingsBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  function closeQrPopup() {
+    qrPopup.classList.add('hidden');
+    qrBtn.setAttribute('aria-expanded', 'false');
+  }
+
+  if (settingsBtn && settingsPopup) {
+    settingsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = settingsPopup.classList.contains('hidden');
+      closeQrPopup();
+      settingsPopup.classList.toggle('hidden', !willOpen);
+      settingsBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    });
+    settingsCloseBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeSettingsPopover();
+    });
+    settingsPopup.addEventListener('click', (e) => e.stopPropagation());
+  }
 
   qrBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     const isHidden = qrPopup.classList.contains('hidden');
     if (isHidden) {
+      closeSettingsPopover();
       // The URL carries show=/theme state that changes while the page is open,
       // so re-render whenever it differs from what the popup last showed.
       if (qrUrlValue.textContent !== window.location.href) {
         qrUrlValue.textContent = window.location.href;
-        document.getElementById('qr-img').src = `https://quickchart.io/qr?text=${encodeURIComponent(window.location.href)}`;
+        document.getElementById('qr-img').src = window.uqr.renderQrPngDataUrl(window.location.href, { scale: 8, border: 2 });
       }
       qrPopup.classList.remove('hidden');
       qrBtn.setAttribute('aria-expanded', 'true');
     } else {
-      qrPopup.classList.add('hidden');
-      qrBtn.setAttribute('aria-expanded', 'false');
+      closeQrPopup();
+    }
+  });
+
+  document.getElementById('qr-popout-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (window.uqr.openQrPopout(document.getElementById('qr-img').src, qrUrlValue.textContent || window.location.href)) {
+      closeQrPopup();
     }
   });
 
@@ -889,8 +1032,11 @@
 
   document.addEventListener('click', (e) => {
     if (!document.getElementById('qr-area').contains(e.target)) {
-      qrPopup.classList.add('hidden');
-      qrBtn.setAttribute('aria-expanded', 'false');
+      closeQrPopup();
+    }
+    const sArea = document.getElementById('settings-area');
+    if (sArea && !sArea.contains(e.target)) {
+      closeSettingsPopover();
     }
   });
 
@@ -939,7 +1085,7 @@
   function renderCombineSidebar() {
     // Bare viewer URL: each audience member picks their own language/theme.
     const url = window.location.origin + window.location.pathname;
-    document.getElementById('combine-qr-img').src = `https://quickchart.io/qr?text=${encodeURIComponent(url)}&size=300`;
+    document.getElementById('combine-qr-img').src = window.uqr.renderQrPngDataUrl(url, { scale: 8, border: 2 });
     renderCombineLanguages();
   }
 
@@ -983,6 +1129,9 @@
   }
 
   function refreshCombineView() {
+    if (!combineLanguage || !languageOrder.includes(combineLanguage)) {
+      combineLanguage = getVisibleOrderedLanguages()[0] || languageOrder[0] || null;
+    }
     const box = document.getElementById('combine-captions');
     if (!combineLanguage) {
       if (box.dataset.language !== '') {
@@ -1024,8 +1173,8 @@
     combineActive = true;
     document.getElementById('app-root').classList.add('combine-active');
     closeLangModal();
-    qrPopup.classList.add('hidden');
-    qrBtn.setAttribute('aria-expanded', 'false');
+    closeQrPopup();
+    closeSettingsPopover();
     resetCombineCaptions();
     renderCombineSidebar();
     rerenderFromBottom();
@@ -1276,6 +1425,8 @@
   }
 
   function openLangModal() {
+    closeQrPopup();
+    closeSettingsPopover();
     langModal.classList.remove('hidden');
     document.getElementById('lang-btn').setAttribute('aria-expanded', 'true');
     renderLangModal();
@@ -1305,8 +1456,8 @@
 
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
-    qrPopup.classList.add('hidden');
-    qrBtn.setAttribute('aria-expanded', 'false');
+    closeQrPopup();
+    closeSettingsPopover();
     closeLangModal();
   });
 
@@ -1934,6 +2085,16 @@
 
     window.addEventListener('load', function () {
       const params = new URLSearchParams(window.location.search);
+      const embedParam = params.get('embed');
+      const embedPresent = embedParam === 'present';
+      const embedMode = embedPresent || embedParam === '1';
+      const embedTransparent = (embedParam === '1' && !params.get('theme')) || embedPresent;
+      const appRoot = document.getElementById('app-root');
+      if (embedMode) appRoot.classList.add('viewer-embed');
+      if (embedTransparent) {
+        document.documentElement.classList.add('viewer-embed-transparent');
+        appRoot.classList.add('viewer-embed-transparent');
+      }
 
       discoverLanguages();
       // Decide initial layout from current visibility, then render.
@@ -1954,22 +2115,6 @@
       if (showParam === 'all' || showParam === '') {
         updateUrlParam('show', null);
       }
-      refreshView();
-      setTimeout(() => { initialized = true; }, 100);
-      maybeAutoOpenLangModal(languageOrder);
-
-      // font-size
-      const fontSizeParam = params.get('font-size');
-      if (fontSizeParam) {
-        const isBarePx = /^\d+(\.\d+)?$/.test(fontSizeParam);
-        const normalized = isBarePx ? fontSizeParam + 'px' : fontSizeParam;
-        // Try to parse as rem for our step counter
-        const remMatch = normalized.match(/^([\d.]+)rem$/);
-        const pxMatch = normalized.match(/^([\d.]+)px$/);
-        if (remMatch) currentFontSizeRem = parseFloat(remMatch[1]);
-        else if (pxMatch) currentFontSizeRem = parseFloat(pxMatch[1]) / 16;
-        document.documentElement.style.setProperty('--rt-font-size', normalized);
-      }
 
       // theme
       const themeParam = params.get('theme');
@@ -1983,6 +2128,35 @@
       // fade highlight
       applyFade(params.get('fade') !== '0');
 
+      if (embedPresent) {
+        combineActive = true;
+        appRoot.classList.add('combine-active', 'viewer-embed-present');
+        const combineView = document.getElementById('combine-view');
+        const combineCaps = document.getElementById('combine-captions');
+        const captionsBottom = params.get('position') !== 'top';
+        combineView.classList.toggle('flex-col-reverse', captionsBottom);
+        combineView.classList.toggle('flex-col', !captionsBottom);
+        combineCaps.classList.toggle('border-t', captionsBottom);
+        combineCaps.classList.toggle('border-b', !captionsBottom);
+        renderCombineSidebar();
+      }
+
+      refreshView();
+      setTimeout(() => { initialized = true; }, 100);
+      if (!embedMode) maybeAutoOpenLangModal(languageOrder);
+
+      // font-size
+      const fontSizeParam = params.get('font-size');
+      if (fontSizeParam) {
+        const isBarePx = /^\d+(\.\d+)?$/.test(fontSizeParam);
+        const normalized = isBarePx ? fontSizeParam + 'px' : fontSizeParam;
+        // Try to parse as rem for our step counter
+        const remMatch = normalized.match(/^([\d.]+)rem$/);
+        const pxMatch = normalized.match(/^([\d.]+)px$/);
+        if (remMatch) currentFontSizeRem = parseFloat(remMatch[1]);
+        else if (pxMatch) currentFontSizeRem = parseFloat(pxMatch[1]) / 16;
+        document.documentElement.style.setProperty('--rt-font-size', normalized);
+      }
     });
 
     window.addEventListener('beforeunload', function () {
