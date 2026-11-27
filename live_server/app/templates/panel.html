@@ -32,7 +32,7 @@
       <a href="{{ source_code_url }}" target="_blank" rel="noopener" class="nav-link inline-flex items-center gap-1">
         <iconify-icon icon="ph:github-logo" width="13" height="13"></iconify-icon><span class="max-[420px]:hidden">Source</span>
       </a>
-      <a href="/logout" class="nav-link">Logout</a>
+      <form method="post" action="/logout" class="inline"><button type="submit" class="nav-link cursor-pointer bg-transparent border-0 p-0 font-inherit">Logout</button></form>
       {% else %}
       <a href="{{ source_code_url }}" target="_blank" rel="noopener" class="nav-link inline-flex items-center gap-1">
         <iconify-icon icon="ph:github-logo" width="13" height="13"></iconify-icon><span class="max-[420px]:hidden">Source</span>
