@@ -6,6 +6,7 @@
 -#}
 {% extends "base.html" %} {% block content %}
 <div id="app-root" class="flex flex-col h-svh font-sans">
+  <script defer src="/static/js/uqr.js?v={{ timestamp }}"></script>
 
   <!-- Top Bar -->
   <div id="top-bar" class="flex items-center gap-2 px-3 py-1 shrink-0 border-b top-bar flex-wrap">
@@ -31,10 +32,8 @@
     <div class="flex flex-wrap gap-2 ms-auto items-center justify-end">
       <!-- Font size controls -->
       <div class="flex items-center gap-1 shrink-0" title="Font size">
-        <button id="font-decrease" class="icon-btn icon-btn-sm" aria-label="Decrease font size"><iconify-icon
-            icon="mdi:format-font-size-decrease" width="18" height="18"></iconify-icon></button>
-        <button id="font-increase" class="icon-btn icon-btn-sm" aria-label="Increase font size"><iconify-icon
-            icon="mdi:format-font-size-increase" width="18" height="18"></iconify-icon></button>
+        <button id="font-decrease" class="icon-btn icon-btn-sm" aria-label="Decrease font size" title="Decrease font size"><span class="text-[0.8125rem] font-semibold leading-none tracking-[-0.02em] whitespace-nowrap" aria-hidden="true">A−</span></button>
+        <button id="font-increase" class="icon-btn icon-btn-sm" aria-label="Increase font size" title="Increase font size"><span class="text-[0.8125rem] font-semibold leading-none tracking-[-0.02em] whitespace-nowrap" aria-hidden="true">A+</span></button>
       </div>
 
       <!-- Theme buttons -->
@@ -63,8 +62,13 @@
           <!-- QR popup -->
           <div id="qr-popup"
             class="hidden absolute right-0 top-9 z-50 p-3 rounded-xl shadow-xl border qr-popup-bg min-w-max">
-            <div class="text-xs font-semibold mb-2 opacity-70">Scan to open</div>
-            <img id="qr-img" class="w-40 h-40 rounded-lg" src="" alt="QR code" />
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <span class="text-xs font-semibold opacity-70">Scan to open</span>
+              <button id="qr-popout-btn" type="button" class="icon-btn icon-btn-sm" aria-label="Open in pop-up window" title="Open in pop-up window">
+                <iconify-icon icon="ph:arrow-square-out" width="14" height="14"></iconify-icon>
+              </button>
+            </div>
+            <img id="qr-img" class="w-40 h-40 rounded-lg bg-white" src="" alt="QR code" />
             <div class="text-xs mt-2 opacity-50 text-center max-w-40 truncate" id="qr-url-text"></div>
           </div>
         </div>
@@ -514,19 +518,26 @@
   // ------------------------------------------------------------------ //
   const qrPopup = document.getElementById('qr-popup');
   const qrBtn = document.getElementById('qr-btn');
-  let qrInitialized = false;
+  let qrUrlRendered = '';
 
   qrBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     const isHidden = qrPopup.classList.contains('hidden');
     if (isHidden) {
-      if (!qrInitialized) {
-        document.getElementById('qr-img').src = `https://quickchart.io/qr?text=${encodeURIComponent(window.location.href)}`;
-        document.getElementById('qr-url-text').textContent = window.location.href;
-        qrInitialized = true;
+      if (qrUrlRendered !== window.location.href) {
+        qrUrlRendered = window.location.href;
+        document.getElementById('qr-img').src = window.uqr.renderQrPngDataUrl(qrUrlRendered, { scale: 8, border: 2 });
+        document.getElementById('qr-url-text').textContent = qrUrlRendered;
       }
       qrPopup.classList.remove('hidden');
     } else {
+      qrPopup.classList.add('hidden');
+    }
+  });
+
+  document.getElementById('qr-popout-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (window.uqr.openQrPopout(document.getElementById('qr-img').src, qrUrlRendered || window.location.href)) {
       qrPopup.classList.add('hidden');
     }
   });

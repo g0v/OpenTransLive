@@ -130,6 +130,8 @@ https://<your-host>/rt/<session-id>
 | `theme` | `light`、`dark`、`high-contrast` | `light` |
 | `show` | 以逗號分隔的語言代碼，例如 `en-US,zh-Hant-TW` | 所有語言 |
 | `fade` | 設為 `0` 關閉漸淡強調效果 | 開啟 |
+| `embed` | `1` 僅顯示字幕（適用 OBS／vMix，未指定 `theme` 時透明底白字黑邊）；`present` 為簡報版面（保留單一語言字幕條與右側 QR 欄，其餘透明） | 關閉 |
+| `position` | 僅對 `embed=present` 生效：設為 `top` 將字幕條置於上方，預設為 `bottom` | `bottom` |
 
 範例：
 

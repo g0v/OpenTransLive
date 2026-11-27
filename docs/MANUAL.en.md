@@ -128,6 +128,8 @@ Available URL parameters:
 | `theme` | `light`, `dark`, `high-contrast` | `light` |
 | `show` | Comma-separated language codes, such as `en-US,zh-Hant-TW` | All languages |
 | `fade` | Set to `0` to disable the fading highlight | Enabled |
+| `embed` | `1` for captions only (for OBS/vMix; transparent white-outlined captions unless `theme` is set); `present` for presentation bar + scan-to-watch QR column over transparent video area | Off |
+| `position` | Applies when `embed=present`: set to `top` to dock the caption bar at the top | `bottom` |
 
 Example:
 

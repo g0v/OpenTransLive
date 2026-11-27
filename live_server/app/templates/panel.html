@@ -512,6 +512,35 @@
         <div class="border-t border-[#2a3646]"></div>
 
         <section>
+          <div class="mb-2 flex items-center justify-between gap-2">
+            <code class="viewer-param-code rounded-md px-2 py-0.5 font-mono text-xs">embed</code>
+            <span class="text-xs text-[#9eacbf]">default: off</span>
+          </div>
+          <p class="mb-2 text-sm text-[#9eacbf]">Use <span class="font-mono">1</span> for OBS/vMix captions only, or <span class="font-mono">present</span> for a single-language presentation bar with a scan-to-watch QR column over a transparent background.</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button type="button" class="viewer-param-btn" data-viewer-param="embed" data-value="" data-default>off</button>
+            <button type="button" class="viewer-param-btn" data-viewer-param="embed" data-value="1">1</button>
+            <button type="button" class="viewer-param-btn" data-viewer-param="embed" data-value="present">present</button>
+          </div>
+        </section>
+
+        <div class="border-t border-[#2a3646]"></div>
+
+        <section>
+          <div class="mb-2 flex items-center justify-between gap-2">
+            <code class="viewer-param-code rounded-md px-2 py-0.5 font-mono text-xs">position</code>
+            <span class="text-xs text-[#9eacbf]">default: bottom</span>
+          </div>
+          <p class="mb-2 text-sm text-[#9eacbf]">Caption bar placement when <span class="font-mono">embed=present</span>.</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button type="button" class="viewer-param-btn" data-viewer-param="position" data-value="" data-default>bottom</button>
+            <button type="button" class="viewer-param-btn" data-viewer-param="position" data-value="top">top</button>
+          </div>
+        </section>
+
+        <div class="border-t border-[#2a3646]"></div>
+
+        <section>
           <div class="mb-1.5 text-xs font-semibold text-[#9eacbf]">Viewer URL</div>
           <div class="flex items-start gap-2">
             <code id="current-url-display" class="viewer-param-code min-w-0 flex-1 break-all rounded-lg px-2.5 py-2 font-mono text-xs"></code>
@@ -2431,7 +2460,7 @@
     const url = getViewerUrl()
     const param = btn.dataset.viewerParam
     const value = btn.dataset.value
-    if ((param === 'theme' && value === 'light') || (param === 'show' && value === '')) {
+    if ((param === 'theme' && value === 'light') || ((param === 'show' || param === 'embed' || param === 'position') && value === '')) {
       url.searchParams.delete(param)
     } else {
       url.searchParams.set(param, value)
