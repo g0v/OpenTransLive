@@ -8,7 +8,7 @@ x-logging: &default-logging
 
 services:
   redis:
-    image: redis:${REDIS_VERSION:-latest}
+    image: redis:${REDIS_VERSION:-8.12.0-alpine}
     # Come back after a crash, OOM kill, or host reboot.
     restart: unless-stopped
     logging: *default-logging
@@ -21,6 +21,10 @@ services:
       - ${REDIS_MAXMEMORY:-1024mb}
       - --maxmemory-policy
       - ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
+      - --save
+      - ""
+      - --appendonly
+      - "no"
 
   mongodb:
     image: mongo:${MONGODB_VERSION:-latest}

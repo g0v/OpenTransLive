@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, AsyncIterator
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import anyio
 import dotenv
@@ -1302,13 +1302,58 @@ def _hash_token(value: str | None) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 async def _identifier(request: Request) -> str:
-    uid = request.session.get("user_uid", "")
-    if not uid or len(uid) < 36:
-        uid = str(uuid.uuid4())
-        request.session["user_uid"] = uid
+    """Rate-limit key scoped by authenticated account (session uid or API key hash)
+    or client network, plus endpoint name — never per anonymous cookie or room sid."""
     func_name = request.scope["route"].endpoint.__name__
-    room = request.path_params.get("sid") or request.path_params.get("id") or ""
-    return f"{uid}:{func_name}:{room}"
+    email = _get_session_email(request)
+    uid = request.session.get("user_uid")
+    if email and isinstance(uid, str) and uid:
+        return f"user:{uid}:{func_name}"
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        token = auth_header[7:].strip()
+        if looks_like_api_key(token):
+            key_fp = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+            return f"apikey:{key_fp}:{func_name}"
+    return f"net:{_request_network(request)}:{func_name}"
+
+
+def _strict_rate_limiter(times: int, seconds: int, identifier=_identifier):
+    """Fail-closed RateLimiter for expensive AI routes: returns 503 if Redis errors."""
+    inner = RateLimiter(times=times, seconds=seconds, identifier=identifier)
+
+    async def _dependency(request: Request, response: Response):
+        try:
+            return await inner(request, response)
+        except HTTPException:
+            raise
+        except Exception as e:
+            log_exception(logger, e, "Strict rate limiter unavailable; failing closed")
+            raise HTTPException(
+                status_code=503,
+                detail="Rate limiter temporarily unavailable — please try again shortly",
+            )
+
+    return _dependency
+
+
+def _require_same_origin(request: Request) -> None:
+    sec_fetch_site = (request.headers.get("sec-fetch-site") or "").strip().lower()
+    if sec_fetch_site and sec_fetch_site not in ("same-origin", "none"):
+        raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+    expected_host = (request.headers.get("host") or request.url.netloc).strip().lower()
+    for hdr in ("origin", "referer"):
+        raw = (request.headers.get(hdr) or "").strip()
+        if not raw:
+            continue
+        if raw == "null":
+            if hdr == "origin":
+                raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+            continue
+        parsed = urlsplit(raw)
+        if parsed.scheme.lower() not in ("http", "https") or parsed.netloc.lower() != expected_host:
+            raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+        return
 
 
 async def _otp_email_identifier(request: Request) -> str:
@@ -1749,10 +1794,21 @@ async def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request, "next_path": next_path})
 
 
-@app.get("/logout")
+def _require_admin_page(request: Request) -> RedirectResponse | None:
+    """Redirect signed-out /dashboard visitors to /login and non-admins to /user-dashboard."""
+    email = _get_session_email(request)
+    if not email:
+        return RedirectResponse(url=f"/login?next={quote(request.url.path)}", status_code=302)
+    if not _is_admin_email(email):
+        return RedirectResponse(url="/user-dashboard", status_code=302)
+    return None
+
+
+@app.post("/logout", dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def logout(request: Request):
+    _require_same_origin(request)
     request.session.clear()
-    return RedirectResponse(url="/login", status_code=302)
+    return RedirectResponse(url="/login", status_code=303)
 
 
 # ---------------------------------------------------------------------------
@@ -1977,7 +2033,9 @@ async def admin_user_usage(request: Request, email: str, days: int = 30, months:
 
 @app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(RateLimiter(times=100, seconds=10, identifier=_identifier))])
 async def dashboard(request: Request):
-    _require_admin_email(request)
+    redirect = _require_admin_page(request)
+    if redirect is not None:
+        return redirect
     users = await users_collection.find({}, {"_id": 0}).to_list(length=1000)
 
     # Aggregate Scribe usage per owner in one pass (rooms accumulate audio
@@ -2013,7 +2071,9 @@ async def dashboard(request: Request):
 async def admin_user_report(request: Request, email: str):
     """Per-user report reached from the admin dashboard: usage charts (filled by
     /api/users/{email}/usage) plus the account's all-time room totals."""
-    _require_admin_email(request)
+    redirect = _require_admin_page(request)
+    if redirect is not None:
+        return redirect
     if not validate_email_format(email):
         raise HTTPException(status_code=400, detail="Invalid email address")
     email_lc = email.strip().lower()
@@ -2684,7 +2744,7 @@ async def update_session_auto_keywords_endpoint(request: Request, sid: str):
 
 # User-triggered AI work is intentionally rate-limited more tightly than the
 # regular settings writes.
-@app.post("/api/session/{sid}/keywords/generate", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_identifier))])
+@app.post("/api/session/{sid}/keywords/generate", dependencies=[Depends(_strict_rate_limiter(10, 60))])
 async def generate_session_keywords_endpoint(request: Request, sid: str):
     """Extract names, jargon, and phrases from pasted reference text.
 
@@ -2830,7 +2890,7 @@ async def update_session_glossary_endpoint(request: Request, sid: str):
 
 # A web-grounded LLM lookup, an order of magnitude more expensive than the other
 # settings writes, so the limit is per-minute rather than the usual 100/10s.
-@app.post("/api/session/{sid}/glossary/generate", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_identifier))])
+@app.post("/api/session/{sid}/glossary/generate", dependencies=[Depends(_strict_rate_limiter(10, 60))])
 async def generate_session_glossary_entry_endpoint(request: Request, sid: str):
     """Look a term up on the web and return its spelling in each target language.
 
@@ -3260,7 +3320,7 @@ def _parse_retranslate_source(body) -> tuple[float, str]:
     return float(start_time), corrected
 
 
-@app.post("/api/session/{sid}/segments/retranslate", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_identifier))])
+@app.post("/api/session/{sid}/segments/retranslate", dependencies=[Depends(_strict_rate_limiter(10, 60))])
 async def retranslate_session_segment_endpoint(request: Request, sid: str):
     """Retranslate one committed segment and fan the revision out to live viewers.
 
@@ -3316,7 +3376,7 @@ async def update_live_segment_endpoint(request: Request, sid: str):
     return {"status": "ok", "segment": segment}
 
 
-@app.post("/api/session/{sid}/segments/retranslate-language", dependencies=[Depends(RateLimiter(times=10, seconds=60, identifier=_identifier))])
+@app.post("/api/session/{sid}/segments/retranslate-language", dependencies=[Depends(_strict_rate_limiter(10, 60))])
 async def retranslate_segment_language_endpoint(request: Request, sid: str):
     """Translate an edited committed line into one language and return the text.
 
