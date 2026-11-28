@@ -807,6 +807,17 @@
   // it and merging neighbouring sentences. Segments predating the language (key
   // absent) are skipped instead.
   const TRANSLATION_GAP = '⋯';
+  // The corrected transcript as a language of its own. The server only fills it
+  // in a room without targets; with targets it is derived here from `corrected`,
+  // hidden by default (viewers come for the translation) but selectable.
+  const SOURCE_LANGUAGE = 'source';
+
+  function translatedOf(seg) {
+    const translated = seg?.result?.translated;
+    const corrected = seg?.result?.corrected;
+    if (!translated || !corrected || SOURCE_LANGUAGE in translated) return translated;
+    return Object.assign({}, translated, { [SOURCE_LANGUAGE]: corrected });
+  }
 
   // Apply the per-language replacement map at render time. The server already
   // maps newly-translated lines before storing, so this exists to retro-fix
@@ -863,14 +874,14 @@
     const historyItems = [];
     let lastText = '';
     for (let i = 0; i < cropped.length; i++) {
-      const translated = cropped[i]?.result?.translated;
+      const translated = translatedOf(cropped[i]);
       if (!translated || !(lang in translated)) continue;
       const raw = translated[lang];
       const text = raw ? applyLangDict(lang, raw) : TRANSLATION_GAP;
       if (i === cropped.length - 1) lastText = withSegmentJoiner(text);
       else historyItems.push(text);
     }
-    const partial = transcriptionsData?.partial?.result?.translated;
+    const partial = translatedOf(transcriptionsData?.partial);
     const partialText = partial ? withSegmentJoiner(applyLangDict(lang, partial[lang] || '')) : '';
     return { historyItems, lastText, partialText };
   }
@@ -1209,14 +1220,30 @@
   // ------------------------------------------------------------------ //
   // Language visibility & order                                         //
   // ------------------------------------------------------------------ //
+  // Source is hidden by default only while there is a translation to show instead.
+  function hiddenByDefault(lang, order) {
+    return lang === SOURCE_LANGUAGE && order.some(l => l !== SOURCE_LANGUAGE);
+  }
+
+  function isDefaultVisibility() {
+    return languageOrder.every(l => hiddenLanguages.has(l) === hiddenByDefault(l, languageOrder));
+  }
+
+  function resetDefaultVisibility() {
+    hiddenLanguages = new Set(languageOrder.filter(l => hiddenByDefault(l, languageOrder)));
+  }
+
   function discoverLanguages() {
     let languages = null;
     if (transcriptionsData?.partial?.result?.translated) {
-      languages = Object.keys(transcriptionsData.partial.result.translated || {});
+      languages = Object.keys(translatedOf(transcriptionsData.partial));
     } else if (transcriptionsData?.transcriptions) {
-      languages = Object.keys(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]?.result?.translated || {});
+      languages = Object.keys(translatedOf(transcriptionsData.transcriptions[transcriptionsData.transcriptions.length - 1]) || {});
     }
     if (!languages) return false;
+    // Untouched visibility follows the default as languages come and go, so a room
+    // that started transcript-only folds its source away once a translation lands.
+    const wasDefault = !urlShowList && isDefaultVisibility();
     let changed = false;
     languages.forEach(l => {
       if (!languageOrder.includes(l)) {
@@ -1225,6 +1252,7 @@
         changed = true;
       }
     });
+    if (changed && wasDefault) resetDefaultVisibility();
     if (changed && urlShowList) {
       // `show=` defines both visibility and display order. Keep languages not
       // listed there after the requested ones, in their discovery order.
@@ -1250,11 +1278,12 @@
     const present = new Set();
     const cropped = (transcriptionsData.transcriptions || []).slice(-MAX_HISTORY);
     for (const t of cropped) {
-      const tr = t?.result?.translated;
+      const tr = translatedOf(t);
       if (tr) Object.keys(tr).forEach(k => present.add(k));
     }
-    const partial = transcriptionsData?.partial?.result?.translated;
+    const partial = translatedOf(transcriptionsData?.partial);
     if (partial) Object.keys(partial).forEach(k => present.add(k));
+    const wasDefault = !urlShowList && isDefaultVisibility();
     let changed = false;
     for (const l of [...languageOrder]) {
       if (!present.has(l)) {
@@ -1266,6 +1295,8 @@
         changed = true;
       }
     }
+    // Every translation expired: the source is all that is left, so show it.
+    if (changed && wasDefault) resetDefaultVisibility();
     return changed;
   }
 
@@ -1277,7 +1308,7 @@
     // Clear legacy layout param so we don't write conflicting state.
     updateUrlParam('layout', null);
     const visible = getVisibleOrderedLanguages();
-    if (hiddenLanguages.size === 0 || visible.length === 0) {
+    if (isDefaultVisibility() || visible.length === 0) {
       updateUrlParam('show', null);
     } else {
       updateUrlParam('show', visible.join(','));
@@ -1319,7 +1350,7 @@
     const langs = (value || '').split(',').map(s => s.trim()).filter(Boolean);
     if (langs.length === 0 || (langs.length === 1 && langs[0] === 'all')) {
       urlShowList = null;
-      hiddenLanguages.clear();
+      resetDefaultVisibility();
     } else {
       urlShowList = langs;
       hiddenLanguages = new Set(languageOrder.filter(l => !langs.includes(l)));
@@ -1331,7 +1362,7 @@
   function toggleLanguageVisibility(lang) {
     if (hiddenLanguages.has(lang)) hiddenLanguages.delete(lang);
     else hiddenLanguages.add(lang);
-    if (hiddenLanguages.size === 0) urlShowList = null;
+    if (isDefaultVisibility()) urlShowList = null;
     else urlShowList = getVisibleOrderedLanguages();
     renderLangModal();
     applyVisibilityChange();
@@ -1339,9 +1370,10 @@
 
   function showAllLanguages() {
     // urlShowList can be set with nothing hidden yet (languages arriving later
-    // would be hidden on discovery), so clearing it still matters here.
-    if (hiddenLanguages.size === 0 && !urlShowList) return;
-    hiddenLanguages.clear();
+    // would be hidden on discovery), so clearing it still matters here. "All"
+    // means every translation: the source stays at its default.
+    if (isDefaultVisibility() && !urlShowList) return;
+    resetDefaultVisibility();
     urlShowList = null;
     renderLangModal();
     applyVisibilityChange();
@@ -1442,7 +1474,7 @@
   function maybeAutoOpenLangModal(languages) {
     if (combineActive) return; // don't cover the projection; may still auto-open after exit
     if (langModalAutoShown) return;
-    if (languages.length <= 1) return;
+    if (languages.filter(l => !hiddenByDefault(l, languages)).length <= 1) return;
     langModalAutoShown = true;
     openLangModal();
   }
