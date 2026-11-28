@@ -730,7 +730,9 @@ async def rerank_keywords(
     """
     When `extract` is enabled (or unset and the session setting is enabled),
     extract new special nouns/names from recent_text; always increment/decrement
-    keyword counts by presence in text. `extraction_context` is the caller's
+    keyword counts by presence in text. A mentioned keyword with a negative score
+    is reset to 0 before the increment, so only a keyword left unmentioned for 100
+    consecutive rounds gets dropped. `extraction_context` is the caller's
     keyword snapshot, used only to prime extraction; the state that gets rewritten
     is re-read from Redis. Locked keywords are always preserved: they never decay
     and are never trimmed.
@@ -758,7 +760,7 @@ async def rerank_keywords(
     recent_lower = recent_text.lower()
     for kw in list(keywords.keys()):
         if kw.lower() in recent_lower:
-            keywords[kw] += 1
+            keywords[kw] = max(keywords[kw], 0) + 1
         elif kw not in locked_set:
             # Pinned keywords never decay: going unmentioned is not evidence
             # against a keyword the user explicitly asked us to keep.

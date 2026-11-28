@@ -102,6 +102,20 @@ class AutoKeywordsTest(unittest.IsolatedAsyncioTestCase):
             )
         translator.extract_keywords.assert_not_awaited()
 
+    async def test_mention_resets_negative_score(self) -> None:
+        redis_store = _RedisStore()
+        redis_store.data["keywords:room-1"] = json.dumps({"Quiet": -58, "Steady": 3, "Fresh": 1})
+        redis_store.data["locked_keywords:room-1"] = json.dumps([])
+
+        await ts.rerank_keywords(
+            redis_store, "room-1", None, "Quiet and Steady are back.", extract=False,
+        )
+
+        saved = json.loads(redis_store.data["keywords:room-1"])
+        self.assertEqual(saved["Quiet"], 1)
+        self.assertEqual(saved["Steady"], 4)
+        self.assertEqual(saved["Fresh"], 0)
+
     async def test_endpoints_validate_and_persist(self) -> None:
         redis_store = _RedisStore()
         require_owner = AsyncMock()

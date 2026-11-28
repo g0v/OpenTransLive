@@ -1414,7 +1414,7 @@
       const look = glossaryButtonLook(kw, knownSpellings)
       row.innerHTML = `
         <span class="flex-1 font-mono text-xs truncate ${isLocked ? 'text-yellow-300' : 'text-gray-300'}">${escapeHtml(kw)}</span>
-        <span class="flex-shrink-0 min-w-6 px-1 text-right font-mono text-[11px] tabular-nums text-gray-500" title="Mention count: +1 each line that mentions it, -1 when not mentioned and unpinned; auto-removed at -100" aria-label="Score ${keywordScore(kw)}">${keywordScore(kw)}</span>
+        <span class="flex-shrink-0 min-w-6 px-1 text-right font-mono text-[11px] tabular-nums text-gray-500" title="Mention count: +1 each line that mentions it (a negative score resets to 0 first), -1 when not mentioned and unpinned; auto-removed at -100" aria-label="Score ${keywordScore(kw)}">${keywordScore(kw)}</span>
         <button class="kw-glossary-btn inline-flex flex-shrink-0 items-center transition-colors ${look.cls}" title="${look.title}" ${busy || glossaryGenerating.size >= MAX_CONCURRENT_GLOSSARY_LOOKUPS || !selectedLanguages.length ? 'disabled' : ''}>
           <iconify-icon icon="${busy ? 'ph:spinner-gap' : 'ph:translate'}" width="14" height="14" class="${busy ? 'animate-spin' : ''}"></iconify-icon>
         </button>
