@@ -52,9 +52,19 @@ _DUAL_SCRIPT_ST_CHARS = (
 )
 _DROP_DUAL_SCRIPT = str.maketrans("", "", _DUAL_SCRIPT_ST_CHARS)
 
+# 只 is both the adverb "only" (只) and the measure word (隻). STPhrases lists
+# 这只/那只/… as the measure-word phrase, which is right for 这只猫 but turns the far
+# more common 这只有我们知道 into 這隻有. When the next character is one that follows
+# the adverb rather than a noun, the three characters are pinned to 只 instead, ahead
+# of the phrase table. 这只猫 (no listed follower) and 一只有毒的蛇 (no listed prefix)
+# keep 隻.
+_ADVERB_ONLY_PREFIXES = "这那哪是有多别"
+_ADVERB_ONLY_FOLLOWERS = "有是能要会會好在想剩需不可"
+
 
 def _build_converters() -> tuple[OpenCC, OpenCC, OpenCC]:
-    """Build s2tw (with _INHERITED_CHARS pinned), phrase-only s2tw, and STCharacters.
+    """Build s2tw (with _INHERITED_CHARS and the adverb 只 pinned), phrase-only s2tw,
+    and STCharacters.
 
     OpenCC only takes a config as a file on disk, and it resolves the dictionaries a
     config names relative to the process, not to the config — so both files have to be
@@ -72,15 +82,36 @@ def _build_converters() -> tuple[OpenCC, OpenCC, OpenCC]:
     st_chars = {"type": "ocd2", "file": os.path.join(data_dir, 'STCharacters.ocd2')}
     tw_variants = {"type": "ocd2", "file": os.path.join(data_dir, 'TWVariants.ocd2')}
 
+    st_chars_config = os.path.join(out_dir, 'st_characters.json')
+    with open(st_chars_config, 'w', encoding='utf-8') as f:
+        json.dump({
+            "name": "Single-character Simplified to Traditional check",
+            "segmentation": {"type": "mmseg", "dict": st_chars},
+            "conversion_chain": [{"dict": st_chars}],
+        }, f)
+    cc_st_chars = OpenCC(st_chars_config)
+
+    adverb_only = os.path.join(out_dir, 'AdverbOnly.txt')
+    with open(adverb_only, 'w', encoding='utf-8') as f:
+        f.writelines(
+            f"{p}只{n}\t{cc_st_chars.convert(p)}只{cc_st_chars.convert(n)}\n"
+            for p in _ADVERB_ONLY_PREFIXES for n in _ADVERB_ONLY_FOLLOWERS
+        )
+    adverb_only_dict = {"type": "text", "file": adverb_only}
+    # OpenCC's dictionary group returns the first member that matches, not the
+    # longest, so the adverb entries go in front both for segmentation and conversion.
+    segmentation = {"type": "mmseg", "dict": {"type": "group", "dicts": [adverb_only_dict, st_phrases]}}
+
     # Mirrors the stock s2tw.json, with the pinned characters inserted between the
     # phrase table and the single-character table.
     s2tw_config = os.path.join(out_dir, 's2tw_inherited.json')
     with open(s2tw_config, 'w', encoding='utf-8') as f:
         json.dump({
             "name": "Simplified to Traditional (Taiwan), keeping inherited characters",
-            "segmentation": {"type": "mmseg", "dict": st_phrases},
+            "segmentation": segmentation,
             "conversion_chain": [
                 {"dict": {"type": "group", "dicts": [
+                    adverb_only_dict,
                     st_phrases,
                     {"type": "text", "file": inherited},
                     st_chars,
@@ -94,22 +125,14 @@ def _build_converters() -> tuple[OpenCC, OpenCC, OpenCC]:
     with open(phrases_config, 'w', encoding='utf-8') as f:
         json.dump({
             "name": "Simplified phrases to Traditional (Taiwan), without STCharacters",
-            "segmentation": {"type": "mmseg", "dict": st_phrases},
+            "segmentation": segmentation,
             "conversion_chain": [
-                {"dict": st_phrases},
+                {"dict": {"type": "group", "dicts": [adverb_only_dict, st_phrases]}},
                 {"dict": tw_variants},
             ],
         }, f)
 
-    st_chars_config = os.path.join(out_dir, 'st_characters.json')
-    with open(st_chars_config, 'w', encoding='utf-8') as f:
-        json.dump({
-            "name": "Single-character Simplified to Traditional check",
-            "segmentation": {"type": "mmseg", "dict": st_chars},
-            "conversion_chain": [{"dict": st_chars}],
-        }, f)
-
-    return OpenCC(s2tw_config), OpenCC(phrases_config), OpenCC(st_chars_config)
+    return OpenCC(s2tw_config), OpenCC(phrases_config), cc_st_chars
 
 
 _cc_s2tw, _cc_s2tw_phrases, _cc_st_chars = _build_converters()
